@@ -1,50 +1,11 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
+# --- colcon / CMake trees ---
 build/
 Build/
 build-*/
-
-# CMake generated files
+install/
+log/
+out/
+Testing/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -52,18 +13,56 @@ Makefile
 install_manifest.txt
 compile_commands.json
 
-# Temporary files
-*.tmp
+# --- Run output ---
+# Live-session logs written by scripts/run_live_rviz_stream_real.ps1
+rviz_live_*.log
 *.log
+# Recorded/downloaded rosbag used by scripts/play_demo_rosbag.ps1
+demo_rosbag/
+# Debug PNG readbacks from the offscreen capture path
+*.png
+
+# --- Binaries and intermediates ---
+*.d
+*.slo
+*.lo
+*.o
+*.obj
+*.gch
+*.pch
+*.ilk
+*.so
+*.so.*
+*.dylib
+*.mod
+*.smod
+*.lai
+*.la
+*.a
+*.lib
+*.dll
+*.exe
+*.out
+*.app
+*.pdb
+*.exp
+*.dwo
+
+# --- Temporary files ---
+*.tmp
 *.bak
 *.swp
 
-# vcpkg
+# --- vcpkg ---
 vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
 .cache/
+
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+
+# --- IDE / editor ---
+.vscode/
+.vs/
+CMakeUserPresets.json

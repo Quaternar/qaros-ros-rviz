@@ -1,0 +1,14 @@
+<library path="qar_rviz_streaming">
+  <class
+    name="qar_rviz_streaming/QarStreamingPanel"
+    type="qar_rviz_streaming::QarStreamingPanel"
+    base_class_type="rviz_common::Panel">
+    <description>
+      Qar Streaming control panel. Start/stop the (mock) Qar runtime, add/remove
+      mock peers, start/stop per-peer stereo streams, choose stream resolution and
+      FPS, and view live render diagnostics for the RViz DisplayContext and Ogre
+      scene. There is no peer authorization UI (contractor answer C6); the peer id
+      only identifies/routes a stream.
+    </description>
+  </class>
+</library>

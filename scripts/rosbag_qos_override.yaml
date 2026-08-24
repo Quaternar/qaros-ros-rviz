@@ -1,0 +1,46 @@
+# QoS overrides for `ros2 bag play --qos-profile-overrides-path`.
+#
+# Why this file exists: a bag replays each topic with the QoS it was RECORDED
+# with, and RViz subscribes with ITS defaults. Where the two are incompatible,
+# DDS delivers nothing at all and the only clue is a one-line warning from the
+# player ("requesting incompatible QoS ... No messages will be sent to it").
+#
+# The Ouster topics were recorded with the sensor-data profile, i.e.
+# BEST_EFFORT. RViz's PointCloud2 display defaults to RELIABLE, and a
+# BEST_EFFORT publisher cannot satisfy a RELIABLE subscriber — so /ouster/points
+# silently shows nothing. Re-offering them as RELIABLE fixes that without
+# touching any per-display setting, because a RELIABLE publisher happily serves
+# BEST_EFFORT subscribers too.
+#
+# /tf_static is included because it must stay latched: it is sent once at the
+# start of the bag, and any subscriber joining later (RViz always does) only
+# receives it if the publisher is TRANSIENT_LOCAL.
+#
+# Usage:
+#   python $ros2 bag play '<bag dir>' --loop `
+#          --qos-profile-overrides-path scripts\rosbag_qos_override.yaml
+
+/ouster/points:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: volatile
+
+/ouster/imu:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: volatile
+
+# depth MUST be large enough to hold EVERY static transform the bag publishes,
+# not 1. A TRANSIENT_LOCAL publisher replays only its last `depth` samples to a
+# late-joining subscriber, and these bags send their static transforms as SIX
+# separate messages (os_sensor->os_lidar, os_sensor->ARS_548,
+# arco/base_link->arco/os1_sensor, ...). With depth 1 RViz receives exactly one
+# of the six, so os_lidar ends up with no parent and every point cloud stamped
+# in it is dropped with "Message Filter dropping message ... queue is full".
+/tf_static:
+  history: keep_last
+  depth: 100
+  reliability: reliable
+  durability: transient_local

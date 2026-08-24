@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>qar_rviz_streaming</name>
+  <version>0.1.0</version>
+  <description>
+    RViz2 panel plugin for QarOS streaming. Adds an rviz_common::Panel that
+    streams the live RViz 3D scene to the QarOS Visualizer as a per-eye stereo
+    pair over the QarOS streaming C API, with peer management, an app volume and
+    optional WGS84 geo-anchoring from a NavSatFix topic.
+  </description>
+  <maintainer email="venda.plavec@seznam.cz">Quaternar</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rviz_common</depend>
+  <depend>rviz_rendering</depend>
+  <depend>rviz_ogre_vendor</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>qtbase5-dev</depend>
+
+  <!-- From the separate qar_ogre_adapter repository. Clone it into the same
+       colcon workspace (or install it and put its prefix on CMAKE_PREFIX_PATH). -->
+  <depend>qar_ogre_streaming</depend>
+  <depend>qar_qar_adapter</depend>
+
+  <exec_depend>libqt5-widgets</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <rviz_common plugin="${prefix}/plugin_description.xml"/>
+  </export>
+</package>
