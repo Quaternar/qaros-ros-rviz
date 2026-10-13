@@ -1,0 +1,15 @@
+<library path="qar_rviz_streaming">
+  <class
+    name="qar_rviz_streaming/QarStreamingPanel"
+    type="qar_rviz_streaming::QarStreamingPanel"
+    base_class_type="rviz_common::Panel">
+    <description>
+      Qar Streaming control panel. Connect to the QarOS runtime, invite peers,
+      start/stop per-peer stereo streams, choose stream resolution and FPS, stream
+      RViz dock panels and ROS topics as AR GUI panels, pick points and poses in
+      the AR scene, and view live render diagnostics for the RViz DisplayContext
+      and Ogre scene. There is no peer authorization UI; the peer id only
+      identifies and routes a stream.
+    </description>
+  </class>
+</library>

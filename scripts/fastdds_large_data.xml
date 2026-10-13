@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Fast-DDS participant profile for large sensor_msgs/Image streams (6.2 MB raw 1080p frames).
+
+  Loaded through FASTRTPS_DEFAULT_PROFILES_FILE (the distro's rmw_fastrtps_cpp creates every
+  participant of a process from the default profile):
+    * scripts\publish_video_file.py sets it in-process before rclpy.init (the SENDING side, where it
+      matters; unless the variable is already set in the environment),
+    * scripts\run_live_rviz_stream_real.ps1 exports it for rviz2 (RViz's own Image display and the
+      plugin's AR video reader are two participants of that process) so both ends agree.
+  To check that it is active, while a sending process runs (a directory listing shows 0 for open
+  files, so open them):
+    Get-ChildItem C:\ProgramData\eprosima\fastrtps_interprocess | ? { $_.Name -notmatch '_el$|_mutex$|port' } |
+      % { $f = [IO.File]::Open($_.FullName,'Open','Read','ReadWrite,Delete'); '{0} {1:N0}' -f $_.Name,$f.Length; $f.Dispose() }
+  -> 67,133,984 bytes (64 MB) for a participant that uses it, 549,408 (512 KB) for one that does not.
+
+  What it changes, and why (the measurements are in publish_video_file.py's docstring):
+    * The shared-memory (SHM) transport sends through ONE segment per sending participant, 512 KB
+      by default in Fast-DDS 2.6, while a 6.2 MB frame is ~96 fragments of 64 KB. With the default
+      segment 5-8 % of the frames lose fragments (a best-effort subscriber simply misses them), and
+      the reliable protocol brings them back 10-25 ms late - the SAME frames at EVERY subscriber,
+      which is why RViz's Image display and the AR panel stutter together once both are
+      subscribed. A 64 MB segment (~10 whole frames) loses nothing.
+    * The segment is a file of that size per participant, created while the process runs and
+      removed when it exits cleanly; a process that dies hard leaves it behind until
+      `fastdds shm clean` (the launcher runs that at every start) removes it.
+    * UDPv4 stays enabled at its defaults, so discovery, remote peers and readers that cannot use
+      shared memory behave as with the stock profile. (A UDP-only profile is also smooth and
+      lossless, but publish() takes ~10 ms instead of ~6 ms. Bigger UDP socket buffers make no
+      measurable difference locally; a remote peer on a lossy link may want
+      sendBufferSize/receiveBufferSize.)
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>qar_shm_large</transport_id>
+      <type>SHM</type>
+      <segment_size>67108864</segment_size>
+    </transport_descriptor>
+    <transport_descriptor>
+      <transport_id>qar_udp</transport_id>
+      <type>UDPv4</type>
+    </transport_descriptor>
+  </transport_descriptors>
+
+  <participant profile_name="qar_large_data" is_default_profile="true">
+    <rtps>
+      <useBuiltinTransports>false</useBuiltinTransports>
+      <userTransports>
+        <transport_id>qar_shm_large</transport_id>
+        <transport_id>qar_udp</transport_id>
+      </userTransports>
+    </rtps>
+  </participant>
+</profiles>
