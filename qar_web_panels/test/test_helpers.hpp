@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QHostAddress>
 #include <QNetworkRequest>
@@ -249,9 +250,18 @@ public:
     return wait_until([this, count]() {return frames.size() >= count;}, timeout_ms);
   }
 
+  /// True if the socket was disconnected within @p timeout_ms. Qt 5.15.2 emits `disconnected`
+  /// as soon as the TCP connection ends, but handles the bytes that arrived before it (the
+  /// close frame of the peer, which sets closeCode()) in a queued call that can still be
+  /// pending at that moment. The posted events are delivered before this returns, so that
+  /// closeCode() is not read before that call has run.
   bool wait_closed(int timeout_ms = 3000)
   {
-    return wait_until([this]() {return disconnected_spy.count() > 0;}, timeout_ms);
+    if (!wait_until([this]() {return disconnected_spy.count() > 0;}, timeout_ms)) {
+      return false;
+    }
+    QCoreApplication::sendPostedEvents(nullptr, 0);
+    return true;
   }
 
   void send(const qar_ui_model::ProtocolMessage & message)
