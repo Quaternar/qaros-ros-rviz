@@ -1,4 +1,4 @@
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 """Regenerate a rosbag2 metadata.yaml from a sqlite3 .db3 whose index is missing.
 

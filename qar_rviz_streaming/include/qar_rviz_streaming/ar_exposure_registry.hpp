@@ -1,4 +1,4 @@
-// Copyright 2026 Quaternar
+// Copyright 2026 QuaternAR
 // SPDX-License-Identifier: MIT
 
 #ifndef QAR_RVIZ_STREAMING__AR_EXPOSURE_REGISTRY_HPP_

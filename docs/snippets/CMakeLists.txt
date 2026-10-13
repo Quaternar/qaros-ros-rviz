@@ -1,4 +1,4 @@
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 #
 # Compile-checked documentation snippets of qar_rviz_plugin. Every C++ and CMake block of the documentation

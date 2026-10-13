@@ -1,4 +1,4 @@
-// Copyright 2026 Quaternar
+// Copyright 2026 QuaternAR
 // SPDX-License-Identifier: MIT
 
 #ifndef QAR_ROS_UI__DETAIL__DYNAMIC_SERVICE_CLIENT_HPP_

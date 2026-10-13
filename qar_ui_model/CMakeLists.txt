@@ -1,4 +1,4 @@
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 #
 # qar_ui_model — declarative AR UI model + self-contained HTML/JS renderer.

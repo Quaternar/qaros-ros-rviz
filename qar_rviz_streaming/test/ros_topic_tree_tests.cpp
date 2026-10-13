@@ -1,4 +1,4 @@
-// Copyright 2026 Quaternar
+// Copyright 2026 QuaternAR
 // SPDX-License-Identifier: MIT
 //
 // Grouping rules for the Add-topic dialog's tree. Pure QtCore, so these run in

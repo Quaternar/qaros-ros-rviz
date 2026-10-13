@@ -1,4 +1,4 @@
-// Copyright 2026 Quaternar
+// Copyright 2026 QuaternAR
 // SPDX-License-Identifier: MIT
 //
 // The semantic AR templates. Pure C++17 + qar_ui_model — no ROS graph, no Qt, no

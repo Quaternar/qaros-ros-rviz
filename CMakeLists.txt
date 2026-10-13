@@ -1,4 +1,4 @@
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 #
 # qar_rviz_plugin: the RViz2 plugin that streams RViz into QarOS, and the libraries of its web AR panels -

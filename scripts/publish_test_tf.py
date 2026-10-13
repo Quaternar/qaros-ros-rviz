@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 """Broadcast a small static TF tree for the test scenes (scene2: Grid + TF).
 

@@ -9,7 +9,7 @@
     streaming, AR GUI panels and spatial AR interaction inside RViz2 as an
     rviz_common::Panel.
   </description>
-  <maintainer email="contact@quaternar.com">Quaternar</maintainer>
+  <maintainer email="contact@quaternar.com">QuaternAR</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 """Publish a simple URDF + link TF for the test scenes (scene4: Grid + RobotModel).
 

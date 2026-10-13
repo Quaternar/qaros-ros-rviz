@@ -1,4 +1,4 @@
-// Copyright 2026 Quaternar
+// Copyright 2026 QuaternAR
 // SPDX-License-Identifier: MIT
 //
 // The run-time type check hidden_rviz_panel.cpp puts in front of RViz's panel factory

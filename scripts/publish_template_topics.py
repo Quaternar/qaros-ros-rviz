@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 r"""Publish one topic for each of ten semantic AR page templates of the plugin, plus a Trigger service.
 

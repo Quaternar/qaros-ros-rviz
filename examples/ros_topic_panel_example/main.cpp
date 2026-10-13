@@ -1,4 +1,4 @@
-// Copyright 2026 Quaternar
+// Copyright 2026 QuaternAR
 // SPDX-License-Identifier: MIT
 //
 // Exposes one ROS 2 topic as an AR panel: a label shows the newest message of /qar_example/text and a button

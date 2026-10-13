@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 """Publish a video file (MP4 or anything OpenCV can decode) as a sensor_msgs/Image stream.
 

@@ -1,4 +1,4 @@
-// Copyright 2026 Quaternar
+// Copyright 2026 QuaternAR
 // SPDX-License-Identifier: MIT
 //
 // The ONLY place the concrete fake factories are defined. See rtti_guard_test_types.hpp for

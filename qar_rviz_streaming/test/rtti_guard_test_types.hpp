@@ -1,4 +1,4 @@
-// Copyright 2026 Quaternar
+// Copyright 2026 QuaternAR
 // SPDX-License-Identifier: MIT
 //
 // Stand-ins for the classes rtti_guard.hpp meets in RViz, arranged the way RViz's are

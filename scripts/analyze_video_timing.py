@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 """Attribute AR-video stutter to a pipeline stage from the plugin's per-frame timing CSVs.
 

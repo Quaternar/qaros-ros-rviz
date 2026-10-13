@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Quaternar
+# Copyright 2026 QuaternAR
 # SPDX-License-Identifier: MIT
 """Publish a synthetic PointCloud2 for the test scenes (scene5: Grid + PointCloud2).
 

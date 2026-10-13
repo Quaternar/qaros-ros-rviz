@@ -1,4 +1,4 @@
-// Copyright 2026 Quaternar
+// Copyright 2026 QuaternAR
 // SPDX-License-Identifier: MIT
 //
 // Serves one AR panel that is built by hand from a UI model: a counter and a button. WebPanelServer serves the
