@@ -2475,9 +2475,9 @@ void QarStreamingPanel::runAutoMultiPeer()
   // Batch-render for `ticks`, pacing the DRIVER to ~120 Hz so the per-peer
   // RenderBudget (target 60 FPS/peer) is the real limiter — i.e. the scheduler's
   // FPS pacing, not the driver, determines the achieved rate. Each
-  // manager.render_tick() renders ALL due peers inside ONE render lock (the
-  // scheduler's batch). A precise BUSY-WAIT is used instead of sleep_for because
-  // Windows' ~15.6 ms sleep granularity would otherwise alias the cadence down.
+  // manager.render_tick() renders the due peers that the budget admits inside ONE
+  // render lock (the scheduler's batch). A precise BUSY-WAIT is used instead of sleep_for
+  // because Windows' ~15.6 ms sleep granularity would otherwise alias the cadence down.
   const auto driver_period = std::chrono::duration<double>(1.0 / 120.0);
   std::uint32_t max_served = 0;
   int full_batch_ticks = 0;  // ticks where every active peer rendered in one batch

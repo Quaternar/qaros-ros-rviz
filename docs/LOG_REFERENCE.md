@@ -354,7 +354,7 @@ SPATIAL: sample #%1%2 pick=%3 via %4 on '%5'%6
 , QarOS's own scene intersection, published verbatim
 ```
 
-The words after `via` name the method: `"QarOS action point"` when the answer is the intersection that the runtime computed, `ray/plane` or `ray/depth` when the straight aiming ray was intersected with the target, and `projected` when there was no ray. The ray stands between the number of the sample and `pick=`: it is written as `ray=` with its origin and its direction in the frame of the pick, and as `ray=none` when the sample has no hand ray. The adapter writes a longer trace of each gesture, with the identifier, kind and phase of the gesture, the points and the ray, and the verdict of the converter; each line has this form:
+The words after `via` name the method: `"QarOS action point"` when the answer is the intersection that the runtime computed (the detail of the line calls it a scene intersection, as QuaternAR states it), `ray/plane` or `ray/depth` when the straight aiming ray was intersected with the target, and `projected` when there was no ray. The ray stands between the number of the sample and `pick=`: it is written as `ray=` with its origin and its direction in the frame of the pick, and as `ray=none` when the sample has no hand ray. The adapter writes a longer trace of each gesture, with the identifier, kind and phase of the gesture, the points and the ray, and the verdict of the converter; each line has this form:
 
 ```text
 [qar-spatial] subscribed via qar_app_volumes_subscribe_all_gesture_events (one reader; CLICK+HOVER dispatched on kind, manipulation kinds counted as other)
