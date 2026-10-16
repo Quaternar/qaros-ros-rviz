@@ -336,8 +336,8 @@ $env:QAR_PANEL_LIVE_STREAM = "1"
 #                            zc_init_log_from_env_or() in-process (its value is the
 #                            tracing filter).
 #   QAR_ADAPTER_TRACE        Adapter breadcrumbs on stderr (run log below): peer ids, the
-#                            WGL context latch, each raw C-API call, and the per-frame
-#                            submit steps (every frame up to #150, then 1 in 300).
+#                            WGL context latch, timed lines around the main C-API calls, and
+#                            the per-frame submit steps (every frame up to #150, then 1 in 300).
 #   QAR_ADAPTER_TRACE_ALL    Defeats that sampling: every frame, four flushed writes each.
 #   QAR_ADAPTER_FRAME_TRACE  One CSV row per submitted frame (frame-timing diagnostics).
 # The last three are PRESENCE flags: qar_capi_render_sender_adapter.cpp / env_config.cpp
@@ -714,15 +714,15 @@ if (-not $Confirm) {
 # scene3_grid_marker.rviz subscribes to the test markers; without a publisher RViz
 # shows nothing but the grid, and the stream would carry an empty scene on BOTH ends.
 # Reap publishers leaked by earlier runs FIRST. This is not tidiness - it is load-
-# bearing. Every publisher is a ROS 2 node, and DDS assigns each participant the next
-# UDP port pair from 7410 upwards. Leaked publishers accumulate, the ladder climbs,
-# and once it reaches 7446 it collides with zenoh's multicast scouting port: QAR then
-# fails with the opaque "MsgInternalError Msg: -4 [ZenohMessaging.cpp:340]" and no
-# session can be created at all. A publisher is a Python process whose command line names
-# one of the four test publisher scripts of this folder as a whole file name, whatever
-# folder it was started from: one that you started yourself in another window is ended
-# as well. A Python process that has only the text publish_test_ somewhere in its command
-# line is left alone.
+# bearing. Every publisher is a ROS 2 node, and on domain 0 DDS assigns each participant the next
+# UDP port pair from 7410 upwards (from 7410 + 250 x domain number on any other domain). Leaked
+# publishers accumulate, the ladder climbs, and once it reaches 7446, which only domain 0 can, it
+# collides with zenoh's multicast scouting port: QAR then fails with the opaque "MsgInternalError
+# Msg: -4 [ZenohMessaging.cpp:340]" and no session can be created at all. A publisher is a Python
+# process whose command line names one of the four test publisher scripts of this folder as a
+# whole file name, whatever folder it was started from: one that you started yourself in another
+# window is ended as well. A Python process that has only the text publish_test_ somewhere in its
+# command line is left alone.
 function Test-QarTestPublisher([string]$CommandLine) {
     $name = '(?<![\w.-])publish_test_(?:markers|tf|robot|pointcloud)\.py(?![\w.-])'
     return [bool]($CommandLine -match $name)

@@ -349,7 +349,7 @@ Select-String -Path $log.FullName -Pattern 'AR PANEL: streaming|qar-panel-adapte
 ...
 ```
 
-A click and a hover reach the real widget of RViz, which the maintainers confirmed in live sessions together with the lists of drop-down boxes and the dialogs. The unit tests also cover the dragging of a slider and the use of two hands, but no live session has exercised them yet, so do not rely on them; [What the live sessions showed](VERIFICATION.md#what-the-live-sessions-showed) lists the evidence.
+A click and a hover reach the real widget of RViz, which the authors of qar_rviz_plugin confirmed in live sessions together with the lists of drop-down boxes and the dialogs. The unit tests also cover the dragging of a slider and the use of two hands, but no live session has exercised them yet, so do not rely on them; [What the live sessions showed](VERIFICATION.md#what-the-live-sessions-showed) lists the evidence.
 
 ## The hidden Displays panel
 
@@ -484,13 +484,13 @@ When a video stutters, [ROS data problems](TROUBLESHOOTING.md#ros-data-problems)
 
 The group `"Spatial AR interaction"` turns the hand ray of the headset into ROS messages. It starts with the mode `Off`, so that a gesture can never move a robot because a mode was left on. Choose the mode `"Pick a point -> /clicked_point"` in the drop-down `Mode`. The drop-down `Target` offers `"Action Point (QarOS scene intersect)"`, which is the default, and two approximations that need a straight ray; leave it. The field `Frame` is a text field that holds `map` at the start; it names the frame in the header of every pick, and it does not follow the Fixed Frame of RViz, so change it when your scene uses another frame. Leave the check box `"Publish without confirming"` unchecked.
 
-In the Visualizer aim the hand ray at one of the markers or at the floor and click. The point that QarOS reports is the intersection of your ray with the scene that the plugin streamed, and the plugin adds an opaque floor under the grid, so that a click can hit the floor between the lines. The status label of the group now shows the pick and says that it waits for your confirmation, and the button `"Confirm pick"` is enabled. Press it. The plugin publishes a `PointStamped` on `/clicked_point`, as the tool `Publish Point` of RViz does. In the second window the command prints that message and ends:
+In the Visualizer aim the hand ray at one of the markers or at the floor and click. The point that QarOS reports is the intersection that the gesture acts on; the SDK does not document which geometry that is, and the plugin adds an opaque floor under the grid, so that a click can hit the floor between the lines. The status label of the group now shows the pick and says that it waits for your confirmation, and the button `"Confirm pick"` is enabled. Press it. The plugin publishes a `PointStamped` on `/clicked_point`, as the tool `Publish Point` of RViz does. In the second window the command prints that message and ends:
 
 ```powershell
 python "$env:ROS2_INSTALL_ROOT\Scripts\ros2-script.py" topic echo --once --no-daemon /clicked_point geometry_msgs/msg/PointStamped
 ```
 
-Start the command before you press `"Confirm pick"`, because it waits for a message. The check passes when the point lies near the object or the spot of the floor that you aimed at: about 0.1 to 0.2 m at a distance of a few metres is a fair tolerance. The maintainers have no measured figure for the accuracy of a pick.
+Start the command before you press `"Confirm pick"`, because it waits for a message. The check passes when the point lies near the object or the spot of the floor that you aimed at: about 0.1 to 0.2 m at a distance of a few metres is a fair tolerance. The authors of qar_rviz_plugin have no measured figure for the accuracy of a pick.
 
 A click that hits nothing is refused. When QarOS finds no intersection, it hands back the start point of the gesture, which is your hand, as the action point, and the plugin refuses to publish your hand as a picked point. The counters line of the status label then shows `clicks-on-nothing=` with the number of such clicks, and the reason has this form:
 
@@ -524,7 +524,7 @@ Select-String -Path $log.FullName -Pattern 'AR PANEL: close|AR PANEL: .* was not
 
 ## The same on HoloLens 2
 
-The maintainers state that an earlier build of the plugin streamed to a HoloLens 2 with the QarOS SDK drop of 2026-09-28, the drop that this release is verified against; no record of that run exists. The steps of this section were not run against a device while this documentation was written, because no device was available, so the output of a device is given as lines quoted from the code and not as recorded output.
+The authors of qar_rviz_plugin state that an earlier build of the plugin streamed to a HoloLens 2 with the QarOS SDK drop of 2026-09-28, the drop that this release is verified against; no record of that run exists. The steps of this section were not run against a device while this documentation was written, because no device was available, so the output of a device is given as lines quoted from the code and not as recorded output.
 
 A HoloLens is the one kind of device that QarOS can address by name, so the panel asks for its host name. Choose `"HoloLens 2"` in the drop-down of the group `Peers`, type the host name of the device in the field next to it, and press `"Invite peer"`. Without a host name the panel refuses, and its message has this form at the beginning:
 
@@ -583,7 +583,7 @@ QarOS has its own ports, a multicast discovery and an encrypted session transpor
 
 **UDP port 7446 must be free on the machine that runs the program.** QarOS uses it for its discovery (zenoh scouting), and a QarOS session cannot be created while another program holds it. ROS 2 can take it by accident, see the next paragraph; "Run-time problems" in the troubleshooting document shows how to find the holder.
 
-**ROS 2 uses a range of UDP ports of its own.** Each ROS 2 participant on a domain takes a pair of UDP ports in steps of two upward from 7410, and the participants of one domain find each other by multicast on the local network. A machine that publishes or subscribes to topics of another machine needs the same domain number as that machine and a network that passes the multicast discovery between them. A single machine needs no firewall rule for ROS 2 traffic between its own programs.
+**ROS 2 uses a range of UDP ports of its own.** Each ROS 2 participant on domain 0, the default domain, takes a pair of UDP ports in steps of two upward from 7410, on the domain with the number N from 7410 + 250 x N, and the participants of one domain find each other by multicast on the local network. A machine that publishes or subscribes to topics of another machine needs the same domain number as that machine and a network that passes the multicast discovery between them. A single machine needs no firewall rule for ROS 2 traffic between its own programs.
 
 **The web panel server listens on a TCP port that you may have to open.** The server of qar_rviz_plugin serves one HTTP and WebSocket listener, and the page and its socket use the same port, so one firewall rule covers both. A panel is reached at an address of the form `http://<host>:<port>/p/<token>/`, and the page opens its socket at `ws://<host>:<port>/ws/<token>`. The traffic is not encrypted; the token in the address is a random 128-bit value, and a wrong or missing token is answered with a 404 without a hint whether the token exists.
 
@@ -609,7 +609,7 @@ Select-String -Path $log.FullName -Pattern 'LIVE: invited|LIVE: opened stream|LI
 
 ## Stop and clean up
 
-Close RViz. The launcher returned when it started RViz, so there is nothing to stop in the window that ran it. The session of QarOS ends when RViz closes: the panel tears down its streams and panels before it ends the session. RViz can crash while it exits; that is a known issue that the maintainers tolerate, and [RViz and plugin problems](TROUBLESHOOTING.md#rviz-and-plugin-problems) lists it.
+Close RViz. The launcher returned when it started RViz, so there is nothing to stop in the window that ran it. The session of QarOS ends when RViz closes: the panel tears down its streams and panels before it ends the session. RViz can crash while it exits; that is a known issue that the authors of qar_rviz_plugin tolerate, and [RViz and plugin problems](TROUBLESHOOTING.md#rviz-and-plugin-problems) lists it.
 
 The one program that the launcher started besides RViz keeps running: the publisher of the synthetic markers, in a hidden window. The launcher printed its process id when it started it. Stop it with `Stop-Process` and that number, or start the launcher again, which stops the test publishers of earlier runs by itself. The publisher of the velocity ends by itself after its 300 messages, as the command of this document is written; the publisher of the video keeps running after the end of the clip, so press Ctrl+C in its window.
 

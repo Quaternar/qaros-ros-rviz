@@ -15,7 +15,7 @@ The panel writes every line that it logs to two places. It appends the line to i
 | the folder `QAR_VIDEO_TIMING_DIR` | the timing files | the launcher parameter `-TimingCsv` |
 | the output prefix of a scripted mode | the result files of the mode | the variables `QAR_PANEL_AUTO...` and the preview script |
 
-The QarOS log folder is `quaternar` in `TEMP` unless `QAR_PANEL_LOG_DIR` names another, and every process that the library starts writes its own files there. [Where the QarOS library writes its logs](TROUBLESHOOTING.md#where-the-qaros-library-writes-its-logs) explains the folder and [Which severity applies](TROUBLESHOOTING.md#which-severity-applies) the severity. The names of the files carry the role of the process, and the maintainers saw these in sessions with a Visualizer: `streaming_viz_<id>_stdout.log` for a Visualizer, `mixer_<id>_stdout.log` for a mixer that the runtime starts for itself, and `qar_launcher_stdout.log` for the runtime launcher. The runtime reports its own internal peers too, which is why the admission policy exists.
+The QarOS log folder is `quaternar` in `TEMP` unless `QAR_PANEL_LOG_DIR` names another, and every process that the library starts writes its own files there. [Where the QarOS library writes its logs](TROUBLESHOOTING.md#where-the-qaros-library-writes-its-logs) explains the folder and [Which severity applies](TROUBLESHOOTING.md#which-severity-applies) the severity. The names of the files carry the role of the process, and the authors of qar_rviz_plugin saw these in sessions with a Visualizer: `streaming_viz_<id>_stdout.log` for a Visualizer, `mixer_<id>_stdout.log` for a mixer that the runtime starts for itself, and `qar_launcher_stdout.log` for the runtime launcher. The runtime reports its own internal peers too, which is why the admission policy exists.
 
 The result files of the capture buttons and of the scripted modes are text files of `key=value` lines, and the first line of each says what the file is. The file `_capture.txt` starts with `"# Qar RViz2 offscreen capture"`, `_stereo.txt` with `"# Qar RViz2 single-peer stereo capture"`, `_autostereo.txt` with `"# Qar RViz2 single-peer stereo AUTOSTEREO summary"`, `_automulti.txt` with `"# Qar RViz2 multi-peer batched render scheduler proof"`, and the file that `QAR_PANEL_AUTODUMP` names with `"# Qar RViz2 streaming panel - auto diagnostics dump"`.
 
@@ -184,7 +184,7 @@ LIVE: opened stream for peer %1
 LIVE: closed stream for peer %1
 ```
 
-The first line gives the first ten hexadecimal digits of the peer identifier that the runtime assigned to the invitation. The line about the sender is written once, because the creation of a sender is asynchronous and reports "not yet" on most early ticks. The adapter prints the bootstrap and the peers on the same stream, and the lines below are the ones that decide most cases. They are always printed; `QAR_ADAPTER_TRACE` adds a pair of lines around every call; each line has this form:
+The first line gives the first ten hexadecimal digits of the peer identifier that the runtime assigned to the invitation. The line about the sender is written once, because the creation of a sender is asynchronous and reports "not yet" on most early ticks. The adapter prints the bootstrap and the peers on the same stream, and the lines below are the ones that decide most cases. They are always printed; `QAR_ADAPTER_TRACE` adds a pair of lines around each main call of the bootstrap; each line has this form:
 
 ```text
 [qar-adapter] library logging: severity=%s console=%s folder=%s%s
