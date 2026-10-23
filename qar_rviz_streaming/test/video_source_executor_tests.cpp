@@ -113,6 +113,31 @@ TEST(VideoSourceExecutor, DestructionShutsDownItsOwnContextAndLeavesTheHostsAlon
   EXPECT_TRUE(host_context()->is_valid()) << "RViz's own context must never be touched";
 }
 
+TEST(VideoSourceExecutor, RclcppKeepsNoReferenceToItsContextOnceItIsGone)
+{
+  // rclcpp lists every initialised context in a process-wide list of weak references, whose
+  // bookkeeping is code of the module that made the context: a reference left there after
+  // the owner is gone is released at process exit, when a plugin that made it may be unloaded.
+  // The shutdown takes the context out of the list, even while someone still holds it.
+  const auto listed = [](const rclcpp::Context::SharedPtr & context) {
+      for (const rclcpp::Context::SharedPtr & each : rclcpp::get_contexts()) {
+        if (each == context) {
+          return true;
+        }
+      }
+      return false;
+    };
+  rclcpp::Context::SharedPtr context;
+  {
+    VideoSourceExecutor executor;
+    context = executor.context();
+    ASSERT_NE(context, nullptr) << executor.error();
+    EXPECT_TRUE(listed(context)) << "an initialised context is listed";
+  }
+  EXPECT_FALSE(listed(context)) << "the owner's release must take the context out of the list";
+  EXPECT_TRUE(listed(host_context()));
+}
+
 TEST(VideoSourceExecutor, SurvivesItsContextBeingShutDownFromOutside)
 {
   // What rclcpp's signal handler does to every context on Ctrl+C: the spin

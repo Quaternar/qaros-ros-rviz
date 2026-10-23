@@ -107,6 +107,11 @@ struct HiddenRvizPanel
   /// synthetic AR input can never start a native drag-and-drop loop.
   bool item_drag_disabled = false;
 
+  /// True when the help area under the copy's property tree (a text browser) was hidden, so
+  /// that the tree gets the whole height of the copy. The Displays panel of the desktop is not
+  /// touched.
+  bool help_area_hidden = false;
+
   /// Why there is no panel. Empty on success.
   std::string error;
 };
@@ -121,7 +126,9 @@ struct HiddenRvizPanel
 ///
 /// On the returned copy only, item dragging is turned off: RViz's Displays tree lets
 /// the operator drag a display to reorder it, and a drag started by synthetic AR
-/// pointer input must never reach the operating system's drag-and-drop loop.
+/// pointer input must never reach the operating system's drag-and-drop loop. Its help
+/// area is hidden too, so that the property tree has the whole height of the copy and a
+/// copy that is made as high as its tree needs shows no scroll bar.
 HiddenRvizPanel create_hidden_displays_panel(rviz_common::DisplayContext * context);
 
 }  // namespace qar_rviz_streaming

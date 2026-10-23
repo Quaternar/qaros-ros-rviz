@@ -70,6 +70,34 @@ struct Vec3d
   double z = 0.0;
 };
 
+/// How far below the grid the near face of the floor-companion plane lies: 1 mm. The gap is
+/// geometric only; the plane's material pass pushes the plane away in depth (the bias below) so
+/// that the grid keeps winning the depth test at a distance.
+constexpr double kFloorPlaneDropMetres = 0.001;
+
+/// The depth bias of the plane's material pass (Ogre's Pass::setDepthBias), NEGATIVE, which pushes
+/// the plane AWAY from the camera. Ogre documents a positive value as the decal setting, the one
+/// that "adjusts the depth buffer value used for the decal such that it is slightly higher than
+/// the true value, ensuring that the decal appears on top" (OgrePass.h, Ogre 1.12): positive moves
+/// a surface toward the camera, negative away from it. RViz's own map swatch pushes its quad away
+/// the same way with setDepthBias(-16, 0).
+///
+///  * The constant term is counted in steps of the depth buffer's resolution, so it scales with
+///    the distance. A 24-bit buffer with a 0.01 m near plane resolves about z * z / (0.01 * 2^24)
+///    metres at distance z (0.6 mm at 10 m, 2.4 mm at 20 m), so a bare 1 mm gap falls below one
+///    step beyond about 13 m and would z-fight there; 16 steps are 1 mm at about 3 m and grow
+///    with the square of the distance (10 mm at 10 m).
+///  * The slope term adds a multiple of the largest depth change across a pixel of the plane,
+///    which is greatest at grazing angles. There a line (the grid) and a triangle (the plane) are
+///    sampled at positions that differ by up to a pixel, so their depths differ by up to one
+///    slope: -2 covers that with a margin of one more. The term grows without bound as the angle
+///    flattens, so it stays small.
+///
+/// The stream's depth map is rendered by another scheme (one shared pass without a bias), so
+/// only the geometric gap counts there.
+constexpr float kFloorPlaneDepthBiasConstant = -16.0f;
+constexpr float kFloorPlaneDepthBiasSlopeScale = -2.0f;
+
 /// @brief The floor-companion plane's placement + size, in the same local
 /// space as @ref Vec3d.
 struct GridFloorPlaneGeometry
@@ -101,15 +129,20 @@ GridPlaneKind parse_grid_plane_kind(const std::string & plane_name);
 /// @param cell_size The Grid's "Cell Size" property, in metres (> 0 in RViz).
 /// @param grid_offset The Grid's "Offset" property, verbatim.
 /// @param push_metres How far to push the plane along the grid's own normal,
-/// to the "below" side (see the file brief) — the panel combines the 1 mm
-/// geometric drop with half the plane's own thickness here, so the plane's
-/// near face (not its center) ends up exactly 1 mm below the grid.
+/// to the "below" side (see the file brief). The plane is placed by its
+/// center, so this is the drop plus half the plane's own thickness; see
+/// @ref floor_plane_push_metres.
 GridFloorPlaneGeometry compute_grid_floor_plane_geometry(
   GridPlaneKind plane,
   std::uint32_t cell_count,
   double cell_size,
   const Vec3d & grid_offset,
   double push_metres);
+
+/// @brief The push that puts the near face of a plane of @p thickness_metres exactly
+/// @ref kFloorPlaneDropMetres below the grid: the drop plus half the thickness, because the
+/// plane is placed by its center and extends the other half of its thickness further away.
+double floor_plane_push_metres(double thickness_metres);
 
 }  // namespace qar_rviz_streaming
 

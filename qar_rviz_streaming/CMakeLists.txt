@@ -121,6 +121,19 @@ src/spatial_interaction.cpp
   # that no-Ogre/no-RViz boundary if you touch it.
   src/grid_floor_plane_geometry.cpp
   src/grid_floor_plane.cpp
+  # The settings the panel keeps in the RViz configuration and the pure units of the AR control
+  # panel (standard library, qar_ui_model and qar_ar_core only). They are also compiled into
+  # qar_rviz_streaming_tests (qar_rviz_streaming/test).
+  src/panel_settings.cpp
+  src/ar_control_panel_router.cpp
+  src/ar_control_panel_model.cpp
+  src/ar_control_panel_state.cpp
+  src/ar_control_panel_placement.cpp
+  # The rule that keeps an AR panel above the ground (standard library and qar_ar_core only).
+  src/panel_ground_rule.cpp
+  # The tabbed layout of the panel: scroll pages, the elided status lines and the constant size
+  # hints (Qt Widgets only, no RViz). Also compiled into qar_rviz_streaming_widget_tests.
+  src/stable_panel_layout.cpp
   # Listed so AUTOMOC processes the Q_OBJECT headers.
   include/qar_rviz_streaming/qar_streaming_panel.hpp
   include/qar_rviz_streaming/add_topic_dialog.hpp

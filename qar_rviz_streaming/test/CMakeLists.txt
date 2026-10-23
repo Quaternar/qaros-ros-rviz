@@ -38,6 +38,16 @@ add_executable(qar_rviz_streaming_tests
   # pointers the way the plugin meets RViz's PanelFactory.
   rtti_guard_tests.cpp
   rtti_guard_test_types.cpp
+  # The persisted settings and the AR control panel's pure units (standard library, qar_ui_model
+  # and qar_ar_core only): the settings table and its precedence rule, the router of the page's
+  # control events, the page model, the state that fills it, and the panel placement.
+  panel_settings_tests.cpp
+  ar_control_panel_router_tests.cpp
+  ar_control_panel_model_tests.cpp
+  ar_control_panel_state_tests.cpp
+  ar_control_panel_placement_tests.cpp
+  # The rule that keeps an AR panel above the ground (standard library and qar_ar_core only).
+  panel_ground_rule_tests.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ros_topic_tree.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/display_class_catalog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ros_graph_tree.cpp
@@ -55,6 +65,12 @@ add_executable(qar_rviz_streaming_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/spatial_publish.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/spatial_interaction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/grid_floor_plane_geometry.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/panel_settings.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_router.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_model.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_state.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_placement.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/panel_ground_rule.cpp
 )
 
 target_include_directories(qar_rviz_streaming_tests PRIVATE
@@ -274,4 +290,67 @@ if(TARGET qar_rviz_plugin::qar_ros_ui)
 else()
   message(STATUS
     "qar_ros_ui not built; the semantic templates are not cross-checked against the distro's IDL.")
+endif()
+
+# --- The tabbed layout's widget tests -----------------------------------------
+#
+# qar_rviz_streaming_tests above links QtCore only and creates no QApplication, so it cannot host
+# a test that builds widgets. This executable has its own main() (widget_test_main.cpp), which
+# runs the suite under the offscreen platform plugin so that no window is ever created, and it
+# compiles stable_panel_layout.cpp (Qt Widgets only) directly rather than linking the colcon-only
+# plugin. That file measures scroll areas with the library's census (qar_qt_streaming), so the
+# library is linked. Skipped when Qt5 Widgets or the library is not found.
+if(TARGET Qt5::Widgets AND TARGET qar_qt_streaming::qar_qt_streaming)
+  add_executable(qar_rviz_streaming_widget_tests
+    widget_test_main.cpp
+    stable_panel_layout_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/stable_panel_layout.cpp
+  )
+
+  target_include_directories(qar_rviz_streaming_widget_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  )
+
+  target_link_libraries(qar_rviz_streaming_widget_tests PRIVATE
+    qar_qt_streaming::qar_qt_streaming
+    Qt5::Widgets
+    GTest::gtest
+  )
+
+  target_compile_features(qar_rviz_streaming_widget_tests PRIVATE cxx_std_17)
+
+  qar_apply_warning_flags(qar_rviz_streaming_widget_tests)
+
+  # Stage the Qt runtime next to the executable: gtest_discover_tests runs it to ENUMERATE the
+  # tests, outside any per-test ENVIRONMENT, so a PATH tweak would come too late. The offscreen
+  # platform plugin goes to <exe_dir>/platforms, where Qt looks for it.
+  foreach(_qar_wt_lib Qt5::Core Qt5::Gui Qt5::Widgets)
+    if(TARGET ${_qar_wt_lib})
+      add_custom_command(TARGET qar_rviz_streaming_widget_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "$<TARGET_FILE:${_qar_wt_lib}>" "$<TARGET_FILE_DIR:qar_rviz_streaming_widget_tests>"
+        VERBATIM
+      )
+    endif()
+  endforeach()
+
+  if(TARGET Qt5::QOffscreenIntegrationPlugin)
+    add_custom_command(TARGET qar_rviz_streaming_widget_tests POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:qar_rviz_streaming_widget_tests>/platforms"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:Qt5::QOffscreenIntegrationPlugin>"
+        "$<TARGET_FILE_DIR:qar_rviz_streaming_widget_tests>/platforms"
+      VERBATIM
+    )
+  else()
+    message(WARNING
+      "Qt5::QOffscreenIntegrationPlugin not found; qar_rviz_streaming_widget_tests will need "
+      "a usable QT_QPA_PLATFORM on the host to run.")
+  endif()
+
+  gtest_discover_tests(qar_rviz_streaming_widget_tests DISCOVERY_TIMEOUT 60)
+else()
+  message(STATUS
+    "Qt5 Widgets or qar_qt_streaming not found; qar_rviz_streaming_widget_tests is skipped.")
 endif()

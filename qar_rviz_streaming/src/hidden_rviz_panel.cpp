@@ -9,6 +9,7 @@
 
 #include <QMetaObject>
 #include <QString>
+#include <QTextBrowser>
 
 #include "qar_rviz_streaming/rtti_guard.hpp"
 
@@ -209,6 +210,14 @@ create_hidden_displays_panel(rviz_common::DisplayContext * context)
     }
     tree->setDragEnabled(false);
     out.item_drag_disabled = true;
+
+    // The tree gets the whole height of the copy: the help area under it (a text browser that
+    // the tree's current item fills) is hidden. The copy is a window of its own, so the help
+    // area of the Displays dock on the desktop is another widget and stays as it is.
+    for (QTextBrowser * help : panel->findChildren<QTextBrowser *>()) {
+      help->hide();
+      out.help_area_hidden = true;
+    }
 
     // Only a label for debuggers and Qt's own messages: the window is never on screen.
     panel->setWindowTitle(QStringLiteral("Displays (AR copy)"));

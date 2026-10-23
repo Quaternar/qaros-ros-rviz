@@ -14,6 +14,7 @@
 #include <OgreMaterial.h>
 #include <OgrePass.h>
 #include <OgreQuaternion.h>
+#include <OgreRenderQueue.h>
 #include <OgreSceneManager.h>
 #include <OgreSceneNode.h>
 #include <OgreTechnique.h>
@@ -32,32 +33,21 @@ namespace qar_rviz_streaming
 namespace
 {
 
-// The floor is an opaque gray rectangle 1 mm under the grid plane.
-constexpr double kDropMetres = 0.001;
+// The floor is an opaque gray rectangle 1 mm under the grid plane
+// (kFloorPlaneDropMetres, grid_floor_plane_geometry.hpp). The grid lines are 1 mm
+// nearer to the camera than the plane's near face, and the plane's pass pushes the
+// plane away in depth (below), so the grid is drawn over it at a distance as well.
 
 // The box needs some real thickness to be a solid, well-behaved piece of
 // geometry rather than a zero-volume sliver; it is never seen (nothing in
 // this feature samples the depth map from underneath the floor), so its exact
-// value is not load-bearing the way kDropMetres is.
+// value is not load-bearing the way the 1 mm drop is.
 constexpr double kThicknessMetres = 0.004;
 
-// Depth bias on the plane's own material pass, on top of the geometric 1 mm
-// drop. Near plane 0.01 m + a 24-bit depth buffer resolves to only ~0.6 mm at
-// 10 m and ~2.4 mm at 20 m, so the bare 1 mm gap alone z-fights with the grid
-// lines well inside a typical room. This exact Ogre build already carries two
-// precedents for the scale of these numbers: rviz_rendering's MovableText uses
-// setDepthBias(1.0, 1.0) (a small pull toward the camera for billboarded
-// captions; movable_text.cpp in rviz_rendering), and rviz_default_plugins' map
-// Swatch — a whole ground-plane-sized quad with the exact same "avoid
-// z-fighting at a distance" problem this plane has — uses
-// setDepthBias(-16.0f, 0.0f) (swatch.cpp in rviz_default_plugins; both under
-// https://github.com/ros2/rviz/tree/humble). We want the OPPOSITE direction
-// (push AWAY from the camera so the grid lines always win, not toward it), at
-// the Swatch's magnitude, plus a bigger slope-scaled term than MovableText's:
-// our plane is seen edge-on, at a much more grazing angle than a camera-facing
-// billboard, which is exactly where the slope-scaled term matters most.
-constexpr float kDepthBiasConstant = 16.0f;
-constexpr float kDepthBiasSlopeScale = 4.0f;
+// The pass carries the plane's negative depth bias (grid_floor_plane_geometry.hpp), which
+// pushes it away from the camera.
+constexpr float kDepthBiasConstant = kFloorPlaneDepthBiasConstant;
+constexpr float kDepthBiasSlopeScale = kFloorPlaneDepthBiasSlopeScale;
 
 // Unlit neutral gray, in the range 0.35-0.45.
 constexpr float kGreyLevel = 0.4f;
@@ -253,6 +243,12 @@ void GridFloorPlaneManager::syncOne(rviz_default_plugins::displays::GridDisplay 
     // we never make for this object.
     if (entry.shape->getEntity() != nullptr) {
       entry.shape->getEntity()->setQueryFlags(0);
+      // Drawn BEFORE the Grid display and every other display: RENDER_QUEUE_4 comes ahead of
+      // RENDER_QUEUE_MAIN, the group an entity is in unless it asks for another one. The plane
+      // is opaque and writes depth, so what is drawn later is tested against it, and a Grid
+      // that blends (its Alpha below 1: no depth write, source-alpha blending) is blended
+      // onto the grey instead of being painted over by it.
+      entry.shape->getEntity()->setRenderQueueGroup(Ogre::RENDER_QUEUE_4);
     }
   }
 
@@ -293,7 +289,7 @@ void GridFloorPlaneManager::syncOne(rviz_default_plugins::displays::GridDisplay 
   // grid and lets the box extend the rest of its thickness further away.
   const Vec3d grid_offset{offset.x, offset.y, offset.z};
   const GridFloorPlaneGeometry geometry = compute_grid_floor_plane_geometry(
-    plane_kind, cell_count, cell_size, grid_offset, kDropMetres + kThicknessMetres / 2.0);
+    plane_kind, cell_count, cell_size, grid_offset, floor_plane_push_metres(kThicknessMetres));
 
   entry.shape->setOrientation(planeOrientation(plane_kind));
   entry.shape->setPosition(

@@ -24,6 +24,11 @@ GridPlaneKind parse_grid_plane_kind(const std::string & plane_name)
   return GridPlaneKind::kXY;
 }
 
+double floor_plane_push_metres(double thickness_metres)
+{
+  return kFloorPlaneDropMetres + 0.5 * thickness_metres;
+}
+
 GridFloorPlaneGeometry compute_grid_floor_plane_geometry(
   GridPlaneKind plane,
   std::uint32_t cell_count,
