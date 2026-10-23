@@ -890,7 +890,7 @@ cmake --build --preset vs2019-x64
 ...
 ```
 
-The build produces seven test executables, and the tests need no QarOS SDK and open no window. [Testing](TESTING.md) explains what they cover. Run them now:
+The build produces eight test executables, and the tests need no QarOS SDK and open no window. [Testing](TESTING.md) explains what they cover. Run them now:
 
 ```powershell
 ctest --preset vs2019-x64

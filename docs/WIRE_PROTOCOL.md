@@ -107,7 +107,7 @@ Server to page. One line of text with a level, which the page shows in the statu
 {"v":1,"type":"status","seq":3,"level":"warning","text":"no publisher on /odom"}
 ```
 
-`level` is one of `neutral`, `ok`, `warning`, `error` and `stale`, and `neutral` when it is absent. An empty `text` clears the line.
+`level` is one of `neutral`, `ok`, `warning`, `error` and `stale`, and `neutral` when it is absent. An empty `text` clears the line. The page clears a line of the level `error` by itself after six seconds, and a line that arrives meanwhile, of any level, cancels the pending clear.
 
 ### ack
 
@@ -202,7 +202,7 @@ Examples are `pose.position.x`, `ranges[3]` and `points[2].x`. A path has no spa
 | `applyFit(reason)` | Fits the theme of the page to the viewport that it was given, as `qar_ui_model::fit_page_to_viewport` does it. It returns an object with the members `scale`, `columns`, `viewport` and `reason`, or `null`. The page calls it at boot before it draws anything, and on every resize. |
 | `fitState()` | The fit that was applied last, or `null` when none was. |
 
-The DOM contract, which is what the runtime looks for, comes from `render_widget_fragment` and is pinned by golden tests: every widget is an element with `data-qar-id`, `data-qar-type` and, when it is bound, `data-qar-bind`. The parts that the runtime fills carry `data-qar-role`, and the parts of a component, such as the three fields of a vector, also `data-qar-component`.
+The DOM contract, which is what the runtime looks for, comes from `render_widget_fragment` and is pinned by golden tests: every widget is an element with `data-qar-id`, `data-qar-type` and, when it is bound, `data-qar-bind`. The parts that the runtime fills carry `data-qar-role`, and the parts of a component, such as the three fields of a vector, also `data-qar-component`. A widget with a visibility binding starts hidden, with `style="display:none"`, and a caption that a caption binding can replace carries the role `caption`.
 
 The page chrome outside the widgets is the boot diagnostic `#qar-diag` and the click pager `#qar-scroll`, whose parts have the roles `scroll-top`, `scroll-up`, `scroll-pos`, `scroll-down` and `scroll-bottom`. The page always contains the pager and hides it until the runtime has measured real overflow, and it never shows it on hover. It is paging and not a scrollbar by choice: a thumb is a few millimetres of panel that an operator has to hit and hold in the air, and discrete jumps that are each complete fit that better ([Design notes](ARCHITECTURE.md#paging-by-click-not-a-scrollbar)).
 
