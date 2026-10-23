@@ -31,7 +31,7 @@
     PATH: the adapter loads qar-streaming-c.dll by full path with flags that skip PATH; the
     runtime gets its launcher from QAR_RUNTIME_BINARIES_DIR. The script prepends it anyway.
 
-    LOGGING IS QUIET BY DEFAULT: a low-I/O run. QarOS logs at `warn` (QAR_LOG_SEVERITY for the
+    LOGGING IS QUIET BY DEFAULT: a low-I/O run. QarOS logs at `info` (QAR_LOG_SEVERITY for the
     runtime/launcher/mixer, QAR_PANEL_LOG_SEVERITY for our in-process library;
     QAR_PANEL_LOG_CONSOLE=off keeps that library from also echoing every line into
     rviz_live_*.out.log), there is no zenoh logging, and none of the per-frame adapter traces
@@ -42,15 +42,42 @@
     -KeepLogEnv is given, because a leftover loud value defeats quiet mode without a sign.
     The mode is printed as "log mode".
 
+    START POSITION: the RViz it starts gets QAR_PANEL_FIXED_POSES=ground (the panels with a
+    fixed place hang from the RViz ground) and QAR_PANEL_VOLUME_Y=-1.6 (the room height of the
+    centre of the app volume, in metres) when the variable is not set in the shell. A value in
+    the shell wins. The plan prints each value and where it comes from: "launcher default" or
+    "environment".
+
     Before launching (-Confirm), every *.log in the QAR log directory over 256 MB
     ($env:QAR_PANEL_LOG_DIR, default %TEMP%\quaternar) is renamed to <name>.prev,
     replacing an older .prev, so a run never appends to a GB-sized file. The dry run only
     reports what it would rotate.
 
+    The library of QarOS inside RViz writes its log to <QAR log dir>\qar_streaming.log and
+    starts that file afresh in every session. When rviz2 has exited, the launcher copies it to
+    <LogDir>\rviz_live_<stamp>.qar_streaming.log, next to the RViz logs of the run. With
+    -Confirm the launcher therefore stays running until rviz2 exits (Ctrl+C stops the wait and
+    saves the log as it is). A file that is older than the run is not copied, and a failed copy
+    is only a warning. The dry run prints the name of the copy.
+
+    The processes that QarOS starts write their own logs to the same folder: the mixers to
+    mixer_<id>_stdout.log and the Visualizers to streaming_viz_<id>_stdout.log, and a process that
+    crashes leaves a *.crash.txt report (in the folder itself or in its subfolder crashes). Those
+    files are not started afresh for the next run either, so at the same moment the launcher copies
+    every one of them that was written at or after the start of the run to
+    <LogDir>\rviz_live_<stamp>.mixer_<id>.log, <LogDir>\rviz_live_<stamp>.streaming_viz_<id>.log
+    and <LogDir>\rviz_live_<stamp>.<name of the crash report>, and prints one line per copy. The
+    .dmp files are not copied. A missing folder or file is only a note, and a failed copy only a
+    warning. The dry run prints the plan of these copies.
+
     The script also WARNS (it never blocks) about machine-level causes of stalls that
     hit every stream at once: a %TEMP% drive with under 10% or under 15 GB free, other
     processes using the NVIDIA GPU for compute (nvidia-smi), and less than ~4 GB of
-    commit charge left (Win32_OperatingSystem.FreeVirtualMemory).
+    commit charge left (Win32_OperatingSystem.FreeVirtualMemory). The plan names the memory
+    use of the GPU (nvidia-smi --query-gpu), and with -Confirm the results of all these
+    checks are written next to the RViz logs, to rviz_live_<stamp>.checks.txt (the stamp of
+    the .out.log and .err.log of the run), so that a run whose scene came out black can be
+    compared with what else was using the GPU at its start.
 
     It also reads the version of the C++ runtime next to rviz2.exe (<Ros2Root>\bin\MSVCP140.dll):
     the QarOS library needs 14.40 or newer, and the ROS 2 distribution ships 14.29. With -Confirm
@@ -100,7 +127,7 @@
                          breadcrumb trace (QAR_ADAPTER_TRACE, in rviz_live_*.err.log).
                          Expect GB-sized logs, and do NOT judge stalls or latency in this
                          mode: its own I/O can cause them. Without it (the default) QarOS
-                         logs at `warn`, zenoh logging is off and no per-frame trace is on.
+                         logs at `info`, zenoh logging is off and no per-frame trace is on.
 .PARAMETER KeepLogEnv    In QUIET mode (the default) loud logging values already present in
                          the shell (QAR_LOG_SEVERITY / QAR_PANEL_LOG_SEVERITY trace|debug,
                          RUST_LOG with trace|debug, QAR_ZENOH_LOG, QAR_ADAPTER_TRACE*,
@@ -110,6 +137,16 @@
                          QAR_LOG_SEVERITY over the panel's own setting). -KeepLogEnv
                          keeps them as they are. Quieter values you set yourself (e.g.
                          QAR_LOG_SEVERITY=error) always win, in every mode.
+.PARAMETER QarLogSeverity  Log level of QarOS for this run only: warn, info or debug. It sets
+                         QAR_LOG_SEVERITY (the runtime, the launcher and the mixers it starts,
+                         and the library inside RViz) and QAR_PANEL_LOG_SEVERITY, in quiet mode
+                         as well, and, when you pass it, wins over the level of -TraceLogs and
+                         over a value of your shell. The variables of your shell are put back
+                         when the script ends.
+                         The library writes its log to qar_streaming.log, which the next session
+                         overwrites, so the launcher saves a copy of that file (see above).
+                         Without the switch the level is the mode's own (info, or trace with
+                         -TraceLogs), and a value of your shell that is not trace or debug wins.
 .PARAMETER TimingCsv     Record per-frame stage timing for the stutter proof: sets
                          QAR_VIDEO_TIMING_DIR to a fresh <LogDir>\timing\<stamp> folder
                          (printed) and the plugin writes epoch-microsecond CSVs there -
@@ -133,8 +170,21 @@
                          scripts\publish_video_file.py applies the same file to itself, so the
                          publisher (the sending side, where it matters most) and rviz2 agree.
                          See the profile's own comments.
-.PARAMETER LogDir        Folder for the rviz2 logs (rviz_live_<stamp>.out.log and .err.log)
-                         and the -TimingCsv folders. Default: %TEMP%\qar_rviz_logs.
+.PARAMETER TestMarkers   Start publish_test_markers.py with the launch. It publishes a small
+                         MarkerArray on /qar_test_markers, which the default scene
+                         (scene3_grid_marker.rviz) shows; without the switch nothing is started
+                         and that scene shows only the grid. With or without the switch the
+                         launcher exports QAR_PANEL_TEST_MARKERS_PYTHON (the python of this
+                         shell) and QAR_PANEL_TEST_MARKERS_SCRIPT (the full path of
+                         publish_test_markers.py) to RViz when both exist, so that the
+                         "Test markers" button of the panel's Diagnostics tab can start and stop
+                         the publisher at any time. When python or the script is missing,
+                         neither variable is exported (a value from the shell is dropped) and
+                         the dry run says why.
+.PARAMETER LogDir        Folder for the rviz2 logs (rviz_live_<stamp>.out.log and .err.log),
+                         the record of the start checks of the run (rviz_live_<stamp>.checks.txt,
+                         written with -Confirm) and the -TimingCsv folders. Default:
+                         %TEMP%\qar_rviz_logs.
 .PARAMETER Confirm       Must be passed explicitly to actually launch. Without it the
                          script only PRINTS the plan and the resolved env (dry run),
                          so it is safe to invoke for inspection.
@@ -155,14 +205,20 @@ param(
     [switch]$RealPeers,
     [switch]$TraceLogs,
     [switch]$KeepLogEnv,
+    [ValidateSet('warn', 'info', 'debug')]
+    [string]$QarLogSeverity = "info",
     [switch]$TimingCsv,
     [switch]$NoDdsProfile,
+    [switch]$TestMarkers,
     [string]$LogDir = "",
     [switch]$Confirm
 )
 
 $ErrorActionPreference = "Stop"
-$stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$runStarted = Get-Date
+# True when the caller passed -QarLogSeverity: only then does it beat the shell and -TraceLogs.
+$qarLogSeverityGiven = $PSBoundParameters.ContainsKey('QarLogSeverity')
+$stamp = $runStarted.ToString("yyyyMMdd_HHmmss")
 
 # The whole environment of the calling shell is saved here and put back in `finally` (dry run
 # and real run). `$env:X = ...` in a script run as .\script.ps1 changes the CALLER's session,
@@ -194,6 +250,11 @@ $QtRoot = Resolve-QarLocation -Value $QtRoot -Parameter 'QtRoot' -EnvVar 'QAR_QT
 $Ros2Root = Resolve-QarLocation -Value $Ros2Root -Parameter 'Ros2Root' -EnvVar 'ROS2_INSTALL_ROOT' `
     -What 'ROS 2 distribution' -Marker 'local_setup.bat' -Section 'ROS 2 Humble for Windows'
 if ([string]::IsNullOrEmpty($LogDir)) { $LogDir = Join-Path $env:TEMP "qar_rviz_logs" }
+# The record of the start checks shares the stamp of the run's RViz logs (rviz_live_<stamp>.out.log
+# and .err.log, named where RViz is started).
+$checksFile = Join-Path $LogDir "rviz_live_$stamp.checks.txt"
+# The copy of the QarOS library log of this run (see Save-QarStreamingLog), with the same stamp.
+$qarLogCopy = Join-Path $LogDir "rviz_live_$stamp.qar_streaming.log"
 
 $sdkBin = Join-Path $SdkRoot "bin"
 $vizExe = Join-Path $sdkBin "qar-streaming-viz.exe"
@@ -348,9 +409,10 @@ $env:QAR_PANEL_LIVE_STREAM = "1"
 # at trace/debug, 'filter' (RUST_LOG) when it names trace/debug anywhere, 'flag' when it is
 # set at all (QAR_ZENOH_LOG starts zenoh logging for any value; the adapter flags test mere
 # presence), 'plain' never.
+$logLevel = $QarLogSeverity   # the level of quiet mode: info, or the one that was asked for
 $logEnv = @(
-    @{ Name = 'QAR_LOG_SEVERITY';        Quiet = 'warn'; Trace = 'trace'; Kind = 'severity' },
-    @{ Name = 'QAR_PANEL_LOG_SEVERITY';  Quiet = 'warn'; Trace = $null;   Kind = 'severity' },
+    @{ Name = 'QAR_LOG_SEVERITY';       Quiet = $logLevel; Trace = 'trace'; Kind = 'severity' },
+    @{ Name = 'QAR_PANEL_LOG_SEVERITY'; Quiet = $logLevel; Trace = $null;   Kind = 'severity' },
     @{ Name = 'QAR_PANEL_LOG_CONSOLE';   Quiet = 'off';  Trace = $null;   Kind = 'plain' },
     @{ Name = 'RUST_LOG';                Quiet = $null;  Trace = 'zenoh=debug'; Kind = 'filter' },
     @{ Name = 'QAR_ZENOH_LOG';           Quiet = $null;  Trace = 'debug'; Kind = 'flag' },
@@ -415,7 +477,7 @@ foreach ($v in $logEnv) {
     [Environment]::SetEnvironmentVariable($v.Name, $want)   # $null removes the variable
 }
 # The adapter resolves the in-process library severity as QAR_PANEL_LOG_SEVERITY, then
-# QAR_LOG_SEVERITY. In quiet mode this script supplies 'warn' for the former, which would beat a
+# QAR_LOG_SEVERITY. In quiet mode this script supplies 'info' for the former, which would beat a
 # QAR_LOG_SEVERITY that was kept on purpose (say 'error') - so mirror that value instead and
 # "your environment wins" stays true for the library inside RViz as well.
 if (-not $TraceLogs -and
@@ -423,6 +485,14 @@ if (-not $TraceLogs -and
     @($logEnvKept | Where-Object { $_ -like 'QAR_PANEL_LOG_SEVERITY=*' }).Count -eq 0) {
     [Environment]::SetEnvironmentVariable('QAR_PANEL_LOG_SEVERITY',
         [Environment]::GetEnvironmentVariable('QAR_LOG_SEVERITY'))
+}
+# -QarLogSeverity is an explicit request, so it is applied after the mode's own values: it wins
+# over -TraceLogs, over a value of the shell and over the clearing of loud values in quiet mode.
+# Both variables are set because the library inside RViz reads QAR_PANEL_LOG_SEVERITY first.
+# The caller's environment is put back when the script ends, so the level holds for this run only.
+if ($qarLogSeverityGiven) {
+    [Environment]::SetEnvironmentVariable('QAR_LOG_SEVERITY', $QarLogSeverity)
+    [Environment]::SetEnvironmentVariable('QAR_PANEL_LOG_SEVERITY', $QarLogSeverity)
 }
 # -TimingCsv: a fresh folder per run under the log folder. The plugin creates it lazily
 # (on its background writer thread) and nothing is written without this variable. Created
@@ -520,9 +590,48 @@ if (-not $env:QAR_PANEL_VISUALIZERS)    { $env:QAR_PANEL_VISUALIZERS    = "$Visu
 if ($InvitePeers.Count -gt 0 -and -not $env:QAR_PANEL_INVITE_PEERS) {
     $env:QAR_PANEL_INVITE_PEERS = ($InvitePeers -join ',')
 }
-if (-not $env:QAR_PANEL_PEER_ADMISSION) {
-    $env:QAR_PANEL_PEER_ADMISSION = if ($RealPeers) { "new" } else { "invited" }
+if ($RealPeers -and -not $env:QAR_PANEL_PEER_ADMISSION) {
+    $env:QAR_PANEL_PEER_ADMISSION = "new"
 }
+
+# Start position for the desktop Visualizer.
+#   QAR_PANEL_FIXED_POSES  room | ground. The docks, the panel itself, the video panels and the
+#                          Displays copy have a fixed place: `room` hangs their top edge at a fixed
+#                          height of the room, `ground` hangs it 1.5 m above the RViz ground,
+#                          wherever the scene has been moved to. The panel's own default is room.
+#   QAR_PANEL_VOLUME_Y     The room height of the centre of the app volume, in metres.
+# This launcher starts the RViz with ground and -1.6, the position from which the desktop Visualizer
+# shows the scene and the panels well at its start. A value that is already in the environment wins,
+# and the plan names the source of each value.
+$fixedPosesSource = 'environment'
+if ([string]::IsNullOrWhiteSpace($env:QAR_PANEL_FIXED_POSES)) {
+    $env:QAR_PANEL_FIXED_POSES = 'ground'
+    $fixedPosesSource = 'launcher default'
+}
+$volumeYSource = 'environment'
+if ([string]::IsNullOrWhiteSpace($env:QAR_PANEL_VOLUME_Y)) {
+    $env:QAR_PANEL_VOLUME_Y = '-1.6'
+    $volumeYSource = 'launcher default'
+}
+
+# Test markers. scene3_grid_marker.rviz shows the markers of publish_test_markers.py, a small rclpy
+# node. -TestMarkers starts it with the launch (below). With or without the switch, the python of
+# this shell and the full path of the script are exported to RViz whenever both exist, so that the
+# "Test markers" button of the panel's Diagnostics tab can start and stop the publisher on demand.
+# When either is missing nothing is exported (a value from the shell is dropped), and the dry run
+# says why. python is looked up here, after the ROS 2 environment is set up, and used again below.
+$pyExe = (Get-Command python -ErrorAction SilentlyContinue).Source
+$markersScript = Join-Path $PSScriptRoot "publish_test_markers.py"
+$markersMissing = $null
+if (-not $pyExe) {
+    $markersMissing = "python not found"
+} elseif (-not (Test-Path -LiteralPath $markersScript -PathType Leaf)) {
+    $markersMissing = "$markersScript not found"
+}
+[Environment]::SetEnvironmentVariable('QAR_PANEL_TEST_MARKERS_PYTHON',
+    $(if ($markersMissing) { $null } else { $pyExe }))
+[Environment]::SetEnvironmentVariable('QAR_PANEL_TEST_MARKERS_SCRIPT',
+    $(if ($markersMissing) { $null } else { $markersScript }))
 
 Write-Host "=== RViz -> QarOS Visualizer live stream ===" -ForegroundColor Magenta
 Write-Host "  scene            : $Scene$(if (Test-Path $Scene) { '' } else { '  (NOT FOUND)' })"
@@ -533,8 +642,29 @@ Write-Host "  QAR_RUNTIME_BINARIES_DIR = $env:QAR_RUNTIME_BINARIES_DIR"
 Write-Host "  QAR_PANEL_LIVE_STREAM    = 1"
 Write-Host "  FASTRTPS_DEFAULT_PROFILES_FILE = $ddsProfileNote"
 Write-Host "  QAR_SCENE_LIGHT          = $env:QAR_SCENE_LIGHT (headlight: $(if ($env:QAR_SCENE_LIGHT_HEADLIGHT -eq 'keep') {'kept'} else {'suppressed while streaming'}))"
-Write-Host "  QAR_PANEL_VISUALIZERS    = $env:QAR_PANEL_VISUALIZERS (admission: $env:QAR_PANEL_PEER_ADMISSION)"
+$admissionNote = if ($env:QAR_PANEL_PEER_ADMISSION) { $env:QAR_PANEL_PEER_ADMISSION } `
+    else { 'panel setting' }
+$visualizerCount = $env:QAR_PANEL_VISUALIZERS
+$autoInvite = "(Connect invites $visualizerCount Visualizer(s) by itself; " +
+    "0 = you invite them with Invite peer)"
+Write-Host "  QAR_PANEL_VISUALIZERS    = $visualizerCount (admission: $admissionNote) $autoInvite"
 Write-Host "  QAR_PANEL_INVITE_PEERS   = $(if ($env:QAR_PANEL_INVITE_PEERS) { $env:QAR_PANEL_INVITE_PEERS } else { '(none - invite from the panel, or pass -InvitePeers)' })"
+Write-Host "  QAR_PANEL_FIXED_POSES    = $env:QAR_PANEL_FIXED_POSES ($fixedPosesSource)"
+Write-Host "  QAR_PANEL_VOLUME_Y       = $env:QAR_PANEL_VOLUME_Y ($volumeYSource)"
+if ($markersMissing) {
+    $markersNote = "nothing exported"
+    if ($TestMarkers) { $markersNote = "-TestMarkers cannot start them, nothing exported" }
+    Write-Host "  test markers: unavailable ($markersMissing; $markersNote)" -ForegroundColor Yellow
+} elseif ($TestMarkers) {
+    Write-Host "  test markers: on ($pyExe $markersScript)"
+} else {
+    Write-Host "  test markers: off (start them with -TestMarkers or from the Diagnostics tab)"
+}
+foreach ($markersVar in 'QAR_PANEL_TEST_MARKERS_PYTHON', 'QAR_PANEL_TEST_MARKERS_SCRIPT') {
+    $markersShown = [Environment]::GetEnvironmentVariable($markersVar)
+    if (-not $markersShown) { $markersShown = '(not exported)' }
+    Write-Host ("  {0,-29} = {1}" -f $markersVar, $markersShown)
+}
 Write-Host "  install prefix           : $Prefix (plugin overlay: $(if ($overlayFound) { 'found' } else { 'NOT FOUND' }))"
 Write-Host "  RViz logs (-LogDir)      : $LogDir"
 Write-Host "  rviz2.exe                : $(if ($rvizExe) { $rvizExe } else { '(not found on PATH)' })"
@@ -543,7 +673,7 @@ Write-Host "  GPU preference (HKCU)    : $(if ($gpuNow) { $gpuNow } else { '(not
 if ($TraceLogs) {
     Write-Host "  log mode                 : TRACE (-TraceLogs) - QarOS logs at trace, zenoh debug, adapter traces on; GB-sized logs whose I/O can stall streams, so not for latency work." -ForegroundColor Yellow
 } else {
-    Write-Host "  log mode                 : QUIET (default) - QarOS logs at warn, no zenoh logging, no per-frame traces; -TraceLogs collects full logs for a vendor report." -ForegroundColor Green
+    Write-Host "  log mode                 : QUIET (default) - QarOS logs at $QarLogSeverity$(if ($qarLogSeverityGiven) { ' (-QarLogSeverity)' } else { ' (default)' }), no zenoh logging, no per-frame traces; -TraceLogs collects full logs for a vendor report." -ForegroundColor Green
 }
 if ($logEnvCleared.Count -gt 0) {
     Write-Host "  CLEARED (quiet mode)     : $($logEnvCleared -join ', ')" -ForegroundColor Yellow
@@ -576,9 +706,52 @@ if (-not (Test-Path $launcherExe))  { Write-Warning "runtime-launcher exe not fo
 # drive under real-time antivirus, another process using the GPU, or no commit charge
 # left all freeze the Visualizer, the mixer and the launcher together.
 # Saying so up front keeps such a run from being mistaken for a plugin bug.
+# Every check also leaves a line in $script:StartCheckLines; with -Confirm they are written next
+# to the RViz logs of the run (Write-StartChecksRecord), so that a run whose scene came out black
+# can be compared with what else was using the GPU at its start.
+$script:StartCheckLines = New-Object 'System.Collections.Generic.List[string]'
+$script:StartChecksTime = ''
+
+function Add-StartCheck([string]$Line) { $script:StartCheckLines.Add($Line) }
+
+# One nvidia-smi query with a 10 s timeout: nvidia-smi can hang on a wedged driver, and the start
+# checks must not block. Found = nvidia-smi exists; TimedOut = it did not answer in time (it is
+# ended); Lines = the output lines that are not blank, when it answered with the exit code 0.
+function Invoke-NvidiaSmiQuery {
+    param([Parameter(Mandatory)][string]$Arguments)
+    $answer = [pscustomobject]@{ Found = $false; TimedOut = $false; Lines = @() }
+    $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if (-not $nvidiaSmi) { return $answer }
+    $answer.Found = $true
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $nvidiaSmi.Source
+        $psi.Arguments = $Arguments
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $smi = [System.Diagnostics.Process]::Start($psi)
+        $smiOut = $smi.StandardOutput.ReadToEndAsync()
+        $smiErr = $smi.StandardError.ReadToEndAsync()   # drained so a full pipe cannot deadlock it
+        if ($smi.WaitForExit(10000)) {
+            if ($smi.ExitCode -eq 0) {
+                $rows = $smiOut.Result -split "`r?`n"
+                $answer.Lines = @($rows | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            }
+        } else {
+            try { $smi.Kill() } catch { }
+            $answer.TimedOut = $true
+        }
+    } catch { }
+    return $answer
+}
+
 function Show-StartupEnvironmentWarnings {
     param([string[]]$Folders)
     $warned = 0
+    $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+    $script:StartChecksTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 
     # 1. Free space on the drive(s) the logs and temp files land on.
     $roots = @()
@@ -590,57 +763,116 @@ function Show-StartupEnvironmentWarnings {
             $drive = New-Object System.IO.DriveInfo $root
             $freeGB = $drive.AvailableFreeSpace / 1GB
             $freePct = 100.0 * $drive.AvailableFreeSpace / $drive.TotalSize
+            $driveLine = "drive space of ${root}: " +
+                "$($freeGB.ToString('N1', $invariant)) GB free " +
+                "($($freePct.ToString('N1', $invariant)) %)"
             if ($freePct -lt 10 -or $freeGB -lt 15) {
                 Write-Warning ("Drive {0} is nearly full: {1:N1} GB free ({2:N1}%). Logs and temp files land there, and a nearly full drive under real-time antivirus scanning can stall writes - and every QarOS stream with them. Free some space, or point QAR_PANEL_LOG_DIR at a roomier drive." -f $root, $freeGB, $freePct)
                 $warned++
+                $driveLine += ' - WARNING: nearly full (under 10 % or under 15 GB free)'
+            } else {
+                $driveLine += ' - OK'
             }
+            Add-StartCheck $driveLine
         } catch { }
     }
 
-    # 2. Other processes using the NVIDIA GPU for compute (a CUDA job, say). Run with a
-    #    timeout: nvidia-smi can hang on a wedged driver, and this check must not block.
-    $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
-    if ($nvidiaSmi) {
-        try {
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = $nvidiaSmi.Source
-            $psi.Arguments = '--query-compute-apps=pid,process_name,used_memory --format=csv,noheader'
-            $psi.UseShellExecute = $false
-            $psi.CreateNoWindow = $true
-            $psi.RedirectStandardOutput = $true
-            $psi.RedirectStandardError = $true
-            $smi = [System.Diagnostics.Process]::Start($psi)
-            $smiOut = $smi.StandardOutput.ReadToEndAsync()
-            $smiErr = $smi.StandardError.ReadToEndAsync()   # drained so a full pipe cannot deadlock it
-            if ($smi.WaitForExit(10000)) {
-                $apps = @()
-                if ($smi.ExitCode -eq 0) {
-                    $apps = @($smiOut.Result -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-                }
-                if ($apps.Count -gt 0) {
-                    Write-Warning ("{0} other process(es) are using the NVIDIA GPU for compute (pid, name, GPU memory):`n    {1}`n  They compete with the Visualizer and the mixer for the GPU and can stall every stream together. Stop them before judging stalls or latency." -f $apps.Count, ($apps -join "`n    "))
-                    $warned++
-                }
-            } else {
-                try { $smi.Kill() } catch { }
-                Write-Warning "nvidia-smi did not answer within 10 s; GPU compute users not checked (a wedged NVIDIA driver can stall the Visualizer too)."
-                $warned++
-            }
-        } catch { }
+    # 2. Other processes using the NVIDIA GPU for compute (a CUDA job, say).
+    $computeQuery = '--query-compute-apps=pid,process_name,used_memory ' +
+        '--format=csv,noheader'
+    $compute = Invoke-NvidiaSmiQuery $computeQuery
+    if (-not $compute.Found) {
+        Add-StartCheck 'GPU compute users: not checked, nvidia-smi not found'
+    } elseif ($compute.TimedOut) {
+        Write-Warning ("nvidia-smi did not answer within 10 s; GPU compute users not checked " +
+            "(a wedged NVIDIA driver can stall the Visualizer too).")
+        $warned++
+        Add-StartCheck 'GPU compute users: not checked - WARNING: nvidia-smi: no answer in 10 s'
+    } else {
+        $apps = @($compute.Lines)
+        if ($apps.Count -gt 0) {
+            $usersFormat = "{0} other process(es) are using the NVIDIA GPU for compute " +
+                "(pid, name, GPU memory):`n    {1}`n  They compete with the Visualizer and the " +
+                "mixer for the GPU and can stall every stream together. Stop them before " +
+                "judging stalls or latency."
+            Write-Warning ($usersFormat -f $apps.Count, ($apps -join "`n    "))
+            $warned++
+            Add-StartCheck "GPU compute users: $($apps.Count) other process(es) - WARNING:"
+            Add-StartCheck '    (pid, name, GPU memory)'
+            foreach ($app in $apps) { Add-StartCheck "    $app" }
+        } else {
+            Add-StartCheck 'GPU compute users: none - OK'
+        }
     }
+
+    # 2b. How much of the GPU is taken now: the plan names it, the record keeps the rows as
+    #     nvidia-smi gave them (name, memory used, memory total, utilization).
+    $gpuQuery = '--query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader'
+    $gpu = Invoke-NvidiaSmiQuery $gpuQuery
+    $gpuTitle = "GPU memory (nvidia-smi ${gpuQuery})"
+    if (-not $gpu.Found) {
+        $gpuShown = 'not available (nvidia-smi not found)'
+        Add-StartCheck "${gpuTitle}: $gpuShown"
+    } elseif ($gpu.TimedOut) {
+        $gpuShown = 'not available (nvidia-smi did not answer within 10 s)'
+        Add-StartCheck "${gpuTitle}: $gpuShown"
+    } elseif (@($gpu.Lines).Count -eq 0) {
+        $gpuShown = 'not available (nvidia-smi gave no GPU rows)'
+        Add-StartCheck "${gpuTitle}: $gpuShown"
+    } else {
+        $gpuRows = @()
+        foreach ($row in @($gpu.Lines)) {
+            $f = @($row -split ',\s*')
+            if ($f.Count -eq 4) {
+                $gpuRows += "$($f[0]): $($f[1]) used of $($f[2]), $($f[3]) busy"
+            } else {
+                $gpuRows += $row
+            }
+        }
+        $gpuShown = $gpuRows -join ' | '
+        Add-StartCheck "${gpuTitle}:"
+        foreach ($row in @($gpu.Lines)) { Add-StartCheck "    $row" }
+    }
+    Write-Host ("  GPU memory (nvidia-smi)  : {0}" -f $gpuShown)
 
     # 3. Commit charge (RAM + page file) nearly exhausted. FreeVirtualMemory is in KB.
     try {
         $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
         $freeCommitGB = $os.FreeVirtualMemory / 1MB
+        $totalCommitGB = $os.TotalVirtualMemorySize / 1MB
+        $commitLine = "commit charge: $($freeCommitGB.ToString('N1', $invariant)) GB free of " +
+            "$($totalCommitGB.ToString('N1', $invariant)) GB (RAM + page file)"
         if ($freeCommitGB -lt 4) {
             Write-Warning ("Only {0:N1} GB of commit charge is left (limit {1:N1} GB = RAM + page file). When it runs out allocations fail and everything stalls. Close memory-hungry applications or enlarge the page file." -f $freeCommitGB, ($os.TotalVirtualMemorySize / 1MB))
             $warned++
+            $commitLine += ' - WARNING: under 4 GB free'
+        } else {
+            $commitLine += ' - OK'
         }
-    } catch { }
+        Add-StartCheck $commitLine
+    } catch {
+        Add-StartCheck 'commit charge: not read'
+    }
 
     if ($warned -eq 0) {
         Write-Host "  startup checks           : OK (drive space, GPU compute users, commit charge)"
+    }
+}
+
+# Writes what the start checks found to $Path, next to the RViz logs of the run. Only a run with
+# -Confirm calls it (the dry run names the file and writes nothing). A file that cannot be written
+# is a warning: the checks never block a run.
+function Write-StartChecksRecord {
+    param([Parameter(Mandatory)][string]$Path)
+    $lines = @(
+        "start checks of the run rviz_live_$stamp",
+        "checks run at: $($script:StartChecksTime) (local time)"
+    ) + @($script:StartCheckLines)
+    try {
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllLines($Path, [string[]]$lines, $utf8)
+    } catch {
+        Write-Warning "could not write the start checks record to ${Path}: $($_.Exception.Message)"
     }
 }
 
@@ -684,8 +916,128 @@ function Invoke-QarLogRotation {
     }
 }
 
+# The library of QarOS inside RViz writes its log to <QAR log dir>\qar_streaming.log and starts the
+# file afresh in every session, so the log of a run is gone as soon as the next run starts. When
+# rviz2 has exited, the launcher copies it next to the RViz logs of the run. $RunStart is the
+# start of the run: a file older than that belongs to an earlier session (QarOS never started in
+# this one) and is not copied under this run's name. Nothing here is fatal: every failure is a
+# warning. @return true when the copy was made.
+function Save-QarStreamingLog {
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination,
+        [Parameter(Mandatory)][datetime]$RunStart
+    )
+    $timeFormat = 'yyyy-MM-dd HH:mm:ss'
+    try {
+        if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+            Write-Warning "no QarOS library log at $Source; nothing saved as $Destination"
+            return $false
+        }
+        $written = (Get-Item -LiteralPath $Source -ErrorAction Stop).LastWriteTime
+        if ($written -lt $RunStart) {
+            $writtenText = $written.ToString($timeFormat)
+            $startText = $RunStart.ToString($timeFormat)
+            Write-Warning ("$Source was last written at $writtenText, before this run " +
+                "started ($startText): it belongs to an earlier session, so it is not " +
+                "saved as $Destination")
+            return $false
+        }
+        Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+        $size = (Get-Item -LiteralPath $Destination).Length
+        Write-Host "  QAR library log saved    : $Destination ($size bytes)" `
+            -ForegroundColor Green
+        return $true
+    } catch {
+        $reason = $_.Exception.Message
+        Write-Warning ("could not save the QarOS library log $Source as " +
+            "${Destination}: $reason")
+        return $false
+    }
+}
+
+# The processes that QarOS starts write their logs to the QAR log directory too, and the files are
+# not started afresh for each run: <dir>\mixer_<id>_stdout.log (the mixers),
+# <dir>\streaming_viz_<id>_stdout.log (the Visualizers) and the *.crash.txt reports of a crashed
+# process, in <dir> itself or in <dir>\crashes. Copies every file of $SourceDir that matches
+# $Filter and was last written at or after $RunStart to $LogDir, as rviz_live_<stamp>. followed by
+# $NameFormat applied to the capture `id` of $NameRegex, and prints one line per copy. A missing
+# folder, or no file of this run, is a note; a failed copy is a warning; nothing here is fatal.
+# The .dmp files are never matched. @return the number of files copied.
+function Save-QarRunFiles {
+    param(
+        [Parameter(Mandatory)][string]$SourceDir,
+        [Parameter(Mandatory)][string]$Filter,
+        [Parameter(Mandatory)][string]$NameRegex,
+        [Parameter(Mandatory)][string]$NameFormat,
+        [Parameter(Mandatory)][string]$Kind,
+        [Parameter(Mandatory)][datetime]$RunStart
+    )
+    $copied = 0
+    try {
+        if (-not (Test-Path -LiteralPath $SourceDir -PathType Container)) {
+            Write-Host "  ${Kind} copy: no folder $SourceDir; nothing to save"
+            return 0
+        }
+        $files = @(Get-ChildItem -LiteralPath $SourceDir -File -Filter $Filter `
+            -ErrorAction Stop | Where-Object { $_.LastWriteTime -ge $RunStart })
+        if ($files.Count -eq 0) {
+            Write-Host "  ${Kind} copy: no $Filter in $SourceDir written during this run"
+            return 0
+        }
+        foreach ($f in $files) {
+            if ($f.Name -notmatch $NameRegex) { continue }
+            $target = Join-Path $LogDir ("rviz_live_$stamp." + ($NameFormat -f $Matches['id']))
+            try {
+                Copy-Item -LiteralPath $f.FullName -Destination $target -Force -ErrorAction Stop
+                $size = (Get-Item -LiteralPath $target).Length
+                Write-Host "  ${Kind} copy: $target ($size bytes, from $($f.Name))" `
+                    -ForegroundColor Green
+                $copied++
+            } catch {
+                Write-Warning "could not save $($f.FullName) as ${target}: $($_.Exception.Message)"
+            }
+        }
+    } catch {
+        Write-Warning "could not look for $Filter in ${SourceDir}: $($_.Exception.Message)"
+    }
+    return $copied
+}
+
+# All the copies of Save-QarRunFiles for the run that ends now. QarOS may still be closing the
+# logs of its processes when rviz2 has exited, so the copies wait two seconds.
+function Save-QarRunLogs {
+    param([Parameter(Mandatory)][string]$QarLogDir, [Parameter(Mandatory)][datetime]$RunStart)
+    Start-Sleep -Seconds 2
+    [void](Save-QarRunFiles -SourceDir $QarLogDir -Filter 'mixer_*_stdout.log' `
+        -NameRegex '^mixer_(?<id>.+)_stdout\.log$' -NameFormat 'mixer_{0}.log' `
+        -Kind 'QAR mixer log' -RunStart $RunStart)
+    [void](Save-QarRunFiles -SourceDir $QarLogDir -Filter 'streaming_viz_*_stdout.log' `
+        -NameRegex '^streaming_viz_(?<id>.+)_stdout\.log$' -NameFormat 'streaming_viz_{0}.log' `
+        -Kind 'QAR Visualizer log' -RunStart $RunStart)
+    foreach ($crashDir in @($QarLogDir, (Join-Path $QarLogDir 'crashes'))) {
+        [void](Save-QarRunFiles -SourceDir $crashDir -Filter '*.crash.txt' `
+            -NameRegex '^(?<id>.+\.crash\.txt)$' -NameFormat '{0}' `
+            -Kind 'QAR crash report' -RunStart $RunStart)
+    }
+}
+
 Show-StartupEnvironmentWarnings -Folders @($env:TEMP, $qarLogDir, $LogDir)
+Write-Host "  start checks record      : $checksFile (written with -Confirm)"
 Invoke-QarLogRotation -LogDir $qarLogDir -Apply:$Confirm
+if ($qarLogSeverityGiven) {
+    Write-Host ("  -QarLogSeverity          : $QarLogSeverity (QAR_LOG_SEVERITY and " +
+        "QAR_PANEL_LOG_SEVERITY for this run only, also in quiet mode)")
+}
+$qarLogSource = Join-Path $qarLogDir 'qar_streaming.log'
+Write-Host ("  QAR library log copy     : $qarLogCopy (copy of $qarLogSource made when " +
+    "rviz2 exits; with -Confirm the launcher waits for rviz2)")
+Write-Host ("  QAR process logs copy    : when rviz2 exits, the files of $qarLogDir written " +
+    "during the run are copied to ${LogDir}: mixer_<id>_stdout.log as " +
+    "rviz_live_$stamp.mixer_<id>.log, streaming_viz_<id>_stdout.log as " +
+    "rviz_live_$stamp.streaming_viz_<id>.log")
+Write-Host ("  QAR crash reports copy   : *.crash.txt of $qarLogDir and of $qarLogDir\crashes " +
+    "written during the run, as rviz_live_$stamp.<report> (no .dmp files)")
 $vcRuntimeShown = if ($vcRuntimeVersion) { "$vcRuntimeVersion ($(if ($vcRuntimeOld) { 'TOO OLD' } else { 'ok' }), needs $vcRuntimeMinimum or newer)" } else { "(version not readable)" }
 if ($vcRuntimeWarning) { Write-Host "  VC++ runtime (rviz2 dir) : $vcRuntimeShown" -ForegroundColor Yellow } else { Write-Host "  VC++ runtime (rviz2 dir) : $vcRuntimeShown" }
 if ($vcRuntimeWarning) { Write-Warning $vcRuntimeWarning }   # an unreadable file; a dry run also gets here with an old runtime (-Confirm stopped above)
@@ -713,6 +1065,7 @@ if (-not $Confirm) {
 # --- Live scene content --------------------------------------------------------
 # scene3_grid_marker.rviz subscribes to the test markers; without a publisher RViz
 # shows nothing but the grid, and the stream would carry an empty scene on BOTH ends.
+# -TestMarkers starts the publisher below; the panel's "Test markers" button starts it later.
 # Reap publishers leaked by earlier runs FIRST. This is not tidiness - it is load-
 # bearing. Every publisher is a ROS 2 node, and on domain 0 DDS assigns each participant the next
 # UDP port pair from 7410 upwards (from 7410 + 250 x domain number on any other domain). Leaked
@@ -735,8 +1088,6 @@ if ($stale) {
     Start-Sleep -Milliseconds 500
 }
 
-$pyExe = (Get-Command python -ErrorAction SilentlyContinue).Source
-
 # The forced reap above, or a crashed rviz2, leaves Fast-DDS shared-memory segments
 # behind. Those zombies can wedge large-message delivery on the domain (a 6 MB video topic
 # delivering nothing on domain 0 while another domain runs normally).
@@ -749,14 +1100,17 @@ if ($pyExe -and $rvizExe) {
     }
 }
 
-if ($pyExe) {
-    $pub = Start-Process -FilePath $pyExe `
-        -ArgumentList ('"' + (Join-Path $PSScriptRoot "publish_test_markers.py") + '"') `
-        -PassThru -WindowStyle Hidden
-    Write-Host "marker publisher PID=$($pub.Id) (publish_test_markers.py, frame 'map')" -ForegroundColor Green
-    Write-Host "  stopped automatically by the next run; or: Stop-Process -Id $($pub.Id)"
-} else {
-    Write-Warning "python not found - markers will NOT be published and the scene will be empty."
+if ($TestMarkers) {
+    if (-not $markersMissing) {
+        $pub = Start-Process -FilePath $pyExe `
+            -ArgumentList ('"' + $markersScript + '"') `
+            -PassThru -WindowStyle Hidden
+        Write-Host "marker publisher PID=$($pub.Id) (publish_test_markers.py, frame 'map')" `
+            -ForegroundColor Green
+        Write-Host "  stopped automatically by the next run; or: Stop-Process -Id $($pub.Id)"
+    } else {
+        Write-Warning "$markersMissing - markers will NOT be published and the scene will be empty."
+    }
 }
 
 # Guard: zenoh scouting needs UDP 7446. If anything holds it, QAR fails to create a
@@ -780,8 +1134,11 @@ if ($timingDir) {
 }
 $outLog = Join-Path $LogDir "rviz_live_$stamp.out.log"
 $errLog = Join-Path $LogDir "rviz_live_$stamp.err.log"
+# The start checks of this run, next to its RViz logs and with their stamp ($checksFile).
+Write-StartChecksRecord -Path $checksFile
 $rviz = Start-Process -FilePath "rviz2.exe" -ArgumentList @("-d", ('"' + $Scene + '"')) -PassThru `
     -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+$rvizStarted = $true
 Write-Host "rviz2 PID=$($rviz.Id)."
 Write-Host ""
 Write-Host "In the RViz 'Qar Streaming' panel click 'Connect to QarOS' - the QAR runtime"
@@ -789,13 +1146,30 @@ Write-Host "then starts its launcher and the Visualizer window appears on its ow
 Write-Host ""
 Write-Host "  RViz stdout : $outLog" -ForegroundColor Cyan
 Write-Host "  RViz stderr : $errLog   <- [qar-panel] HB + AR VIDEO lines$(if ($env:QAR_ADAPTER_TRACE) { ', adapter trace' })" -ForegroundColor Cyan
+Write-Host "  Start checks: $checksFile   <- drive space, GPU users and memory, commit charge" `
+    -ForegroundColor Cyan
 Write-Host "  QAR logs    : $qarLogDir   (QAR_LOG_SEVERITY=$(if ($env:QAR_LOG_SEVERITY) { $env:QAR_LOG_SEVERITY } else { '(unset)' }); $(if ($TraceLogs) { 'TRACE mode' } else { 'quiet mode, -TraceLogs for full logs' }))" -ForegroundColor Cyan
 if ($timingDir) {
     Write-Host "  Timing CSVs : $timingDir" -ForegroundColor Cyan
     Write-Host "     start the publisher with  --ros-args -p timing_csv:=$timingDir\publisher.csv"
     Write-Host "     after the run:            python scripts\analyze_video_timing.py `"$timingDir`" --publisher `"$timingDir\publisher.csv`""
 }
+# Wait for rviz2, so that the library log of the run can be saved the moment it ends (below, in
+# `finally`, which also runs when Ctrl+C stops the wait).
+Write-Host ""
+Write-Host ("Waiting for rviz2 to exit; the QarOS library log is then saved as " +
+    "$qarLogCopy, with the mixer and Visualizer logs and the crash reports of the run " +
+    "(Ctrl+C stops the wait and saves them as they are).") -ForegroundColor Cyan
+$rviz.WaitForExit()
 } finally {
+    # The QarOS library log, the mixer and Visualizer logs and the crash reports of the run, when
+    # rviz2 was started: also after a Ctrl+C, then as far as the logs have come. A failure is only
+    # a warning.
+    if ($rvizStarted) {
+        [void](Save-QarStreamingLog -Source (Join-Path $qarLogDir 'qar_streaming.log') `
+            -Destination $qarLogCopy -RunStart $runStarted)
+        Save-QarRunLogs -QarLogDir $qarLogDir -RunStart $runStarted
+    }
     # Put the calling shell's environment back (see $envSnapshot). rviz2 and the marker
     # publisher were started with their own copy of the environment above; the dry run and
     # a failed start get here too.

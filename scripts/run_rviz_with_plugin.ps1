@@ -55,6 +55,14 @@
     Required.
 .PARAMETER QtRoot
     Qt 5.15.2 msvc2019_64 folder. Default: the environment variable QAR_QT_ROOT.
+.PARAMETER TestMarkers
+    Start publish_test_markers.py before RViz and stop it when RViz exits. It publishes a small
+    MarkerArray on /qar_test_markers, which test_scenes\scene3_grid_marker.rviz shows. With or
+    without the switch the script exports QAR_PANEL_TEST_MARKERS_PYTHON (the python of this
+    shell) and QAR_PANEL_TEST_MARKERS_SCRIPT (the full path of publish_test_markers.py) to RViz
+    when both exist, so that the "Test markers" button of the panel's Diagnostics tab can start
+    and stop the publisher at any time. When python or the script is missing, neither variable
+    is exported (a value from the shell is dropped) and the script says why.
 #>
 param(
     [string]$Config = "",
@@ -72,7 +80,8 @@ param(
     [Alias('Ros2DistroRoot', 'Ros2InstallRoot')]
     [string]$Ros2Root = "",
     [Alias('QtVersionDir')]
-    [string]$QtRoot = ""
+    [string]$QtRoot = "",
+    [switch]$TestMarkers
 )
 
 $ErrorActionPreference = "Stop"
@@ -197,10 +206,61 @@ if ($AutoMulti) {
     Remove-Item Env:QAR_PANEL_AUTOMULTI_TICKS -ErrorAction SilentlyContinue
 }
 
+# --- 4e. Test markers ------------------------------------------------------
+# publish_test_markers.py publishes the markers that test_scenes\scene3_grid_marker.rviz shows.
+# -TestMarkers starts it before RViz (below) and stops it when RViz exits. With or without the
+# switch, the python of this shell and the full path of the script are exported to RViz whenever
+# both exist, so that the "Test markers" button of the panel's Diagnostics tab can start and stop
+# the publisher on demand. When either is missing nothing is exported (a value from the shell is
+# dropped) and the line below says why.
+$pyExe = (Get-Command python -ErrorAction SilentlyContinue).Source
+$markersScript = Join-Path $PSScriptRoot "publish_test_markers.py"
+$markersMissing = $null
+if (-not $pyExe) {
+    $markersMissing = "python not found"
+} elseif (-not (Test-Path -LiteralPath $markersScript -PathType Leaf)) {
+    $markersMissing = "$markersScript not found"
+}
+if ($markersMissing) {
+    Remove-Item Env:QAR_PANEL_TEST_MARKERS_PYTHON -ErrorAction SilentlyContinue
+    Remove-Item Env:QAR_PANEL_TEST_MARKERS_SCRIPT -ErrorAction SilentlyContinue
+    $markersNote = "nothing exported"
+    if ($TestMarkers) { $markersNote = "-TestMarkers cannot start them, nothing exported" }
+    Write-Host "test markers: unavailable ($markersMissing; $markersNote)" -ForegroundColor Yellow
+} else {
+    $env:QAR_PANEL_TEST_MARKERS_PYTHON = $pyExe
+    $env:QAR_PANEL_TEST_MARKERS_SCRIPT = $markersScript
+    if ($TestMarkers) {
+        Write-Host "test markers: on ($pyExe $markersScript)"
+    } else {
+        Write-Host "test markers: off (start them with -TestMarkers or from the Diagnostics tab)"
+    }
+    Write-Host "  QAR_PANEL_TEST_MARKERS_PYTHON = $pyExe"
+    Write-Host "  QAR_PANEL_TEST_MARKERS_SCRIPT = $markersScript"
+}
+
 # --- 5. Launch RViz2 -------------------------------------------------------
+$markerPublisher = $null
+if ($TestMarkers -and -not $markersMissing) {
+    $markerPublisher = Start-Process -FilePath $pyExe -ArgumentList ('"' + $markersScript + '"') `
+        -PassThru -WindowStyle Hidden
+    Write-Host "marker publisher PID=$($markerPublisher.Id) (publish_test_markers.py)" `
+        -ForegroundColor Green
+} elseif ($TestMarkers) {
+    Write-Warning "$markersMissing - markers will NOT be published and the scene will be empty."
+}
 Write-Host "=== Launching rviz2 ===" -ForegroundColor Cyan
-& rviz2.exe -d "$Config"
-$code = $LASTEXITCODE
+try {
+    & rviz2.exe -d "$Config"
+    $code = $LASTEXITCODE
+} finally {
+    # The publisher this script started ends with RViz, also when RViz fails to start or the
+    # script is interrupted.
+    if ($markerPublisher) {
+        Stop-Process -Id $markerPublisher.Id -Force -ErrorAction SilentlyContinue
+        Write-Host "marker publisher PID=$($markerPublisher.Id) stopped"
+    }
+}
 Write-Host "rviz2 exited with code $code"
 
 if ($AutoDump) {
