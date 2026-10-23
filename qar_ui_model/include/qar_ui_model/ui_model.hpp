@@ -126,6 +126,14 @@ struct Widget
   std::string label;
   std::string description;  ///< Subtitle (Panel/Section) or help text (leaves).
   std::string binding;      ///< Dotted path into the data document. See is_bindable.
+  /// The caption, or for a Button its text, taken from the data document once the path holds
+  /// a string; until then `label` or the humanized binding is shown. Empty means static. Every
+  /// widget that has a caption honours it, and so does Button. The JSON key is "labelBind".
+  std::string label_binding;
+  /// The widget is shown only while the path holds `true`, and starts hidden. Empty means
+  /// always shown. Every widget type honours it, containers included. The JSON key is
+  /// "showBind".
+  std::string visible_binding;
   std::string unit;
   std::optional<double> min;
   std::optional<double> max;
@@ -149,6 +157,8 @@ struct Widget
 
   // Chainable setters, for generators and tests.
   Widget & with_binding(std::string path);
+  Widget & with_label_binding(std::string path);
+  Widget & with_visible_binding(std::string path);
   Widget & with_label(std::string text);
   Widget & with_description(std::string text);
   Widget & with_unit(std::string text);

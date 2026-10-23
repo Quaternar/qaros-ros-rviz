@@ -180,6 +180,20 @@ Widget::with_binding(std::string path)
 }
 
 Widget &
+Widget::with_label_binding(std::string path)
+{
+  label_binding = std::move(path);
+  return *this;
+}
+
+Widget &
+Widget::with_visible_binding(std::string path)
+{
+  visible_binding = std::move(path);
+  return *this;
+}
+
+Widget &
 Widget::with_label(std::string text)
 {
   label = std::move(text);
@@ -572,6 +586,16 @@ private:
     problems_.push_back({ProblemSeverity::Warning, id, std::move(message)});
   }
 
+  // An empty text is "no binding"; anything else must parse as a field path.
+  void check_optional_path(const std::string & id, const char * what, const std::string & text)
+  {
+    FieldPath path;
+    std::string path_error;
+    if (!text.empty() && !FieldPath::parse(text, path, path_error)) {
+      error(id, std::string("invalid ") + what + ": " + path_error);
+    }
+  }
+
   void check(const Widget & w, const Widget * parent, std::size_t depth)
   {
     const std::string & id = w.id;
@@ -631,6 +655,13 @@ private:
       } else {
         has_path = true;
       }
+    }
+
+    // The caption and visibility bindings are paths into the same document, with the same grammar.
+    check_optional_path(id, "label binding", w.label_binding);
+    check_optional_path(id, "visibility binding", w.visible_binding);
+    if (!w.label_binding.empty() && !is_bindable(w.type)) {
+      warning(id, "label binding is only honoured by widgets with a caption and by buttons");
     }
 
     switch (w.type) {
@@ -887,6 +918,12 @@ to_value(const Widget & w)
   if (!w.binding.empty()) {
     out.set("bind", w.binding);
   }
+  if (!w.label_binding.empty()) {
+    out.set("labelBind", w.label_binding);
+  }
+  if (!w.visible_binding.empty()) {
+    out.set("showBind", w.visible_binding);
+  }
   if (!w.unit.empty()) {
     out.set("unit", w.unit);
   }
@@ -1092,6 +1129,8 @@ from_value_impl(const UiValue & value, Widget & out, std::size_t depth, std::str
   if (!read_string(value, "label", w.label, where, error) ||
     !read_string(value, "description", w.description, where, error) ||
     !read_string(value, "bind", w.binding, where, error) ||
+    !read_string(value, "labelBind", w.label_binding, where, error) ||
+    !read_string(value, "showBind", w.visible_binding, where, error) ||
     !read_string(value, "unit", w.unit, where, error) ||
     !read_string(value, "action", w.action, where, error) ||
     !read_optional_double(value, "min", w.min, where, error) ||

@@ -208,10 +208,19 @@ const char kRuntimeChunk2[] = R"QARJS(
   /* ---- registry ---- */
   var entries = [];
   var byId = {};
+  /* labelBind / showBind as path segments; null when the widget has none or it does not parse. */
+  function optionalPath(text) {
+    var segs = (typeof text === 'string' && text !== '') ? parsePath(text) : null;
+    return (segs && segs.length) ? segs : null;
+  }
   function register(w) {
     if (!isObject(w) || typeof w.id !== 'string') { return; }
     var el = document.querySelector('[data-qar-id="' + w.id + '"]');
-    var entry = { w: w, el: el, segs: parsePath(w.bind || '') || [], page: 0, samples: [], dirty: false, dragging: false, armed: null };
+    var entry = {
+      w: w, el: el, segs: parsePath(w.bind || '') || [],
+      labelSegs: optionalPath(w.labelBind), showSegs: optionalPath(w.showBind),
+      page: 0, samples: [], dirty: false, dragging: false, armed: null
+    };
     byId[w.id] = entry;
     entries.push(entry);
     if (el) { wire(entry); }
@@ -232,17 +241,60 @@ const char kRuntimeChunk2[] = R"QARJS(
     setAttr(document.getElementById('qar-connection'), 'data-qar-state', s);
     setText(document.getElementById('qar-connection-text'), s === 'online' ? 'Live' : (s === 'stale' ? 'Stale' : 'Offline'));
   }
+  /* One element and one timer. An error clears itself after STATUS_ERROR_CLEAR_MS, so that a
+     refusal does not stay on the page for good. A status line that arrives meanwhile, of any
+     level, cancels the pending clear first: a newer message is never wiped by an older timer. */
+  var STATUS_ERROR_CLEAR_MS = 6000;
+  var statusClearTimer = null;
   function setStatusLine(level, text) {
     var el = document.getElementById('qar-status');
+    if (statusClearTimer) { clearTimeout(statusClearTimer); statusClearTimer = null; }
     setAttr(el, 'data-qar-level', level || 'neutral');
     setText(el, text || '');
+    if (level === 'error') {
+      statusClearTimer = setTimeout(function () {
+        statusClearTimer = null;
+        setAttr(el, 'data-qar-level', 'neutral');
+        setText(el, '');
+      }, STATUS_ERROR_CLEAR_MS);
+    }
   }
 
   /* ---- per-type refresh ---- */
   function refreshAll() { for (var i = 0; i < entries.length; i++) { refresh(entries[i]); } }
+  /* Containers and plain labels draw no caption of their own for labelBind to set. */
+  function hasCaption(type) {
+    return type !== 'panel' && type !== 'section' && type !== 'row' && type !== 'column' &&
+      type !== 'label';
+  }
+  /* The two optional bindings. The caption (a button's text) follows the document once its path
+     holds a string; until then the static label stays. The widget shows only while its showBind
+     path holds true, and the markup starts it hidden. A change of display moves the layout, so
+     it is reported. */
+  function refreshBound(entry) {
+    var w = entry.w, el = entry.el;
+    if (entry.labelSegs) {
+      var title = getPath(doc, entry.labelSegs);
+      if (typeof title === 'string') {
+        if (w.type === 'button') {
+          if (!entry.armed) { setText(q(el, 'text'), title); }
+        } else if (hasCaption(w.type)) {
+          setText(q(el, 'caption'), title);
+        }
+      }
+    }
+    if (entry.showSegs && el.style) {
+      var display = getPath(doc, entry.showSegs) === true ? '' : 'none';
+      if (el.style.display !== display) {
+        el.style.display = display;
+        scheduleViewportReport('content');
+      }
+    }
+  }
   function refresh(entry) {
     var w = entry.w, el = entry.el;
     if (!el) { return; }
+    refreshBound(entry);
     var v = getPath(doc, entry.segs);
     var input;
     switch (w.type) {
@@ -621,10 +673,16 @@ const char kRuntimeChunk3[] = R"QARJS(
     var button = q(el, 'button');
     var label = q(el, 'text');
     var original = label ? label.textContent : '';
+    /* What the button says when it is not waiting for a second press: its bound text, else the
+       text it was rendered with. */
+    function restingText() {
+      var title = entry.labelSegs ? getPath(doc, entry.labelSegs) : undefined;
+      return typeof title === 'string' ? title : original;
+    }
     function disarm() {
       if (entry.armed) { clearTimeout(entry.armed); entry.armed = null; }
       button.removeAttribute('data-qar-armed');
-      setText(label, original);
+      setText(label, restingText());
     }
     on(button, 'click', function () {
       if (w.confirm && !entry.armed) {

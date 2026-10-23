@@ -41,7 +41,8 @@ attr_number(std::string & out, const char * name, double value)
   attr(out, name, json_format_double(value));
 }
 
-// Common opening tag: class, then the three data attributes, in this order.
+// Common opening tag: class, then the three data attributes, in this order. A widget with a
+// visibility binding starts hidden; the runtime shows it once the document says so.
 void
 open_widget(std::string & out, const Widget & w, const char * tag, const std::string & classes,
   bool with_binding = true)
@@ -54,6 +55,9 @@ open_widget(std::string & out, const Widget & w, const char * tag, const std::st
   if (with_binding && !w.binding.empty()) {
     attr(out, "data-qar-bind", w.binding);
   }
+  if (!w.visible_binding.empty()) {
+    out += " style=\"display:none\"";
+  }
   out += '>';
 }
 
@@ -65,10 +69,16 @@ close_tag(std::string & out, const char * tag)
   out += '>';
 }
 
+// A caption the document can replace carries a role, so the runtime finds it (a button's text
+// already has one).
 void
 caption(std::string & out, const Widget & w)
 {
-  out += "<div class=\"qar-caption\">";
+  out += "<div class=\"qar-caption\"";
+  if (!w.label_binding.empty()) {
+    out += " data-qar-role=\"caption\"";
+  }
+  out += '>';
   text(out, w.display_label());
   out += "</div>";
 }
@@ -484,7 +494,7 @@ void
 render_json(std::string & out, const Widget & w)
 {
   open_widget(out, w, "div", "qar-widget qar-json-widget");
-  if (!w.label.empty()) {
+  if (!w.label.empty() || !w.label_binding.empty()) {
     caption(out, w);
   }
   out += "<pre class=\"qar-json\" data-qar-role=\"json\"></pre>";

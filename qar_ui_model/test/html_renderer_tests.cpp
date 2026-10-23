@@ -436,6 +436,61 @@ TEST(HtmlRenderer, RuntimeProbesTheCapabilitiesItNeeds)
   EXPECT_EQ(js.find("let "), std::string::npos);
 }
 
+// ---- the status line at the foot of the page ---------------------------------
+//
+// The script cannot run in these tests, so they pin the text of the one function that writes the
+// line: it is where an error is armed to clear itself and where a newer line cancels the clear.
+
+TEST(HtmlRenderer, RuntimeClearsAnErrorStatusLineAfterSixSeconds)
+{
+  const std::string js = runtime_javascript();
+  EXPECT_NE(js.find("var STATUS_ERROR_CLEAR_MS = 6000;"), std::string::npos);
+  EXPECT_NE(js.find("var statusClearTimer = null;"), std::string::npos);
+
+  // The line is written in one place, so no message can bypass the timer.
+  EXPECT_EQ(count(js, "getElementById('qar-status')"), 1u);
+  const std::size_t begin = js.find("function setStatusLine(level, text) {");
+  ASSERT_NE(begin, std::string::npos);
+  const std::size_t end = js.find("/* ---- per-type refresh ---- */", begin);
+  ASSERT_NE(end, std::string::npos);
+  const std::string body = js.substr(begin, end - begin);
+
+  // A newer line cancels the pending clear before it writes anything ...
+  const std::size_t cancel = body.find("clearTimeout(statusClearTimer)");
+  const std::size_t write_level = body.find("setAttr(el, 'data-qar-level', level || 'neutral')");
+  const std::size_t write_text = body.find("setText(el, text || '')");
+  ASSERT_NE(cancel, std::string::npos);
+  ASSERT_NE(write_level, std::string::npos);
+  ASSERT_NE(write_text, std::string::npos);
+  EXPECT_LT(cancel, write_level);
+  EXPECT_LT(cancel, write_text);
+
+  // ... and only an error arms a new one, for the six seconds, once.
+  const std::size_t only_errors = body.find("if (level === 'error')");
+  const std::size_t arm = body.find("setTimeout(");
+  ASSERT_NE(only_errors, std::string::npos);
+  ASSERT_NE(arm, std::string::npos);
+  EXPECT_LT(write_text, only_errors);
+  EXPECT_LT(only_errors, arm);
+  EXPECT_EQ(count(body, "setTimeout("), 1u);
+  EXPECT_EQ(count(body, "clearTimeout("), 1u);
+  EXPECT_NE(body.find("}, STATUS_ERROR_CLEAR_MS);", arm), std::string::npos);
+
+  // When the timer fires the line is empty and neutral again, and the timer forgets itself.
+  const std::size_t fired = body.find("function () {", arm);
+  ASSERT_NE(fired, std::string::npos);
+  const std::string handler = body.substr(fired);
+  EXPECT_NE(handler.find("statusClearTimer = null;"), std::string::npos);
+  EXPECT_NE(handler.find("setAttr(el, 'data-qar-level', 'neutral');"), std::string::npos);
+  EXPECT_NE(handler.find("setText(el, '');"), std::string::npos);
+
+  // ES5, for the engine of the in-AR browser.
+  EXPECT_EQ(body.find("=>"), std::string::npos);
+  EXPECT_EQ(body.find("let "), std::string::npos);
+  EXPECT_EQ(body.find("const "), std::string::npos);
+  EXPECT_EQ(body.find('`'), std::string::npos);
+}
+
 TEST(ThemeCss, CarriesTheFallbacksWebKit610Needs)
 {
   const std::string css = render_theme_css(ArTheme::dark());

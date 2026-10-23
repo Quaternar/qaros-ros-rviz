@@ -17,6 +17,7 @@ add_executable(qar_ui_model_tests
   text_safety_tests.cpp
   type_description_tests.cpp
   ui_model_tests.cpp
+  ui_model_bindings_tests.cpp
   ui_protocol_tests.cpp
   ar_theme_tests.cpp
   html_renderer_tests.cpp
