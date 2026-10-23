@@ -193,4 +193,42 @@ TEST(ServiceBridgeLive, PollDrivesTimeoutsWithoutTheTimer)
   EXPECT_EQ(bridge.poll(), 0u);
 }
 
+TEST(ServiceBridgeLive, ClientsAndTimersJoinTheHostsCallbackGroup)
+{
+  TestNode node;
+  const std::string name = unique_name("grouped");
+  auto server = echo_server(node, name);
+  const qar_ros_ui_test::GroupCounts default_before =
+    qar_ros_ui_test::count_entities(node.default_group());
+  rclcpp::CallbackGroup::SharedPtr group = node.make_group();
+  qar_ros_ui::NodeHandles handles = node.handles();
+  handles.callback_group = group;
+  auto bridge = std::make_unique<ServiceBridge>(handles);
+
+  std::optional<ServiceCallOutcome> outcome;
+  ASSERT_TRUE(
+    bridge->call(
+      name, "test_msgs/srv/BasicTypes", json(R"({"int32_value":1})"), ServiceCallOptions{},
+      [&](const ServiceCallOutcome & o) {outcome = o;}).ok());
+  const qar_ros_ui_test::GroupCounts in_group = qar_ros_ui_test::count_entities(group);
+  EXPECT_EQ(in_group.clients, 1u);
+  EXPECT_EQ(in_group.timers, 1u) << "the timer that expires overdue calls";
+  ASSERT_TRUE(node.spin_until([&]() {return outcome.has_value();}));
+  ASSERT_TRUE(outcome->ok()) << outcome->status.message;
+  EXPECT_EQ(*at(outcome->response, "int32_value"), UiValue(std::int64_t{2}));
+  const qar_ros_ui_test::GroupCounts default_after =
+    qar_ros_ui_test::count_entities(node.default_group());
+  EXPECT_EQ(default_after.clients, default_before.clients);
+  EXPECT_EQ(default_after.timers, default_before.timers);
+
+  std::weak_ptr<rclcpp::CallbackGroup> weak_group = group;
+  bridge.reset();
+  EXPECT_EQ(qar_ros_ui_test::count_entities(group).clients, 0u);
+  EXPECT_EQ(qar_ros_ui_test::count_entities(group).timers, 0u);
+  handles.callback_group.reset();  // the host's own copy of the handles holds it too
+  group.reset();
+  EXPECT_TRUE(weak_group.expired()) << "neither the node nor the executor keeps the group";
+  node.spin_for(std::chrono::milliseconds(50));  // the executor forgets the group
+}
+
 #endif  // QAR_ROS_UI_LIVE_TESTS

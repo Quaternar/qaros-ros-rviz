@@ -77,6 +77,30 @@ inline const qar_ui_model::UiValue * at(const qar_ui_model::UiValue & root, cons
   return qar_ui_model::get_path(root, parsed);
 }
 
+/// The live entities of a callback group, by kind.
+struct GroupCounts
+{
+  std::size_t subscriptions = 0;
+  std::size_t timers = 0;
+  std::size_t clients = 0;
+  std::size_t waitables = 0;
+};
+
+inline GroupCounts count_entities(const rclcpp::CallbackGroup::SharedPtr & group)
+{
+  GroupCounts counts;
+  // Each finder visits every live entry while the predicate says no.
+  group->find_subscription_ptrs_if(
+    [&](const rclcpp::SubscriptionBase::SharedPtr &) {++counts.subscriptions; return false;});
+  group->find_timer_ptrs_if(
+    [&](const rclcpp::TimerBase::SharedPtr &) {++counts.timers; return false;});
+  group->find_client_ptrs_if(
+    [&](const rclcpp::ClientBase::SharedPtr &) {++counts.clients; return false;});
+  group->find_waitable_ptrs_if(
+    [&](const rclcpp::Waitable::SharedPtr &) {++counts.waitables; return false;});
+  return counts;
+}
+
 class TestNode
 {
 public:
@@ -96,6 +120,18 @@ public:
 
   rclcpp::Node::SharedPtr node() const {return node_;}
   qar_ros_ui::NodeHandles handles() const {return qar_ros_ui::NodeHandles::from(node_);}
+
+  /// A group of the node, spun by this executor with the node: what a plugin makes on its host's
+  /// node (NodeHandles::callback_group).
+  rclcpp::CallbackGroup::SharedPtr make_group() const
+  {
+    return node_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive, true);
+  }
+
+  rclcpp::CallbackGroup::SharedPtr default_group() const
+  {
+    return node_->get_node_base_interface()->get_default_callback_group();
+  }
 
   void spin_some()
   {

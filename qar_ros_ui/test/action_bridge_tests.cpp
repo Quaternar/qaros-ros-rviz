@@ -324,4 +324,43 @@ TEST(ActionBridgeLive, FailuresAreReportedNotThrown)
   EXPECT_EQ(empty.send_goal("/x", "test_msgs/action/Fibonacci", json("{}"), ActionGoalOptions{}, handle).status, Status::InvalidState);
 }
 
+TEST(ActionBridgeLive, ActionClientsAndTimersJoinTheHostsCallbackGroup)
+{
+  TestNode node;
+  const std::string name = unique_name("fib");
+  FibonacciServer server(node, name, std::chrono::milliseconds(10));
+  const qar_ros_ui_test::GroupCounts default_before =
+    qar_ros_ui_test::count_entities(node.default_group());
+  rclcpp::CallbackGroup::SharedPtr group = node.make_group();
+  qar_ros_ui::NodeHandles handles = node.handles();
+  handles.callback_group = group;
+  auto bridge = std::make_unique<ActionBridge>(handles);
+
+  std::shared_ptr<ActionGoalHandle> handle;
+  ASSERT_TRUE(
+    bridge->send_goal(
+      name, "test_msgs/action/Fibonacci", json(R"({"order":3})"), ActionGoalOptions{},
+      handle).ok());
+  const qar_ros_ui_test::GroupCounts in_group = qar_ros_ui_test::count_entities(group);
+  EXPECT_EQ(in_group.waitables, 1u) << "the action client";
+  EXPECT_EQ(in_group.timers, 1u) << "the timer that expires overdue goals";
+  ASSERT_TRUE(node.spin_until([&]() {return handle->finished();}));
+  EXPECT_EQ(handle->status(), GoalStatus::Succeeded);
+  const qar_ros_ui_test::GroupCounts default_after =
+    qar_ros_ui_test::count_entities(node.default_group());
+  EXPECT_EQ(default_after.waitables, default_before.waitables);
+  EXPECT_EQ(default_after.timers, default_before.timers);
+
+  // The client's deleter takes it out of the group.
+  std::weak_ptr<rclcpp::CallbackGroup> weak_group = group;
+  handle.reset();
+  bridge.reset();
+  EXPECT_EQ(qar_ros_ui_test::count_entities(group).waitables, 0u);
+  handles.callback_group.reset();  // the host's own copy of the handles holds it too
+  group.reset();
+  EXPECT_TRUE(weak_group.expired()) << "neither the node nor the executor keeps the group";
+
+  node.spin_for(std::chrono::milliseconds(50));  // the executor forgets the group
+}
+
 #endif  // QAR_ROS_UI_LIVE_TESTS

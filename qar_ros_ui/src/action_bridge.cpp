@@ -328,22 +328,27 @@ struct ActionBridgeImpl : public std::enable_shared_from_this<ActionBridgeImpl>
     std::shared_ptr<DynamicActionClient> client;
     try {
       // Mirrors rclcpp_action::create_client: the deleter removes the waitable
-      // from the node, so dropping the client is enough to unregister it.
+      // from the node, so dropping the client is enough to unregister it. A
+      // group of the host's that is gone already took its reference along.
       std::weak_ptr<rclcpp::node_interfaces::NodeWaitablesInterface> weak_waitables = handles.waitables;
-      auto deleter = [weak_waitables](DynamicActionClient * ptr) {
+      const bool default_group = handles.callback_group == nullptr;
+      std::weak_ptr<rclcpp::CallbackGroup> weak_group = handles.callback_group;
+      auto deleter = [weak_waitables, default_group, weak_group](DynamicActionClient * ptr) {
           if (ptr == nullptr) {
             return;
           }
-          if (auto waitables = weak_waitables.lock()) {
+          auto waitables = weak_waitables.lock();
+          auto group = weak_group.lock();
+          if (waitables && (default_group || group)) {
             std::shared_ptr<DynamicActionClient> fake(ptr, [](DynamicActionClient *) {});
-            waitables->remove_waitable(fake, nullptr);
+            waitables->remove_waitable(fake, group);
           }
           delete ptr;
         };
       client = std::shared_ptr<DynamicActionClient>(
         new DynamicActionClient(handles, ts, action, rcl_action_client_get_default_options()),
         deleter);
-      handles.waitables->add_waitable(client, nullptr);
+      handles.waitables->add_waitable(client, handles.callback_group);
     } catch (const std::exception & e) {
       return Result::error(Status::RclError, e.what());
     }
@@ -423,7 +428,7 @@ struct ActionBridgeImpl : public std::enable_shared_from_this<ActionBridgeImpl>
             self->poll();
           }
         },
-        nullptr, handles.base.get(), handles.timers.get());
+        handles.callback_group, handles.base.get(), handles.timers.get());
       timer_active = true;
     } catch (const std::exception & e) {
       report(

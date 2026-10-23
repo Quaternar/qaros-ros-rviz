@@ -294,4 +294,57 @@ TEST(TopicBridgeLive, TruncationIsReportedAndSubscriptionsAreRaii)
   ASSERT_TRUE(node.spin_until([&]() {return publisher->get_subscription_count() == 0;}));
 }
 
+TEST(TopicBridgeLive, EntitiesJoinTheHostsCallbackGroupAndGoWithIt)
+{
+  TestNode node;
+  const std::string topic = unique_name("grouped");
+  auto publisher = node.node()->create_publisher<PoseStamped>(topic, 10);
+  const qar_ros_ui_test::GroupCounts default_before =
+    qar_ros_ui_test::count_entities(node.default_group());
+  rclcpp::CallbackGroup::SharedPtr group = node.make_group();
+  qar_ros_ui::NodeHandles handles = node.handles();
+  handles.callback_group = group;
+  auto bridge = std::make_unique<TopicBridge>(handles);
+  ASSERT_TRUE(node.spin_until([&]() {
+    return node.node()->get_publishers_info_by_topic(topic).size() == 1;}));
+
+  std::shared_ptr<TopicSubscription> subscription;
+  ASSERT_TRUE(bridge->subscribe(topic, "", TopicSubscriptionOptions{}, subscription).ok());
+  std::shared_ptr<TopicPublisher> bridge_publisher;
+  ASSERT_TRUE(
+    bridge->advertise(
+      unique_name("grouped_out"), "geometry_msgs/msg/PoseStamped", TopicPublisherOptions{},
+      bridge_publisher).ok());
+  // The executor spins the group with the node, as RViz's executor spins a plugin's group.
+  UiValue value;
+  ASSERT_TRUE(publish_until_received(node, *publisher, pose("grouped", 1.5), *subscription, value));
+  EXPECT_EQ(*at(value, "pose.position.x"), UiValue(1.5));
+
+  const qar_ros_ui_test::GroupCounts in_group = qar_ros_ui_test::count_entities(group);
+  EXPECT_EQ(in_group.subscriptions, 1u);
+  EXPECT_GE(in_group.waitables, 2u) << "the QoS events of the subscription and of the publisher";
+  const qar_ros_ui_test::GroupCounts default_after =
+    qar_ros_ui_test::count_entities(node.default_group());
+  EXPECT_EQ(default_after.subscriptions, default_before.subscriptions);
+  EXPECT_EQ(default_after.waitables, default_before.waitables);
+
+  // The host lets the entities go, then the group: nothing else holds the group.
+  std::weak_ptr<rclcpp::CallbackGroup> weak_group = group;
+  subscription.reset();
+  bridge_publisher.reset();
+  bridge.reset();
+  EXPECT_EQ(qar_ros_ui_test::count_entities(group).subscriptions, 0u);
+  EXPECT_EQ(qar_ros_ui_test::count_entities(group).waitables, 0u);
+  handles.callback_group.reset();  // the host's own copy of the handles holds it too
+  group.reset();
+  EXPECT_TRUE(weak_group.expired()) << "neither the node nor the executor keeps the group";
+
+  // The executor forgets the group and goes on serving the node.
+  TopicBridge plain(node.handles());
+  std::shared_ptr<TopicSubscription> again;
+  ASSERT_TRUE(plain.subscribe(topic, "", TopicSubscriptionOptions{}, again).ok());
+  ASSERT_TRUE(publish_until_received(node, *publisher, pose("grouped", 2.5), *again, value));
+  EXPECT_EQ(*at(value, "pose.position.x"), UiValue(2.5));
+}
+
 #endif  // QAR_ROS_UI_LIVE_TESTS

@@ -137,6 +137,7 @@ Result TopicSubscription::Impl::create(
     };
   auto build = [&](bool with_events) -> std::shared_ptr<rclcpp::GenericSubscription> {
       rclcpp::SubscriptionOptions sub_options;
+      sub_options.callback_group = handles.callback_group;
       if (with_events) {
         sub_options.event_callbacks.incompatible_qos_callback =
           [weak](rclcpp::QOSRequestedIncompatibleQoSInfo & info) {
@@ -373,6 +374,7 @@ Result TopicPublisher::Impl::create(
 {
   try {
     rclcpp::PublisherOptions pub_options;
+    pub_options.callback_group = handles.callback_group;
     auto created = std::make_shared<rclcpp::GenericPublisher>(
       handles.base.get(), ts.rmw_library, topic, type_name, to_qos(new_profile), pub_options);
     handles.topics->add_publisher(created, pub_options.callback_group);

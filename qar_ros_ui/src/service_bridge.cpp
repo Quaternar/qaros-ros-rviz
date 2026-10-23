@@ -107,7 +107,7 @@ struct ServiceBridge::Impl : public std::enable_shared_from_this<ServiceBridge::
     try {
       client = std::make_shared<DynamicServiceClient>(
         handles.base.get(), handles.graph, ts, service, rmw_qos_profile_services_default);
-      handles.services->add_client(client, nullptr);
+      handles.services->add_client(client, handles.callback_group);
     } catch (const std::exception & e) {
       return Result::error(Status::RclError, e.what());
     }
@@ -163,7 +163,7 @@ struct ServiceBridge::Impl : public std::enable_shared_from_this<ServiceBridge::
             self->poll();
           }
         },
-        nullptr, handles.base.get(), handles.timers.get());
+        handles.callback_group, handles.base.get(), handles.timers.get());
       timer_active = true;
     } catch (const std::exception & e) {
       report(
