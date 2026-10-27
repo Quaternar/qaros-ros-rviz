@@ -2,19 +2,19 @@
 
 ## What you will do
 
-This document takes you from the installed plugin to a picture and a clickable panel in the QarOS Visualizer. You start RViz with the plugin through the launcher `scripts\run_live_rviz_stream_real.ps1` and connect the plugin to QarOS. You invite a Visualizer, which shows the scene of RViz as a stereo picture with depth. You stream a panel of RViz into AR and click it with the hand ray, you let the plugin put a copy of the Displays panel of RViz into AR, you expose a ROS 2 topic as a panel in AR and publish from it, you show a video in AR, and you pick a point in the 3D scene. A section on the HoloLens 2 follows, and the section Stop and clean up stops everything again.
+This document takes you from the installed plugin to a picture and a clickable panel in the QarOS Visualizer. You start RViz with the plugin through the launcher `scripts\run_live_rviz_stream_real.ps1` and join the QAROS Hub with the plugin: one click on Allow in a window of QAROS, and the Visualizer that you opened in QAROS shows the scene of RViz as a stereo picture with depth. You stream a panel of RViz into AR and click it with the hand ray, you let the plugin put a copy of the Displays panel of RViz into AR, you expose a ROS 2 topic as a panel in AR and publish from it, you show a video in AR, and you pick a point in the 3D scene. A section on the HoloLens 2 follows, and the section Stop and clean up stops everything again.
 
-The sections after [Stop and clean up](#stop-and-clean-up) run the two examples of the web libraries of this repository, which are built together with the libraries. `qar_web_panel_example` serves an AR panel that it builds by hand from a UI model, a counter and a button, and with the folder of the QarOS SDK it also opens the page in QarOS as a URL panel. `qar_ros_topic_panel_example` does the same for a panel that shows one ROS 2 topic and publishes on another one from a button.
+The sections after [Stop and clean up](#stop-and-clean-up) run the two examples of the web libraries of this repository, which are built together with the libraries. `qar_web_panel_example` serves an AR panel that it builds by hand from a UI model, a counter and a button, and joined to the QAROS Hub it also opens the page in QAROS as a URL panel. `qar_ros_topic_panel_example` does the same for a panel that shows one ROS 2 topic and publishes on another one from a button.
 
-Two programs open windows: RViz, which the launcher starts, and the QarOS Visualizer, which QarOS starts itself when the plugin invites it. You look at the Visualizer and you point and click in it with your own hand; nothing in this repository clicks, moves a window or presses a key for you. Each step below names what it needs and what it opens.
+Two programs open windows: RViz, which the launcher starts, and the QAROS Visualizer, which you open from QAROS yourself; the launcher starts neither the Hub nor a Visualizer. You look at the Visualizer and you point and click in it with your own hand; nothing in this repository clicks, moves a window or presses a key for you. Each step below names what it needs and what it opens.
 
 | Step | What it needs | What opens |
 |---|---|---|
 | [Build and install the plugin](#build-and-install-the-plugin) | the installation of this repository | nothing |
-| [Check the launch configuration](#check-the-launch-configuration) | the QarOS SDK folder | nothing |
+| [Check the launch configuration](#check-the-launch-configuration) | the installed QAROS | nothing |
 | [Launch RViz with the plugin](#launch-rviz-with-the-plugin) | the same | RViz |
-| [Connect to QarOS](#connect-to-qaros) | the same | nothing |
-| [Invite the Visualizer and see the scene](#invite-the-visualizer-and-see-the-scene) | the same | the Visualizer |
+| [Connect to QarOS](#connect-to-qaros) | QAROS running on this PC | a prompt of QAROS |
+| [See the scene in the Visualizer](#see-the-scene-in-the-visualizer) | a Visualizer window of QAROS | the Visualizer, opened by you |
 | [Stream a panel and click it in AR](#stream-a-panel-and-click-it-in-ar) | the same | nothing |
 | [The hidden Displays panel](#the-hidden-displays-panel) | the same | nothing |
 | [Expose a ROS topic as an AR tool](#expose-a-ros-topic-as-an-ar-tool) | a second PowerShell window | a dialog of RViz |
@@ -28,15 +28,15 @@ Two programs open windows: RViz, which the launcher starts, and the QarOS Visual
 |---|---|---|---|
 | `qar_web_panel_example --help` | prints the options and exits | the Qt folder on `PATH` | no |
 | `qar_web_panel_example --serve-seconds 60` | serves the counter panel for 60 seconds and prints the address of its page; `--loopback` keeps the server on this machine | the Qt folder on `PATH` | no |
-| `qar_web_panel_example --sdk-bin DIR` | also opens the page as a URL panel in QarOS and invites a Visualizer, and serves for 60 seconds unless `--serve-seconds` says otherwise | the QarOS SDK | the Visualizer opens its own window |
-| `qar_ros_topic_panel_example` with the same options | runs a ROS 2 node, shows the newest message of `/qar_example/text` in the panel and publishes on `/qar_example/pressed` from the button | a shell prepared with `env_setup.ps1`; the QarOS SDK for `--sdk-bin` | as above |
+| `qar_web_panel_example` | joins the QAROS Hub of this PC and also opens the page as a URL panel in QAROS, and serves for 60 seconds unless `--serve-seconds` says otherwise; `--hub HOST:PORT --code CODE` joins the Hub of another PC, `--no-qaros` serves the page only | the installed QAROS | a prompt of QAROS; the page opens in a Visualizer that you opened |
+| `qar_ros_topic_panel_example` with the same options | runs a ROS 2 node, shows the newest message of `/qar_example/text` in the panel and publishes on `/qar_example/pressed` from the button | a shell prepared with `env_setup.ps1`; the installed QAROS for the panel in QAROS | as above |
 
 
 The sections after Stop and clean up follow that order. [How the pieces fit](#how-the-pieces-fit) explains what runs where, and the section Running a panel server safely lists what to check before a panel server runs on a network.
 
 ## Before you start
 
-Finish [Installation](INSTALL.md) up to and including [Upstream repositories](INSTALL.md#upstream-repositories); the next section repeats the build of the plugin, so that this document runs from zero. The commands run in PowerShell 7 from the clone, `$env:QAR_ROOT\src\qar_rviz_plugin`, and use only the environment variables of the layout. You need the QarOS SDK of [The QarOS SDK](INSTALL.md#the-qaros-sdk): the launcher stops with a message when `QAR_SDK_ROOT` does not name a folder that holds `bin\qar-streaming-c.dll`. RViz and the Visualizer need the desktop of the machine, so work at the console of the machine, as [Machine prerequisites](INSTALL.md#machine-prerequisites) says.
+Finish [Installation](INSTALL.md) up to and including [Upstream repositories](INSTALL.md#upstream-repositories); the next section repeats the build of the plugin, so that this document runs from zero. The commands run in PowerShell 7 from the clone, `$env:QAR_ROOT\src\qar_rviz_plugin`, and use only the environment variables of the layout. You need QAROS installed on this PC, as [The QarOS SDK](INSTALL.md#the-qaros-sdk) describes; the plugin loads the installed library itself, and the launcher only reads the installation, which the registry names. RViz and the Visualizer need the desktop of the machine, so work at the console of the machine, as [Machine prerequisites](INSTALL.md#machine-prerequisites) says.
 
 For the examples, finish [Configure, build and test the units](INSTALL.md#configure-build-and-test-the-units) as well. The examples are in the build folder, at `build\vs2019-x64\examples\<example folder>\RelWithDebInfo\<program>.exe`. Go to the folder of the clone first; the paths of the commands below are relative to it:
 
@@ -44,26 +44,11 @@ For the examples, finish [Configure, build and test the units](INSTALL.md#config
 Set-Location "$env:QAR_ROOT\src\qar_rviz_plugin"
 ```
 
-**UDP port 7446 must be free.** QarOS uses it for its discovery, and a QarOS session cannot be created while another program holds it. The command prints the programs that hold the port, or says that it is free; it changes nothing. [Run-time problems](TROUBLESHOOTING.md#run-time-problems) explains what to do when a program holds it.
-
-```powershell
-$holders = Get-NetUDPEndpoint -LocalPort 7446 -ErrorAction SilentlyContinue
-if ($holders) {
-    $holders | ForEach-Object { 'UDP 7446 is held by process {0} ({1})' -f $_.OwningProcess, (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName }
-} else {
-    'UDP 7446 is free'
-}
-```
-
-```text
-UDP 7446 is free
-```
-
 **The graphics processor.** When you start RViz with `-Confirm`, the launcher sets the Windows graphics preference of `rviz2.exe` to high performance, which selects the NVIDIA graphics processor on a machine that has one. If RViz rendered on another adapter than the one that QarOS uses, every picture would pass through a copy between the adapters. The preference is a value of your user in the registry, the launcher writes it only with `-Confirm`, and [Removing everything again](INSTALL.md#removing-everything-again) lists it with the way to remove it.
 
 Close every RViz window before the next section, because the build replaces the plugin library that a running RViz has loaded.
 
-The two examples, `qar_web_panel_example` and `qar_ros_topic_panel_example`, create a `QCoreApplication`, open no window of their own and need no platform plugin of Qt; they use the Qt modules Core, Network and WebSockets. Windows finds the DLLs of a program through the folders on `PATH`, so the Qt `bin` folder has to be on `PATH`. The QarOS DLL is not found through `PATH`: the examples load it from the folder that you pass in `--sdk-bin`.
+The two examples, `qar_web_panel_example` and `qar_ros_topic_panel_example`, create a `QCoreApplication`, open no window of their own and need no platform plugin of Qt; they use the Qt modules Core, Network and WebSockets. Windows finds the DLLs of a program through the folders on `PATH`, so the Qt `bin` folder has to be on `PATH`. The QAROS library is not found through `PATH` either: the examples join the QAROS Hub through the session owner, which loads the installed library by its full path.
 
 ```powershell
 $env:PATH = "$env:QAR_QT_ROOT\bin;$env:PATH"
@@ -89,17 +74,37 @@ $ros = '.\build\vs2019-x64\examples\ros_topic_panel_example\RelWithDebInfo\qar_r
 ```
 
 ```text
-"[rti_connext_dds_cmake_module][warning] RTI Connext DDS environment script not found (\resource\scripts\rtisetenv_x64Win64VS2017.bat). RTI Connext DDS will not be available at runtime, unless you already configured PATH manually."
-...
-Usage: qar_web_panel_example [--serve-seconds N] [--loopback] [--port N] [--sdk-bin DIR]
+Usage: qar_web_panel_example [--local | --hub HOST:PORT [--code CODE] | --forget | --no-qaros]
+                             [--connect-only] [--serve-seconds N] [--loopback] [--port N]
+  --local            join the QAROS Hub of this PC (the default). QAROS asks once to allow
+                     this program, and again after each rebuild of it: click Allow in the
+                     QAROS window
+  --hub H:P          join the Hub of another PC at host H and onboarding port P (the port is
+                     shown with the pairing code in the Visualizer of that PC)
+  --code CODE        the pairing code that Hub shows; it works once and lives about 10 seconds.
+                     Only the first join needs it: the pairing is stored for the next start
+  --forget           erase the stored pairing with another PC's Hub and exit
+  --no-qaros         do not join QAROS: only serve the page, for a desktop browser
+  --connect-only     join QAROS, print the runtime, the mode, this program's peer and the
+                     targets, and exit; no server, no panel
   --serve-seconds N  serve the panel for N seconds, then exit (default 60)
   --loopback         listen on 127.0.0.1 only, so that no other machine can connect (default: all interfaces)
   --port N           TCP port of the panel server (default 0: the operating system picks a free port)
-  --sdk-bin DIR      bin folder of the QarOS SDK: also open the page as a URL panel and invite a Visualizer (opens a window)
-Usage: qar_ros_topic_panel_example [--serve-seconds N] [--loopback] [--sdk-bin DIR]
+Usage: qar_ros_topic_panel_example [--local | --hub HOST:PORT [--code CODE] | --forget | --no-qaros]
+                                   [--connect-only] [--serve-seconds N] [--loopback]
+  --local            join the QAROS Hub of this PC (the default). QAROS asks once to allow
+                     this program, and again after each rebuild of it: click Allow in the
+                     QAROS window
+  --hub H:P          join the Hub of another PC at host H and onboarding port P (the port is
+                     shown with the pairing code in the Visualizer of that PC)
+  --code CODE        the pairing code that Hub shows; it works once and lives about 10 seconds.
+                     Only the first join needs it: the pairing is stored for the next start
+  --forget           erase the stored pairing with another PC's Hub and exit
+  --no-qaros         do not join QAROS: only serve the page, for a desktop browser
+  --connect-only     join QAROS, print the runtime, the mode, this program's peer and the
+                     targets, and exit; no node, no server, no panel
   --serve-seconds N  run the node and serve the panel for N seconds, then exit (default 60)
   --loopback         serve the page on 127.0.0.1 only, so that no other machine can open it (default: all interfaces)
-  --sdk-bin DIR      bin folder of the QarOS SDK: also open the page as a URL panel and invite a Visualizer (opens a window)
 ```
 
 ## Build and install the plugin
@@ -125,9 +130,9 @@ If you have just finished [Build and install qar_rviz_plugin](INSTALL.md#build-a
   colcon : C:\qar\src\qar_rviz_plugin\build\colcon
 Starting >>> qar_rviz_streaming
 ...
-Finished <<< qar_rviz_streaming [18.3s]
+Finished <<< qar_rviz_streaming [27.7s]
 ...
-Summary: 1 package finished [18.7s]
+Summary: 1 package finished [28.3s]
 ...
 === BUILD OK ===
 Plugin DLL: C:\qar\install\bin\qar_rviz_streaming.dll
@@ -142,7 +147,31 @@ python "$env:ROS2_INSTALL_ROOT\Scripts\ros2-script.py" pkg prefix qar_rviz_strea
 ```
 ```text
 "[rti_connext_dds_cmake_module][warning] RTI Connext DDS environment script not found (\resource\scripts\rtisetenv_x64Win64VS2017.bat). RTI Connext DDS will not be available at runtime, unless you already configured PATH manually."
-...
+=== Qar RViz2 environment set up in this PowerShell session ===
+PATH prepended with: venv Scripts, Qt bin, ROS 2 distribution bin folders (via local_setup.bat)
+AMENT_PREFIX_PATH: C:\qar\deps\ros2_humble\ros2-windows
+QT_QPA_PLATFORM_PLUGIN_PATH: C:\qar\deps\Qt\5.15.2\msvc2019_64\plugins\platforms
+
+python  -> C:\qar\venv\Scripts\python.exe
+
+REMINDER: the 'ros2' command-line wrapper exe has a broken shebang (a build-machine path).
+  Use: python "C:\qar\deps\ros2_humble\ros2-windows\Scripts\ros2-script.py" <args>   (NOT ros2.exe / ros2 directly)
+rviz2.exe works: launch it directly (rviz2.exe).
+  It needs the repaired distribution: run the fix_*.ps1 scripts of this folder once.
+  docs/INSTALL.md, section 'ROS 2 Humble for Windows', leads to the repairs this repository needs.
+"[rti_connext_dds_cmake_module][warning] RTI Connext DDS environment script not found (\resource\scripts\rtisetenv_x64Win64VS2017.bat). RTI Connext DDS will not be available at runtime, unless you already configured PATH manually."
+=== Qar RViz2 environment set up in this PowerShell session ===
+PATH prepended with: venv Scripts, Qt bin, ROS 2 distribution bin folders (via local_setup.bat)
+AMENT_PREFIX_PATH: C:\qar\deps\ros2_humble\ros2-windows
+QT_QPA_PLATFORM_PLUGIN_PATH: C:\qar\deps\Qt\5.15.2\msvc2019_64\plugins\platforms
+
+python  -> C:\qar\venv\Scripts\python.exe
+
+REMINDER: the 'ros2' command-line wrapper exe has a broken shebang (a build-machine path).
+  Use: python "C:\qar\deps\ros2_humble\ros2-windows\Scripts\ros2-script.py" <args>   (NOT ros2.exe / ros2 directly)
+rviz2.exe works: launch it directly (rviz2.exe).
+  It needs the repaired distribution: run the fix_*.ps1 scripts of this folder once.
+  docs/INSTALL.md, section 'ROS 2 Humble for Windows', leads to the repairs this repository needs.
 C:\qar\install
 ```
 
@@ -154,35 +183,53 @@ The launcher has two modes. Without `-Confirm` it only prints the configuration 
 .\scripts\run_live_rviz_stream_real.ps1
 ```
 ```text
-...
-=== RViz -> QarOS Visualizer live stream ===
+=== RViz -> QAROS Hub live stream ===
   scene            : C:\qar\install\share\qar_rviz_streaming\config\test_scenes\scene3_grid_marker.rviz
-  QarOS SDK bin    : C:\QarOS\install\bin
-  Visualizer exe   : C:\QarOS\install\bin\qar-streaming-viz.exe
-  runtime-launcher : C:\QarOS\install\bin\qar-runtime-launcher.exe
-  QAR_RUNTIME_BINARIES_DIR = C:\QarOS\install\bin
+  QAROS install    : C:\Program Files\Quaternar\QAROS (from registry)
+  QAROS_RUNTIME_DIR        = (not set: the plugin uses the installed QAROS)
   QAR_PANEL_LIVE_STREAM    = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
-...
-  QAR_PANEL_INVITE_PEERS   = (none - invite from the panel, or pass -InvitePeers)
-...
+  QAR_PANEL_HUB_MODE       = (not set: the panel setting "Hub" of the QAROS Hub group decides, Automatic by default)
+  QAR_PANEL_HUB_HOST / _PORT = (not set) / (not set)
+  QAR_PANEL_INVITE_PEERS   = (none - pass -InvitePeers to invite devices)
+  QAR_PANEL_FIXED_POSES    = ground (launcher default)
+  QAR_PANEL_VOLUME_Y       = -1.6 (launcher default)
+  test markers: off (start them with -TestMarkers or from the Diagnostics tab)
+  QAR_PANEL_TEST_MARKERS_PYTHON = C:\qar\venv\Scripts\python.exe
+  QAR_PANEL_TEST_MARKERS_SCRIPT = C:\qar\src\qar_rviz_plugin\scripts\publish_test_markers.py
   install prefix           : C:\qar\install (plugin overlay: found)
   RViz logs (-LogDir)      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs
   rviz2.exe                : C:\qar\deps\ros2_humble\ros2-windows\bin\rviz2.exe
-  GPU preference (HKCU)    : (not set) - with -Confirm the launcher sets High-performance (NVIDIA) for rviz2.exe
-  log mode                 : QUIET (default) - QarOS logs at warn, no zenoh logging, no per-frame traces; -TraceLogs collects full logs for a vendor report.
-  QAR_LOG_SEVERITY         = warn
-  QAR_PANEL_LOG_SEVERITY   = warn
+  GPU preference (HKCU)    : GpuPreference=2; - with -Confirm the launcher sets High-performance (NVIDIA) for rviz2.exe
+  log mode                 : QUIET (default) - QarOS logs at info (default), no zenoh logging, no per-frame traces; -TraceLogs collects full logs for a vendor report.
+  QAR_LOG_SEVERITY         = info
+  QAR_PANEL_LOG_SEVERITY   = info
   QAR_PANEL_LOG_CONSOLE    = off
   RUST_LOG                 = (unset)
   QAR_ZENOH_LOG            = (unset)
   QAR_ADAPTER_TRACE        = (unset)
   QAR_ADAPTER_TRACE_ALL    = (unset)
   QAR_ADAPTER_FRAME_TRACE  = (unset)
+  --- QAROS on this PC (read only) ---
+  installed QAROS          : 0.9.0-dev.3008+65dc9aeb release (C API v0, scope machine) at C:\Program Files\Quaternar\QAROS
+  qaros-hub-service        : running (pid 39416, since 11:52:57)
+  qar-runtime-launcher     : running (pid 38012, since 11:52:57)
+  qar-streaming-viz        : running (pid 46064, since 11:52:59)
+  Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
+                             C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
+  Hub mode (resolved)      : local (auto: QAROS is installed on this PC; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)
+  identity file            : not present (C:\Users\<user>\AppData\Local\Quaternar\QarOS-ROS\rviz2-plugin\identity.txt): no pairing with the Hub of another PC is stored
+  --- what you will have to do ---
+  Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
+  Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
 ...
+  GPU memory (nvidia-smi)  : NVIDIA GeForce RTX 4080 Laptop GPU: 602 MiB used of 12282 MiB, 7 % busy
+  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261027_183938.checks.txt (written with -Confirm)
   QAR log dir              : C:\Users\<user>\AppData\Local\Temp\quaternar (no *.log over 256 MB)
-...
+  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261027_183938.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
+  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261027_183938.launcher_<name>
+  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261027_183938.<report> (no .dmp files)
   VC++ runtime (rviz2 dir) : 14.50.35719.0 (ok, needs 14.40 or newer)
   tinyxml.dll (rviz2 dir)  : present
 
@@ -190,17 +237,17 @@ DRY RUN (no -Confirm): environment resolved above; NOT launching any GUI (log ro
 To actually run the interactive session, re-invoke with -Confirm (opens windows).
 ```
 
-The script takes the locations from its parameters `-SdkRoot`, `-Prefix`, `-QtRoot` and `-Ros2Root` or, when you omit a parameter, from `QAR_SDK_ROOT`, `QAR_PREFIX`, `QAR_QT_ROOT` and `ROS2_INSTALL_ROOT`. It prepares the environment of the distribution and Qt with `scripts\env_setup.ps1`, sources the overlay of the plugin, and then prints what it will do, one line for each item:
+The script takes the locations from its parameters `-SdkRoot`, `-Prefix`, `-QtRoot` and `-Ros2Root` or, when you omit a parameter, from `QAR_PREFIX`, `QAR_QT_ROOT` and `ROS2_INSTALL_ROOT`; the folder of QAROS comes from the registry key that the installer of QAROS writes, and only when there is none from `QAR_SDK_ROOT`. It prepares the environment of the distribution and Qt with `scripts\env_setup.ps1`, sources the overlay of the plugin, and then prints what it will do, one line for each item:
 
 | Line | What it says |
 |---|---|
 | **scene** | the RViz configuration that the launcher will load; by default the file `qar_rviz_streaming/config/test_scenes/scene3_grid_marker.rviz`, as the install copies it below `share` in the prefix, which holds a grid and a display of markers; `-Scene` names another file, and the line says `NOT FOUND` when the file is missing |
-| **QarOS SDK bin**, **Visualizer exe**, **runtime-launcher** | the `bin` folder of the SDK, and the two programs of QarOS that the runtime starts from it; a warning follows when one of them is missing |
-| `QAR_RUNTIME_BINARIES_DIR` | the folder that the plugin gives to QarOS as the place to start its programs from; the launcher also puts it in front of `PATH` |
+| **QAROS install**, `QAROS_RUNTIME_DIR` | the folder of the installed QAROS and where it comes from, and the folder that `-RuntimeDir` gives for another QAROS runtime, which is not set unless you pass it |
 | `QAR_PANEL_LIVE_STREAM` | `1`: the panel is live-capable, which relabels its buttons, and it connects only when you press a button |
 | `FASTRTPS_DEFAULT_PROFILES_FILE` | the profile `scripts\fastdds_large_data.xml` that enlarges the shared-memory segment of Fast-DDS for large messages, unless the variable is already set in your shell, which then wins, or you pass `-NoDdsProfile` |
-| `QAR_SCENE_LIGHT` | `both`: the scene is lit by a world-fixed rig and by a light at the head of each peer, and the headlight of RViz is suppressed while the plugin streams |
-| `QAR_PANEL_VISUALIZERS`, `QAR_PANEL_INVITE_PEERS` | how many Visualizers the plugin invites when it connects, `0` by default, with the admission policy (`panel setting` unless `QAR_PANEL_PEER_ADMISSION` is set, as `-RealPeers` does) and a note that says whether connecting invites by itself, and the devices of `-InvitePeers` |
+| `QAR_SCENE_LIGHT` | `both`: the scene is lit by a world-fixed rig and by a light at the head of each target, and the headlight of RViz is suppressed while the plugin streams |
+| `QAR_PANEL_HUB_MODE`, `QAR_PANEL_HUB_HOST`, `QAR_PANEL_HUB_PORT` | the Hub that the panel joins, from `-HubMode`, `-HubHost` and `-HubPort`; without them the panel setting decides, `auto` by default |
+| `QAR_PANEL_INVITE_PEERS` | the devices that the plugin invites when it has joined the Hub of this PC, from `-InvitePeers` |
 | `QAR_PANEL_FIXED_POSES`, `QAR_PANEL_VOLUME_Y` | where the panels hang and at which height the centre of the app volume is, each with its source: the defaults of the launcher, `ground` and `-1.6`, or `environment` when your shell already held a value |
 | **test markers**, `QAR_PANEL_TEST_MARKERS_PYTHON`, `QAR_PANEL_TEST_MARKERS_SCRIPT` | whether the publisher of the test markers starts with RViz, which `-TestMarkers` asks for, and the python and the script that the button of the panel runs; the lines say `"(not exported)"` when python or the script is missing |
 | **install prefix** | the prefix, and whether the overlay of the plugin was found; without `-Confirm` a missing overlay is only reported |
@@ -208,11 +255,13 @@ The script takes the locations from its parameters `-SdkRoot`, `-Prefix`, `-QtRo
 | **rviz2.exe**, **GPU preference (HKCU)** | the RViz that the launcher found on `PATH`, and the graphics preference that is stored for it now |
 | **log mode** | quiet by default, and the line says so: QarOS logs at the severity `info`, there is no zenoh logging and no per-frame trace; `-TraceLogs` selects the full logs that a bug report needs, which can grow to gigabytes |
 
+The block that follows the logging lines, `QAROS on this PC (read only)`, only reads: the installed version of QAROS with the flavour of the C API, the state of the processes `qaros-hub-service`, `qar-runtime-launcher` and `qar-streaming-viz`, the file that holds the endpoint of the Hub, with its onboarding port and its router port and never its key, the Hub mode that the launcher resolved, and the identity file of the panel, which is present only when a pairing with the Hub of another PC is stored. The last block, `what you will have to do`, says that you press Connect in the tab Connection and click Allow in the window of QAROS the first time, and that you open a Visualizer window from QAROS yourself.
+
 Below the table the launcher prints the value of each logging variable and reports what it would rotate in the folder of the QarOS logs. It also checks the machine: it looks at the free space of the drives that hold the logs, asks `nvidia-smi` which other programs use the graphics processor for computing, and reads the free commit charge, and it only warns, because a full drive, a compute job on the graphics processor or a nearly exhausted commit charge can stall every QarOS stream at once. The line **VC++ runtime (rviz2 dir)** gives the version of the `MSVCP140.dll` in the folder of `rviz2.exe` and says whether it is 14.40 or newer, which the QarOS library needs; for an older runtime it says `TOO OLD` and a warning follows that names the file and the command that repairs it, [The QarOS library crashes while it starts](TROUBLESHOOTING.md#the-qaros-library-crashes-while-it-starts) explains why. The line **tinyxml.dll (rviz2 dir)** says `present` when the file `tinyxml.dll` lies in the folder of `rviz2.exe` and `MISSING - run fix_missing_tinyxml_dll.ps1` when it does not: without the file RViz ends with the exit code 0xC0000409 as soon as a robot description reaches the Robot model display, a warning follows that names the file and the command `scripts\fix_missing_tinyxml_dll.ps1` that builds it, and with `-Confirm` the launcher stops before it starts anything. The last lines say that this was a dry run and how to start the real one.
 
-The line **GPU memory (nvidia-smi)** names the memory that the graphics processor has in use. The line **QAR library log copy** names the file `rviz_live_<stamp>.qar_streaming.log`, to which the launcher copies the log of the QarOS library when RViz has ended, because the library starts that log afresh in every session. The parameter `-QarLogSeverity` takes `warn`, `info` or `debug`, sets the log level of QarOS for that run only, and adds a line to the plan when you pass it; without it the level is `info`. The line **QAR process logs copy** names the files `rviz_live_<stamp>.mixer_<id>.log` and `rviz_live_<stamp>.streaming_viz_<id>.log`, to which the launcher copies the logs of the mixers and of the Visualizers of the run when RViz has ended, and the line **QAR crash reports copy** names the copies of the crash reports of the run, `rviz_live_<stamp>.` and the name of the report. The folder of QarOS holds the files of all runs, and the copies keep the files of one run together with the logs of RViz.
+The line **GPU memory (nvidia-smi)** names the memory that the graphics processor has in use. The line **QAR library log copy** names the file `rviz_live_<stamp>.qar_streaming.log`, to which the launcher copies the log of the QarOS library when RViz has ended, because the library starts that log afresh in every session. The parameter `-QarLogSeverity` takes `warn`, `info` or `debug`, sets the log level of QarOS for that run only, and wins over `-TraceLogs` and over a value of your shell when you pass it; without it the level is `info`. The line **QAROS launcher logs copy** names the files `rviz_live_<stamp>.launcher_<name>`, to which the launcher copies, when RViz has ended, the `*.log` files that QAROS wrote to the newest session folder of `qar-launcher-default` during the run, and the line **QAROS crash reports copy** names the copies of the crash reports `*.crash.txt` of the run, `rviz_live_<stamp>.` and the name of the report; no `.dmp` file is copied. The folder of QAROS holds the files of all runs, and the copies keep the files of one run together with the logs of RViz.
 
-The launcher also sets variables that it does not print. `QAR_POSE_WORLD` is always `zup`, because QarOS reports head poses in a world with the y axis up while RViz renders a world with the z axis up, and without the conversion the viewer arrives on its side. `QAR_POSE_YAW_DEG` is `180`, and `QAR_POSE_HEIGHT_M` and `QAR_POSE_BACK_M` are `0`, so that the viewer is turned and never moved. `QAR_DEPTH_ENCODING` is `ndc`, because with an SDK drop earlier than that of 2026-09-28 the Visualizer expected the window-space depth value and not metres. For the last four a value that you set in your shell before you start the launcher wins. [What the launcher sets](CONFIGURATION.md#what-the-launcher-sets) compares them with the defaults of the plugin.
+The launcher also sets variables that it does not print. `QAR_POSE_WORLD` is always `zup`, because QarOS reports head poses in a world with the y axis up while RViz renders a world with the z axis up, and without the conversion the viewer arrives on its side. `QAR_POSE_YAW_DEG` is `180`, and `QAR_POSE_HEIGHT_M` and `QAR_POSE_BACK_M` are `0`, so that the viewer is turned and never moved. `QAR_DEPTH_ENCODING` is `ndc`, because the Visualizer expected the window-space depth value and not metres; whether the installed Visualizer still needs it has not been judged again. For the last four a value that you set in your shell before you start the launcher wins. [What the launcher sets](CONFIGURATION.md#what-the-launcher-sets) compares them with the defaults of the plugin.
 
 ## Launch RViz with the plugin
 
@@ -222,7 +271,7 @@ This is the first step that opens a window. The command starts RViz and waits in
 .\scripts\run_live_rviz_stream_real.ps1 -Confirm
 ```
 
-With `-Confirm` the launcher does these things in order: it reads the version of the C++ runtime next to `rviz2.exe` and stops, before it changes or starts anything, when that version is older than 14.40; it writes the graphics preference of `rviz2.exe` when RViz is on `PATH` and the preference is not high performance already; it renames every QarOS log file over 256 MB to the same name with `.prev` added; it stops the test publishers that earlier runs left behind, which are the Python processes whose command line names `publish_test_markers.py`, `publish_test_tf.py`, `publish_test_robot.py` or `publish_test_pointcloud.py`, also when you started them yourself in another window; it cleans up the Fast-DDS shared memory of programs that have ended; with `-TestMarkers` it starts the publisher of the synthetic markers, `scripts\publish_test_markers.py`, in a hidden window; it warns when UDP port 7446 is held; and it starts `rviz2.exe` with the scene as its configuration. It writes the output of RViz to two files in the log folder, `rviz_live_<stamp>.out.log` and `rviz_live_<stamp>.err.log`, where `<stamp>` is the start time, and the results of its start checks to `rviz_live_<stamp>.checks.txt`. It then waits for RViz to end and copies next to them the log of the QarOS library, the logs of the mixers and of the Visualizers that were written during the run, and the crash reports of the run. The launcher starts nothing else: the QarOS runtime and the Visualizer are started by QarOS itself when you ask for them.
+With `-Confirm` the launcher does these things in order: it reads the version of the C++ runtime next to `rviz2.exe` and stops, before it changes or starts anything, when that version is older than 14.40; it writes the graphics preference of `rviz2.exe` when RViz is on `PATH` and the preference is not high performance already; it renames every QarOS log file over 256 MB to the same name with `.prev` added; it stops the test publishers that earlier runs left behind, which are the Python processes whose command line names `publish_test_markers.py`, `publish_test_tf.py`, `publish_test_robot.py` or `publish_test_pointcloud.py`, also when you started them yourself in another window; it cleans up the Fast-DDS shared memory of programs that have ended; with `-TestMarkers` it starts the publisher of the synthetic markers, `scripts\publish_test_markers.py`, in a hidden window; and it starts `rviz2.exe` with the scene as its configuration. It writes the output of RViz to two files in the log folder, `rviz_live_<stamp>.out.log` and `rviz_live_<stamp>.err.log`, where `<stamp>` is the start time, and the results of its start checks to `rviz_live_<stamp>.checks.txt`. It then waits for RViz to end and copies next to them the log of the QarOS library, the logs of the mixers and of the Visualizers that were written during the run, and the crash reports of the run. The launcher starts nothing else: it starts neither the Hub nor a Visualizer, and it adds nothing to `PATH`, because the plugin loads the installed library of QAROS by its full path.
 
 The marker publisher exists so that the scene is not empty: the configuration shows a grid and a display of the markers on the topic `/qar_test_markers`, and without a publisher the stream would carry nothing but the grid. The launcher starts no publisher unless you pass `-TestMarkers`; the button `"Start test markers"` on the tab `Diagnostics` starts the same publisher at any time and stops it again. The publisher is synthetic and needs no data of yours. The one that the launcher started keeps running after RViz has closed, and [Stop and clean up](#stop-and-clean-up) shows how it ends.
 
@@ -236,102 +285,78 @@ RViz opens with the Displays and Views panels and the panel `"Qar Streaming"`. A
 
 The first line is the class that the file `plugin_description.xml` registers, and the second line is the title of the panel. The configuration `qar_streaming_dev.rviz` of the plugin and the five scenes in the folder `qar_rviz_streaming/config/test_scenes` all carry the entry. If you save a configuration from RViz under the name of one of the shipped files, RViz writes the file again from its own state and drops the comments of the original, so save under a name of your own.
 
-The panel starts in the state `"Qar runtime: STOPPED"` on its tab `Connection`, and the launcher made it live-capable: the two buttons at the top of the tab carry the labels `"Connect to QarOS"` and `"Disconnect (pause)"`, where a panel without a live session shows `"Start Qar"` and `"Stop Qar"`. The panel connects to nothing until you press the first button. [The Qar Streaming panel at a glance](OPERATOR_GUIDE.md#the-qar-streaming-panel-at-a-glance) lists every control.
+The panel starts in the state `"QarOS: not connected"` on its tab `Connection`, and the launcher made it live-capable: the two buttons at the top of the tab carry the labels `"Connect to QarOS"` and `"Disconnect (pause)"`, where a panel without a live session shows `"Start Qar"` and `"Stop Qar"` and the state `"Qar runtime: STOPPED"`. The panel connects to nothing until you press the first button. [The Qar Streaming panel at a glance](OPERATOR_GUIDE.md#the-qar-streaming-panel-at-a-glance) lists every control.
 
 Everything the panel logs goes to its `Diagnostics` view and, with a time of day in front, to the standard error of RViz: each line of the file `rviz_live_<stamp>.err.log` that starts with `[qar-panel]` is a line of the panel. The commands below read that file, the newest one in the default log folder.
 
 ## Connect to QarOS
 
-Press `"Connect to QarOS"`. RViz stays responsive: the plugin builds the session of QarOS on a worker thread, which takes a few seconds, and adopts it on a render tick when it is ready. While it builds, the label shows `"Qar runtime: CONNECTING..."`, and when the session is open it shows `"Qar runtime: RUNNING (live)"`. If you press the button again while the session is being built, the panel only says that the connection is in progress. The plugin does not start the launcher of QarOS itself; the QarOS library starts and configures it from the folder that the launcher passed in `QAR_RUNTIME_BINARIES_DIR`.
+QAROS has to run on this PC. Open it from the Start menu, which starts the Hub, and open a Visualizer window from it; the Visualizer is the target that receives the scene. A fresh Visualizer has no receiver: click `Add receiver` in it once, after which the Hub lists the Visualizer as a target. The onboarding and the Visualizer are described by the vendor: [Onboarding and sessions](https://docs.quaternar.com/docs/next/developer-guide/onboarding-and-sessions/), [Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/) and [Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/).
+
+In RViz open the tab `Connection` of the panel `"Qar Streaming"`. The group `"QAROS Hub"` offers `Automatic`, `"This PC (approve once in the QAROS Hub)"` and `"Another PC (pairing code)"`; keep `Automatic`, which takes the Hub of this PC when QAROS is installed here and no pairing with another PC is stored. Press `"Connect to QarOS"`. RViz stays responsive: the session owner of the plugin loads the installed library of QAROS and joins the Hub on a thread of its own, and the render tick collects what it reports. The State line, which the first line of the status strip repeats, goes through these states: `"QarOS: loading the QAROS runtime ..."`, then `"QarOS: waiting for approval in the QAROS Hub - click Allow in the QAROS window"` with the time that is left. The first time, QAROS asks in a window of its own whether `rviz2` may join: click Allow. QAROS asks again after `rviz2.exe` was updated in place, and a moved or copied `rviz2.exe` is refused until the old approval is revoked in the Visualizer ([Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/)). `Cancel` stops the wait, and the wait ends by itself after 120 seconds unless `QAR_PANEL_APPROVAL_TIMEOUT_S` says otherwise. After Allow the State line reads `QarOS: joined (local app) - setting up the session ...` while the plugin makes the app volume of the scene, and then `QarOS: connected (local app) - 1 target(s), 1 served`. If the join fails, the State line and the label `"Last error: <none>"` say why in a plain sentence, for example that QAROS denied the app or that nobody answered the prompt in time, and `"Connect to QarOS"` tries again. Denying, not answering and the other failures of the join are described from the code and have not been run in a live session.
 
 If RViz ends as soon as you press the button, read the end of `rviz_live_<stamp>.err.log`: a line about a `SEH FAULT` in `qar_library_init` that names the `MSVCP140.dll` of the distribution means that the C++ runtime next to `rviz2.exe` is too old, and [The QarOS library crashes while it starts](TROUBLESHOOTING.md#the-qaros-library-crashes-while-it-starts) gives the repair.
 
-The panel writes what it is about to do before it starts the worker. The first line of the connection has this form:
+The line that says that the session owner was made has this form:
 
 ```text
-Connecting to QarOS runtime (building session; RViz stays responsive)...
+QAROS: session owner made (program %1, Hub mode setting '%2')
 ```
 
-It follows with the range of depth that the plugin renders and advertises, the logging of the QarOS library, the application volume of the scene, and the invitation and admission settings. The depth range defaults to 0.01 m for the near plane and 150 m for the far plane, and the line has this form:
+The line that says that the Hub session is open has this form:
 
 ```text
-LIVE: near/far = %1 / %2 m, depth_scale = %3
+QarOS: the Hub session is open; making the render factory.
 ```
 
-The line that states the invitation settings has this form, with the number of Visualizers that connect invites, the admission policy and the ceiling on the number of peers:
+When the app volume is ready, the panel says that the streaming is active and that a stream opens for each target that is online. That line has this form, and the end of the sentence follows it:
 
 ```text
-LIVE: auto-invite %1, admission=%2, max_peers=%3
+Connected to QarOS: session open, streaming active; a stream opens for each target that
 ```
 
-When the session is open, the panel says so, and because the launcher invites nothing by default, it adds what to do next. The line has this form, and a sentence about the next step follows it:
-
-```text
-Connected to QarOS: session open, streaming active.
-```
-
-Connecting also leads to the hidden Displays panel, which is made as soon as the first stream of the 3D scene is open and which [The hidden Displays panel](#the-hidden-displays-panel) describes. The command below prints these lines from the log:
+Connecting also leads to the hidden Displays panel, which is made as soon as the first stream of the 3D scene is open and which [The hidden Displays panel](#the-hidden-displays-panel) describes. The command below prints these lines from the log, and shows them after a session of your own:
 
 ```powershell
 $log = Get-ChildItem -Path "$env:TEMP\qar_rviz_logs" -Filter 'rviz_live_*.err.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-Select-String -Path $log.FullName -Pattern 'Connecting to QarOS|Connected to QarOS|LIVE: ' | ForEach-Object { $_.Line }
+Select-String -Path $log.FullName -Pattern 'Connecting to QarOS|Connected to QarOS|LIVE: |QAROS: session owner' | ForEach-Object { $_.Line }
 ```
 ```text
-[qar-panel] 20:34:13.954 Connecting to QarOS runtime (building session; RViz stays responsive)...
-[qar-panel] 20:34:13.955 LIVE: near/far = 0.01 / 150 m, depth_scale = 1
-[qar-panel] 20:34:13.955 LIVE: QarOS library logging: severity=warn (from QAR_PANEL_LOG_SEVERITY), console duplicate to stdout=off
-...
-[qar-panel] 20:34:13.955 LIVE: auto-invite OFF (use 'Invite peer' to open a Visualizer), admission=invited, max_peers=8
-[qar-panel] 20:34:15.764 Connected to QarOS: session open, streaming active. No peer invited — pick a device kind and click 'Invite peer' to open a Visualizer.
-[qar-panel] 20:34:28.187 LIVE: invited visualizer as peer bf2bb6007d (1 invited in total). Its stream opens when the device connects.
-[qar-panel] 20:34:28.191 LIVE: sender creation in flight (async) — RViz stays responsive; the stream opens as soon as the peer completes negotiation.
-[qar-panel] 20:34:33.100 LIVE: opened stream for peer bf2bb6007d
-[qar-panel] 20:39:49.263 Connected to QarOS: streaming active; waiting for the invited peer(s).
-...
+QAR-PENDING-OUTPUT RP-GS-05
 ```
 
-`"Disconnect (pause)"` does not disconnect. It pauses the streaming and keeps the session open, and the log shows the line `"QarOS: streaming paused (session kept open)."` Pressing `"Connect to QarOS"` again resumes the streaming on the open session: the panel runs the steps of the connection again without building a session, and the log shows a line `"Connected to QarOS:"` once more. The line `"QarOS: streaming resumed."` is the line of a press on `"Connect to QarOS"` while the panel is still connected, that is, a press with no pause before it; [Connect, invite and session lines](LOG_REFERENCE.md#connect-invite-and-session-lines) describes the lines. The session ends when RViz closes.
+`"Disconnect (pause)"` does not disconnect. It pauses the streaming and keeps the session open, and the log shows the line `"QarOS: streaming paused (session kept open)."` Pressing `"Connect to QarOS"` again resumes the streaming on the open session: the log shows the line `"QarOS: streaming resumed."` and no new join happens. The session ends when `Forget pairing` is confirmed, when the session ends on its own, and when RViz closes; [Connecting and pausing](OPERATOR_GUIDE.md#connecting-and-pausing) and [Connect, invite and session lines](LOG_REFERENCE.md#connect-invite-and-session-lines) describe the states and the lines.
 
-## Invite the Visualizer and see the scene
+## See the scene in the Visualizer
 
-The group `"Invite a device"` on the tab `Connection` has a drop-down with the four kinds of device that QarOS can invite, `Visualizer`, `"HoloLens 2"`, `"Meta Quest"` and `"ZED camera"`, a field for the host name, and the button `"Invite peer"`, which is grey until the connection is open. Leave `Visualizer` selected and the field empty, and press `"Invite peer"`. QarOS starts the Visualizer from the `bin` folder of the SDK, and its window opens on this machine.
-
-The invitation is a synchronous call into QarOS on the GUI thread of RViz. RViz does not repaint while the call runs, so the panel can stand still for the duration of the call. The same holds when the panel creates a QarOS panel, which [Stream a panel and click it in AR](#stream-a-panel-and-click-it-in-ar) shows; only the connection of the previous section runs on a worker thread.
-
-The panel writes a line for the invitation that has this form:
-
-```text
-LIVE: invited %1%2 as peer %3 (%4 invited in total). Its stream opens when the device connects.
-```
-
-Each invitation of a Visualizer carries a fresh identifier by default, so that every invitation opens a Visualizer of its own, and the panel adds a note about that. The Visualizer then asks for a stream. The plugin creates the sender for the peer in the background, so that RViz stays responsive; until the receiver has finished negotiating, the sender does not exist yet, and the plugin writes one line about that. When the stream opens, the line has this form:
+The Visualizer is a target of the Hub, so the plugin needs no invitation for it: the list `"Targets:"` of the group `"QAROS Hub"` shows it with its kind and presence and the word `served`, and a stream opens for it by itself. The plugin creates the sender for the target in the background, so that RViz stays responsive; until the receiver has finished negotiating, the sender does not exist yet, and the plugin writes one line about that, and later one line when the wait ends with the number of times that the sender was not there yet. When the stream opens, the line has this form:
 
 ```text
 LIVE: opened stream for peer %1
 ```
 
-What you see in the Visualizer is the scene of RViz: the grid and the synthetic markers. The plugin renders the scene once for each peer, from the head pose that QarOS reports for that peer, and sends a colour picture and a depth picture for each eye, so the view in the Visualizer follows the pose of the Visualizer and not the camera of RViz; orbiting the camera of RViz changes only the picture on your desktop.
+What you see in the Visualizer is the scene of RViz: the grid and the synthetic markers. The plugin renders the scene once for each target, from the head pose that QAROS reports for that target, and sends a colour picture and a depth picture for each eye, so the view in the Visualizer follows the pose of the Visualizer and not the camera of RViz; orbiting the camera of RViz changes only the picture on your desktop.
 
-Every two seconds the panel writes a heartbeat line, which starts with the word `HB` and has one field for each stream. The line is the place to look at when you wonder whether pictures flow: the stream of the peer shows its frame rate and the number of frames submitted. The beginning of the line has this form:
+Every two seconds the panel writes a heartbeat line, which starts with the word `HB` and has one field for each stream. The line is the place to look at when you wonder whether pictures flow: the stream of the target shows its frame rate and the number of frames submitted. The beginning of the line has this form:
 
 ```text
 HB dt=%1s ticks=%2 tick_fps=%3 max_gap=%4ms
 ```
 
-After it come `streams=`, the average time of a batch of renders and the number of frames that the render budget shed, and then one field for each peer that starts with the first characters of its identifier. [The heartbeat line](LOG_REFERENCE.md#the-heartbeat-line) explains every field.
+After it come `streams=`, the average time of a batch of renders and the number of frames that the render budget shed, and then one field for each target that starts with the first characters of its identifier. [The heartbeat line](LOG_REFERENCE.md#the-heartbeat-line) explains every field.
 
 ```powershell
 $log = Get-ChildItem -Path "$env:TEMP\qar_rviz_logs" -Filter 'rviz_live_*.err.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-Select-String -Path $log.FullName -Pattern 'LIVE: invited|LIVE: opened stream|HB dt=' | Select-Object -First 8 | ForEach-Object { $_.Line }
+Select-String -Path $log.FullName -Pattern 'LIVE: opened stream|HB dt=' | Select-Object -First 8 | ForEach-Object { $_.Line }
 ```
 
-If the Visualizer does not appear, [Nothing or the wrong picture in QarOS](TROUBLESHOOTING.md#nothing-or-the-wrong-picture-in-qaros) lists the causes.
+If the Visualizer shows nothing, [Nothing or the wrong picture in QarOS](TROUBLESHOOTING.md#nothing-or-the-wrong-picture-in-qaros) lists the causes.
 
 ## Stream a panel and click it in AR
 
 The tab `"AR panels"` streams a Qt window of RViz into AR as a QarOS GUI panel. Its drop-down lists the windows that can be streamed: first `"This QAR panel"`, which is the panel of the plugin itself, then every dock of RViz, such as the Displays and Views panels. Keep `"This QAR panel"` selected and press `"Stream panel to AR"`.
 
-The press does no call into QarOS. The plugin creates the QarOS panel on the next render tick, on the GUI thread, with synchronous calls into QarOS, which is why RViz can stand still for a moment then. The panel logs the request, and the line has this form:
+The press does no call into QAROS. The plugin creates the QAROS panel on the next render tick, and the calls into QAROS that make it are queued for the thread of the session owner, so that RViz does not stand still. The panel logs the request, and the line has this form:
 
 ```text
 AR PANEL: streaming '%1' as a QarOS GUI panel. The QarOS panel itself is created on the next tick, off this click.
@@ -347,15 +372,13 @@ The readout `"AR panels:"` of the same tab counts what arrives. Its first line s
 
 ```powershell
 $log = Get-ChildItem -Path "$env:TEMP\qar_rviz_logs" -Filter 'rviz_live_*.err.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-Select-String -Path $log.FullName -Pattern 'AR PANEL: streaming|qar-panel-adapter\] .* created:|Diagnostics: streaming' | ForEach-Object { $_.Line }
+Select-String -Path $log.FullName -Pattern 'AR PANEL: streaming|qar-panel-adapter\] .* (created|reattached):|Diagnostics: streaming' | ForEach-Object { $_.Line }
 ```
 ```text
-[qar-panel] 20:45:09.407 AR PANEL: streaming 'qar_streaming_panel' as a QarOS GUI panel. The QarOS panel itself is created on the next tick, off this click.
-[qar-panel-adapter] 20:45:09.520 panel 'qar_streaming_panel' created: id=d79dd4df-96d3-4948-8a7f-187c81fa08a2 stream=1f4c263c-743f-49ac-b6dd-2c8fed0e85ec buffer=382x1318 px
-...
+QAR-PENDING-OUTPUT RP-GS-07
 ```
 
-A click and a hover reach the real widget of RViz, which the authors of qar_rviz_plugin confirmed in earlier live sessions, held with older builds before the SDK drop of 2026-09-28, together with the lists of drop-down boxes and the dialogs. The unit tests also cover the dragging of a slider and the use of two hands, but no live session has exercised them yet, so do not rely on them; [What the live sessions showed](VERIFICATION.md#what-the-live-sessions-showed) lists the evidence.
+A click and a hover reach the real widget of RViz, which the authors of qar_rviz_plugin confirmed in earlier live sessions, held with builds for a QAROS runtime earlier than 0.9.0-dev.3008+65dc9aeb, together with the lists of drop-down boxes and the dialogs; in the live checks with 0.9.0-dev.3008+65dc9aeb the dialog of the hidden Displays panel opened in AR, also on a panel that was found again. The unit tests also cover the dragging of a slider and the use of two hands, but no live session has exercised them yet, so do not rely on them; [What the live sessions showed](VERIFICATION.md#what-the-live-sessions-showed) lists the evidence.
 
 ## The hidden Displays panel
 
@@ -514,68 +537,82 @@ $log = Get-ChildItem -Path "$env:TEMP\qar_rviz_logs" -Filter 'rviz_live_*.err.lo
 Select-String -Path $log.FullName -Pattern 'AR PANEL: close|AR PANEL: .* was not streaming|qar-panel-adapter\] .* (closing|retired):' | ForEach-Object { $_.Line }
 ```
 ```text
-...
-[qar-panel-adapter] 20:46:06.301 panel 'dialog:AddDisplayDialog' closing: id=b66e358e-a28f-4081-b561-a4615f65c664 stream=c876632c-0b25-4480-a474-1ced9225c1b2 (operator already closed it in AR: no)
-[qar-panel-adapter] 20:46:06.305 panel 'dialog:AddDisplayDialog' retired: id=b66e358e-a28f-4081-b561-a4615f65c664 stream=c876632c-0b25-4480-a474-1ced9225c1b2 took=3ms -- GUI panel closed, video sender destroyed
-[qar-panel-adapter] 20:46:48.104 panel 'qar_streaming_panel' closing: id=d79dd4df-96d3-4948-8a7f-187c81fa08a2 stream=1f4c263c-743f-49ac-b6dd-2c8fed0e85ec (operator already closed it in AR: no)
-[qar-panel-adapter] 20:46:48.109 panel 'qar_streaming_panel' retired: id=d79dd4df-96d3-4948-8a7f-187c81fa08a2 stream=1f4c263c-743f-49ac-b6dd-2c8fed0e85ec took=4ms -- GUI panel closed, video sender destroyed
-[qar-panel] 20:46:48.109 AR PANEL: close requested for 'qar_streaming_panel' (stopped in RViz): its AR panel is closed and its video sender destroyed — the [qt_lib] 'closed' line has each step. Starting it again makes a new AR panel.
-...
+QAR-PENDING-OUTPUT RP-GS-15
 ```
 
-[Closing panels](OPERATOR_GUIDE.md#closing-panels) lists the cases and the steps of the close in the log.
+When the session ends, the AR panels that are hidden stay in the Hub under their names and the plugin lets go of them; the next session finds each one by its name, so that the panel you hid comes back where it was. [Closing panels](OPERATOR_GUIDE.md#closing-panels) lists the cases and the steps of the close in the log.
 
 ## The same on HoloLens 2
 
-The authors of qar_rviz_plugin state that an earlier build of the plugin streamed to a HoloLens 2 with the QarOS SDK drop of 2026-09-28, the drop that this release is verified against; no record of that run exists. The steps of this section were not run against a device while this documentation was written, because no device was available, so the output of a device is given as lines quoted from the code and not as recorded output.
+The authors of qar_rviz_plugin state that an earlier build of the plugin streamed to a HoloLens 2 with a QAROS runtime earlier than 0.9.0-dev.3008+65dc9aeb; no record of that run exists. The steps of this section were not run against a device while this documentation was written, because no device was available, so the output of a device is given as lines quoted from the code and not as recorded output.
 
-A HoloLens is the one kind of device that QarOS can address by name, so the panel asks for its host name. Choose `"HoloLens 2"` in the drop-down of the group `"Invite a device"`, type the host name of the device in the field next to it, and press `"Invite peer"`. Without a host name the panel refuses, and its message has this form at the beginning:
+A HoloLens joins the Hub as a target, like the Visualizer. There are two ways to put it there. In QAROS, add the device in the Visualizer of the Hub, on its Connection panel under Devices, as the [Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/) of the vendor describes. Or ask the Hub of this PC to start the app of the device from the plugin: choose `"HoloLens 2"` in the drop-down of the group `"Invite a device"`, type the host name or address of the device in the field next to it, and press `"Invite peer"`. The button is grey unless the panel is joined to the Hub of this PC and streaming, because a Hub of another PC refuses invitations. Without a host name the panel refuses, and its message has this form:
 
 ```text
-Invite peer: a HoloLens needs its device hostname
+Invite peer: type the host name or address of the device in the field next to the
 ```
 
-You can also invite devices when the plugin connects, with the launcher parameter `-InvitePeers`: entries of the form `kind[:hostname]`, separated by commas, where the kinds are `visualizer`, `hololens`, `quest` and `zed`, and only `hololens` takes, and needs, a host name. A device that fails to invite is logged and skipped, and never ends the session. The dry run shows the entry in the line `QAR_PANEL_INVITE_PEERS`; replace the host name of the example with the one of your device:
+You can also invite devices when the plugin has joined the Hub, with the launcher parameter `-InvitePeers`: entries of the form `kind:hostname`, separated by commas, where the kinds are `hololens` and `headset` and both need a host name. The plugin handles the list once for a session and ignores it for the Hub of another PC. A device that fails to invite is logged and skipped, and never ends the session. The dry run shows the entry in the line `QAR_PANEL_INVITE_PEERS`; replace the host name of the example with the one of your device:
 
 ```powershell
 .\scripts\run_live_rviz_stream_real.ps1 -InvitePeers hololens:HOLOLENS-A2B3
 ```
 ```text
-...
-=== RViz -> QarOS Visualizer live stream ===
+=== RViz -> QAROS Hub live stream ===
   scene            : C:\qar\install\share\qar_rviz_streaming\config\test_scenes\scene3_grid_marker.rviz
-  QarOS SDK bin    : C:\QarOS\install\bin
-  Visualizer exe   : C:\QarOS\install\bin\qar-streaming-viz.exe
-  runtime-launcher : C:\QarOS\install\bin\qar-runtime-launcher.exe
-  QAR_RUNTIME_BINARIES_DIR = C:\QarOS\install\bin
+  QAROS install    : C:\Program Files\Quaternar\QAROS (from registry)
+  QAROS_RUNTIME_DIR        = (not set: the plugin uses the installed QAROS)
   QAR_PANEL_LIVE_STREAM    = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
-...
+  QAR_PANEL_HUB_MODE       = (not set: the panel setting "Hub" of the QAROS Hub group decides, Automatic by default)
+  QAR_PANEL_HUB_HOST / _PORT = (not set) / (not set)
   QAR_PANEL_INVITE_PEERS   = hololens:HOLOLENS-A2B3
-...
+  QAR_PANEL_FIXED_POSES    = ground (launcher default)
+  QAR_PANEL_VOLUME_Y       = -1.6 (launcher default)
+  test markers: off (start them with -TestMarkers or from the Diagnostics tab)
+  QAR_PANEL_TEST_MARKERS_PYTHON = C:\qar\venv\Scripts\python.exe
+  QAR_PANEL_TEST_MARKERS_SCRIPT = C:\qar\src\qar_rviz_plugin\scripts\publish_test_markers.py
   install prefix           : C:\qar\install (plugin overlay: found)
   RViz logs (-LogDir)      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs
   rviz2.exe                : C:\qar\deps\ros2_humble\ros2-windows\bin\rviz2.exe
-  GPU preference (HKCU)    : (not set) - with -Confirm the launcher sets High-performance (NVIDIA) for rviz2.exe
-  log mode                 : QUIET (default) - QarOS logs at warn, no zenoh logging, no per-frame traces; -TraceLogs collects full logs for a vendor report.
-  QAR_LOG_SEVERITY         = warn
-  QAR_PANEL_LOG_SEVERITY   = warn
+  GPU preference (HKCU)    : GpuPreference=2; - with -Confirm the launcher sets High-performance (NVIDIA) for rviz2.exe
+  log mode                 : QUIET (default) - QarOS logs at info (default), no zenoh logging, no per-frame traces; -TraceLogs collects full logs for a vendor report.
+  QAR_LOG_SEVERITY         = info
+  QAR_PANEL_LOG_SEVERITY   = info
   QAR_PANEL_LOG_CONSOLE    = off
   RUST_LOG                 = (unset)
   QAR_ZENOH_LOG            = (unset)
   QAR_ADAPTER_TRACE        = (unset)
   QAR_ADAPTER_TRACE_ALL    = (unset)
   QAR_ADAPTER_FRAME_TRACE  = (unset)
+  --- QAROS on this PC (read only) ---
+  installed QAROS          : 0.9.0-dev.3008+65dc9aeb release (C API v0, scope machine) at C:\Program Files\Quaternar\QAROS
+  qaros-hub-service        : running (pid 39416, since 11:52:57)
+  qar-runtime-launcher     : running (pid 38012, since 11:52:57)
+  qar-streaming-viz        : running (pid 46064, since 11:52:59)
+  Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
+                             C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
+  Hub mode (resolved)      : local (auto: QAROS is installed on this PC; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)
+  identity file            : not present (C:\Users\<user>\AppData\Local\Quaternar\QarOS-ROS\rviz2-plugin\identity.txt): no pairing with the Hub of another PC is stored
+  --- what you will have to do ---
+  Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
+  Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
 ...
+  GPU memory (nvidia-smi)  : NVIDIA GeForce RTX 4080 Laptop GPU: 602 MiB used of 12282 MiB, 9 % busy
+  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261027_183952.checks.txt (written with -Confirm)
   QAR log dir              : C:\Users\<user>\AppData\Local\Temp\quaternar (no *.log over 256 MB)
-...
+  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261027_183952.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
+  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261027_183952.launcher_<name>
+  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261027_183952.<report> (no .dmp files)
+  VC++ runtime (rviz2 dir) : 14.50.35719.0 (ok, needs 14.40 or newer)
+  tinyxml.dll (rviz2 dir)  : present
 
 DRY RUN (no -Confirm): environment resolved above; NOT launching any GUI (log rotation is only reported, not performed; the registry, running processes and Fast-DDS shared memory are left alone).
 To actually run the interactive session, re-invoke with -Confirm (opens windows).
 ```
 
-With `-Confirm` added, the launcher starts RViz and the invitation goes out when you press `"Connect to QarOS"`. The device has to be reachable on the network, and what the network has to allow is in the next part.
+With `-Confirm` added, the launcher starts RViz and the invitation goes out when the panel is connected. The device has to be reachable on the network, and what the network has to allow is in the next part.
 
 This section lists what the network has to allow for this stack. It does not repeat the network requirements of QarOS itself, and it adds only the requirements that come from the programs of this stack.
 
@@ -585,7 +622,7 @@ QarOS has its own ports, a multicast discovery and an encrypted session transpor
 
 ### What this stack adds
 
-**UDP port 7446 must be free on the machine that runs the program.** QarOS uses it for its discovery (zenoh scouting), and a QarOS session cannot be created while another program holds it. ROS 2 can take it by accident, see the next paragraph; "Run-time problems" in the troubleshooting document shows how to find the holder.
+**UDP port 7446 is worth keeping free on the machine that runs the program.** With a QAROS runtime earlier than the verified version, QarOS used it for its discovery (zenoh scouting), and a QarOS session could not be created while another program held it; the installed QAROS does not document a port for it. ROS 2 can take it by accident, see the next paragraph; "Run-time problems" in the troubleshooting document shows how to find the holder.
 
 **ROS 2 uses a range of UDP ports of its own.** Each ROS 2 participant takes a pair of UDP ports in steps of two upward from 7410 + 250 x N, where N is the number of its domain, so from 7410 on domain 0, the default domain, and the participants of one domain find each other by multicast on the local network. A machine that publishes or subscribes to topics of another machine needs the same domain number as that machine and a network that passes the multicast discovery between them. A single machine needs no firewall rule for ROS 2 traffic between its own programs.
 
@@ -596,12 +633,12 @@ By default the server listens on every network interface, so that a headset on t
 A program that hosts the server pins the port with the `port` field and sets the host name in the panel URLs with the `advertised_host` field of the server configuration; the `bind_address` field restricts it to loopback when only a program on the same machine has to reach it.
 The plugin pins the port with the environment variable `QAR_PANEL_WEB_PORT` and sets the host name in the panel URLs with `QAR_PANEL_WEB_HOST`; unset, it uses the defaults above.
 
-**Admission.** A device that you invite, from the panel or with `-InvitePeers`, is admitted by the exact identifier that the invitation returned, under every policy, so it needs no timing heuristic. The default policy, `invited`, admits only those, which is right for the Visualizer that the plugin invited itself, because the subscription of QarOS also reports the internal peers of the runtime. A device that joins by itself, through the onboarding of QarOS, has never been invited by the plugin, and the default policy silently refuses it. `-RealPeers` sets the policy `new` for such a demo: the peers that are present in the first seconds after the session starts, 5 seconds by default, count as the infrastructure of the runtime, and a peer that appears later is treated as a consumer and gets a stream. Inviting is the better way, because the policy `new` depends on timing.
+**Targets.** A device that joined the Hub as a target gets a stream when it is online, with no invitation and under no policy: the plugin serves every target of the Hub, at most 8 by default, and a target beyond the limit is listed as not served. A device that the Hub has not decided on yet counts like an online one, and a device that is offline, leaving or retired loses its stream.
 
-When the device connects, the panel writes the lines that the Visualizer produced in [Invite the Visualizer and see the scene](#invite-the-visualizer-and-see-the-scene): the invitation, the opening of the stream, and the heartbeat with a field for the new peer. The line of the invitation has this form for a device:
+When the device connects, the panel writes the lines that the Visualizer produced in [See the scene in the Visualizer](#see-the-scene-in-the-visualizer): the opening of the stream and the heartbeat with a field for the new target, and for an invitation from the plugin the line of the invitation, which has this form:
 
 ```text
-LIVE: invited %1%2 as peer %3 (%4 invited in total).
+LIVE: invited %1 as peer %2. Its stream opens when the device connects.
 ```
 
 The command below reads those lines. It is a live check against a device, and this document gives no output for it because no device has been available:
@@ -613,7 +650,7 @@ Select-String -Path $log.FullName -Pattern 'LIVE: invited|LIVE: opened stream|LI
 
 ## Stop and clean up
 
-Close RViz. The launcher waits for RViz in its window and ends with it, after it has saved the log of the QarOS library, the logs of the mixers and of the Visualizers and the crash reports of the run, so there is nothing to stop in that window. The session of QarOS ends when RViz closes: the panel tears down its streams and panels before it ends the session. RViz can crash while it exits; that is a known issue that the authors of qar_rviz_plugin tolerate, and [RViz and plugin problems](TROUBLESHOOTING.md#rviz-and-plugin-problems) lists it.
+Close RViz. The launcher waits for RViz in its window and ends with it, after it has saved the log of the QarOS library, the logs of the mixers and of the Visualizers and the crash reports of the run, so there is nothing to stop in that window. The session of QAROS ends when RViz closes: the panel hides its AR panels and lets go of them, destroys its streams, and only then gives the session back to the session owner, which ends it on its own thread. RViz can crash while it exits; that is a known issue that the authors of qar_rviz_plugin tolerate, and [RViz and plugin problems](TROUBLESHOOTING.md#rviz-and-plugin-problems) lists it.
 
 The one program that the launcher can start besides RViz keeps running: with `-TestMarkers`, the publisher of the synthetic markers, in a hidden window. The launcher printed its process id when it started it. The publisher that the button `"Start test markers"` started ends when you press the button again or when RViz closes. Stop it with `Stop-Process` and that number, or start the launcher again, which stops the test publishers of earlier runs by itself. The publisher of the velocity ends by itself after its 300 messages, as the command of this document is written; the publisher of the video keeps running after the end of the clip, so press Ctrl+C in its window.
 
@@ -623,14 +660,7 @@ A run leaves two kinds of logs. The logs of RViz are in the folder `qar_rviz_log
 Get-ChildItem -Path "$env:TEMP\qar_rviz_logs", "$env:TEMP\quaternar" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 8 | ForEach-Object { '{0,8:N1} MB  {1}  {2}' -f ($_.Length / 1MB), $_.LastWriteTime.ToString('s'), $_.FullName }
 ```
 ```text
-     0.5 MB  YYYY-MM-DDT20:53:08  C:\Users\<user>\AppData\Local\Temp\quaternar\mixer_1b797fb9-0178-4449-8eb3-e192bad32a3c_stdout.log
-     0.1 MB  YYYY-MM-DDT20:53:07  C:\Users\<user>\AppData\Local\Temp\quaternar\streaming_viz_bf2bb600-7dce-4ded-81f1-9061a69591c4_stdout.log
-     1.4 MB  YYYY-MM-DDT20:53:07  C:\Users\<user>\AppData\Local\Temp\quaternar\mixer_323b42fc-0f3c-4459-9ab0-9a2aad9c203b_stdout.log
-     2.3 MB  YYYY-MM-DDT20:53:07  C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261011_203404.err.log
-     0.0 MB  YYYY-MM-DDT20:52:56  C:\Users\<user>\AppData\Local\Temp\quaternar\streaming_viz_1b9facce-e064-4c2e-b1d2-5c0201963373_stdout.log
-     0.0 MB  YYYY-MM-DDT20:50:19  C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261011_203404.out.log
-     0.0 MB  YYYY-MM-DDT20:50:12  C:\Users\<user>\AppData\Local\Temp\quaternar\20261011-205012_qar-stereokit-gui_41456.crash.txt
-     0.0 MB  YYYY-MM-DDT20:50:12  C:\Users\<user>\AppData\Local\Temp\quaternar\20261011-205012_qar-stereokit-gui_25548.crash.txt
+QAR-PENDING-OUTPUT RP-GS-18
 ```
 
 Delete the files that you do not need. If programs ended badly, so that a large topic stops being delivered, remove the shared-memory segments of the dead programs with the command below, which only touches segments whose program has ended; the launcher does the same with `-Confirm`.
@@ -733,75 +763,135 @@ You can also open the address in a desktop browser on the same machine while the
 
 ## Open the panel in QarOS
 
-The same program opens the page in QarOS when you give it the `bin` folder of the QarOS SDK. The example connects first, before it starts the server: the constructor of the session factory runs the whole bootstrap and blocks until the session is up, and a server that was already listening would answer nobody in the meantime. Then it invites a Visualizer; QarOS starts the Visualizer itself, from the folder that you passed, and the Visualizer opens its own window. The example sets the log severity of the QarOS library to `warn` and turns off the copy of the library log to the console; the file log stays on.
+The same program opens the page in QAROS when it joins the QAROS Hub. By default it joins the Hub of this PC: QAROS asks once to allow the program, and again after each rebuild of it, so click Allow in the QAROS window. `--hub HOST:PORT --code CODE` joins the Hub of another PC at its onboarding port, which that PC shows next to the code; the code works once and lives about ten seconds, and only the first join needs it, because the pairing is stored for the next start. `--forget` erases the stored pairing and exits, `--no-qaros` serves the page without QAROS, and `--connect-only` joins, prints the runtime, the mode, the peer of the program and the targets, and exits without a server or a panel. When the example ends, it hides its panel and lets go of it instead of closing it, so that the next start finds the panel by name. The example joins first, through a session owner, before it starts the server, and only a target that the Hub lists receives the panel; it needs no invitation. The example sets the log severity of the QAROS library to `warn` and turns off the copy of the library log to the console; the file log stays on.
 
 ```cpp
-std::shared_ptr<qqa::QarCApiSenderFactory> qaros;  // stays empty without --sdk-bin: no QarOS SDK is needed
-if (!sdk_bin.empty()) {
-  qqa::QarCApiSenderFactory::Config config;
-  config.runtime_binaries_folder_path = sdk_bin;  // QarOS starts its launcher and Visualizer from here
-  config.log_severity = QAR_LOG_SEVERITY_WARN;
-  config.enable_console_logging = false;
-  qaros = std::make_shared<qqa::QarCApiSenderFactory>(config);  // blocks until the session is up
-  QarPeerId visualizer{};
-  const std::string failed = qaros->ready() ? qaros->invite_additional_visualizer(visualizer) : qaros->last_error();
-  if (!failed.empty()) { std::printf("example: QarOS is not ready: %s\n", failed.c_str()); return 1; }
-  std::printf("example: connected to QarOS, Visualizer invited\n");
+std::shared_ptr<qqa::QarSessionOwner> owner;  // stays empty with --no-qaros: no QAROS is needed
+if (!no_qaros) {
+  qqa::SessionOwnerConfig owner_config;
+  owner_config.program_tag = kProgramTag;
+  owner_config.display_name = std::string("Web panel example on ") + host;
+  owner_config.mode =
+    (!hub_text.empty() || forget) ? qqa::HubMode::kRemote : qqa::HubMode::kLocal;
+  owner_config.remote = hub;
+  owner_config.log_severity = QAR_LOG_SEVERITY_WARN;
+  owner_config.enable_console_logging = false;
+  owner = std::make_shared<qqa::QarSessionOwner>(owner_config);  // starts its own thread
+  if (forget) {
+    owner->forget();
+    for (int i = 0; i < 750; ++i) {  // 15 s
+      std::vector<qqa::SessionEvent> events;
+      owner->poll(events);
+      for (const qqa::SessionEvent & event : events) {
+        if (event.kind == qqa::SessionEvent::Kind::kForgetDone) {
+          std::printf("example: %s\n", event.status.message.c_str());
+          return 0;
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    std::printf("example: no answer from QAROS to --forget\n");
+    return 1;
+  }
+  if (owner_config.mode == qqa::HubMode::kLocal) {
+    std::printf("example: joining the QAROS Hub of this PC; click Allow if QAROS asks\n");
+  } else {
+    std::printf("example: joining the QAROS Hub at %s:%u\n", hub.host.c_str(),
+      static_cast<unsigned>(hub.port));
+  }
+  owner->connect();
+  std::vector<qqa::SessionEvent> seen;
+  // The approval prompt waits 120 s by default; the wait here is a little longer.
+  qqa::SessionState state = qqa::wait_for_session(*owner, std::chrono::seconds(150), &seen);
+  if (state == qqa::SessionState::kNeedsCode && !code.empty()) {
+    owner->submit_code(code, hub);
+    code.assign(code.size(), '\0');  // the code works once; do not keep it around
+    state = qqa::wait_for_session(*owner, std::chrono::seconds(60), &seen);
+  }
+  print_events(seen);
+  if (state == qqa::SessionState::kNeedsCode) {
+    std::printf("example: not paired with that Hub; run with --hub HOST:PORT --code CODE\n");
+    return 1;
+  }
+  if (state != qqa::SessionState::kRunning) {
+    std::printf("example: QAROS connect failed (state %d)\n", static_cast<int>(state));
+    return 1;
+  }
+  std::printf("example: connected to QarOS: ready=1\n");
+  if (connect_only) {
+    // The peer list arrives right after the join; give it a moment before it is printed.
+    std::vector<qqa::SessionEvent> late;
+    for (int i = 0; i < 75; ++i) {  // 1.5 s
+      owner->poll(late);
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    std::printf("example: runtime: %s\n", owner->runtime_description().c_str());
+    const bool is_local = owner->effective_mode() == qqa::HubMode::kLocal;
+    std::printf("example: mode: %s\n", is_local ? "local" : "remote");
+    std::printf("example: this program is peer %s\n", peer_text(owner->self_peer()).c_str());
+    const std::vector<qqa::TargetInfo> targets = owner->targets();
+    std::printf("example: %u target(s)\n", static_cast<unsigned>(targets.size()));
+    for (const qqa::TargetInfo & target : targets) {
+      std::printf("example:   target %s '%s'\n", peer_text(target.id).c_str(),
+        target.device_name.empty() ? target.display_name.c_str() : target.device_name.c_str());
+    }
+    return 0;
+  }
 }
 ```
 
 A URL panel is a QarOS GUI panel whose content is a URL that the browser of the runtime loads. No frames are sent: the browser fetches the page from the server and handles the pointing itself, and every interaction reaches the server over its WebSocket, through no QarOS input call. The description of the panel holds the address, a title that QarOS shows, and a placement: the pose is the top centre of the panel in room space, and the panel hangs below it, so the example puts it at x = 0, y = 1.5 m and z = -1.2 m. The size in metres comes from `size_url_panel_for`, which measures the page and gives its text the same angular size as the text of a Qt panel. The factory borrows the session of the session factory, because a panel belongs to a session.
 
 ```cpp
-wp::UrlPanelSizing sizing;  // the page reports the viewport that QarOS gives it, and the size follows that
+wp::UrlPanelSizing sizing;
+// The size comes from a fixed design viewport, never from the viewport QAROS gives the page:
+// that one follows the panel's own size, so a size derived from it never settles.
+wp::use_design_viewport(sizing);
 const auto fit = [&] { return wp::size_url_panel_for(page->model(), server.config().render.theme, sizing).size; };
 qar_ar_core::UrlPanelDesc desc;
 desc.url = url;
 desc.display_name = "Counter";
 desc.placement.pose.position = QarVector3{0.0f, 1.5f, -1.2f};  // the top centre of the panel, in the room
 desc.placement.size = fit();
+// The same name finds the same QAROS panel again at the next start.
+desc.common_name = qar_ar_core::make_panel_common_name(
+  "counter", qar_ar_core::make_name_scope(kProgramTag, "", host));
 std::shared_ptr<qar_ar_core::IQarUrlPanelAdapter> ar_panel;
-if (qaros) {
-  qqa::QarCApiUrlPanelFactory factory(qaros.get());
-  ar_panel = factory.create_url_panel(desc);
-  if (!ar_panel) { std::printf("example: could not open the URL panel: %s\n", factory.last_error().c_str()); return 1; }
+std::unique_ptr<qqa::QarCApiUrlPanelFactory> factory;
+if (owner) {
+  factory = std::make_unique<qqa::QarCApiUrlPanelFactory>(owner.get());
+  ar_panel = factory->create_url_panel(desc);
+  if (!ar_panel) { std::printf("example: could not open the URL panel: %s\n", factory->last_error().c_str()); return 1; }
 }
 ```
 
-The panel has to commit to a size before the browser has laid anything out, and the size of the browser viewport is not derived from the metres that you declare. So the page measures the viewport that it was given and reports it to the server, and the host sizes the panel to what it hears: the panel gets the aspect of the viewport. The page reports again after every resize, and a resize of the panel causes one, so the example pushes a size to QarOS only when it changed by more than 5 mm. The report also says how much of the page is below the fold of the viewport, which the page reaches with a click pager.
+The panel has to commit to a size before the browser has laid anything out, and the size of the browser viewport is not derived from the metres that you declare. So the size comes from a fixed design viewport and from the measure of the page, never from the viewport that the page reports: under the installed QAROS the viewport follows the size of the panel, so a size taken from the report would feed back into itself. The example gives the panel its name from a fixed key, so that the same name finds the same QAROS panel again at the next start. The page still reports the viewport, and the example only prints the report; the report also says how much of the page is below the fold of the viewport, which the page reaches with a click pager.
 
 ```cpp
 QObject::connect(page.get(), &wp::PanelSession::viewport_reported, &app, [&](const wp::PanelViewportReport & report) {
   std::printf("example: %s\n", report.describe().c_str());
-  wp::use_reported_viewport(sizing, report.viewport);
-  const QarGuiPanelSize size = fit();
-  // The page reports again after every resize, so only a change of the size is pushed to QarOS.
-  if (std::abs(size.width_meters - desc.placement.size.width_meters) +
-    std::abs(size.height_meters - desc.placement.size.height_meters) > 0.005f) {
-    desc.placement.size = size;
-    if (ar_panel) { ar_panel->set_placement(desc.placement); }
-  }
+  // The report is only printed: the panel keeps the size it was created with.
 });
 ```
 
-Start the example with the folder of the SDK and keep it running while you look at the Visualizer. The command copies everything that the program prints, its own lines and those of the error stream, into a file in your `TEMP` folder as well. You start the example yourself, and you look at the Visualizer window; nothing in this repository clicks or moves a window.
+Start the example and keep it running while you look at the Visualizer that you opened in QAROS. The command copies everything that the program prints, its own lines and those of the error stream, into a file in your `TEMP` folder as well. You start the example yourself, and you look at the Visualizer window; nothing in this repository clicks or moves a window.
 
 ```powershell
 $env:PATH = "$env:QAR_QT_ROOT\bin;$env:PATH"
-& .\build\vs2019-x64\examples\web_panel_example\RelWithDebInfo\qar_web_panel_example.exe --sdk-bin "$env:QAR_SDK_ROOT\bin" --serve-seconds 120 2>&1 | Tee-Object -FilePath (Join-Path $env:TEMP 'qar_web_panel_example_ar.log')
+& .\build\vs2019-x64\examples\web_panel_example\RelWithDebInfo\qar_web_panel_example.exe --local --serve-seconds 120 2>&1 | Tee-Object -FilePath (Join-Path $env:TEMP 'qar_web_panel_example_ar.log')
 ```
 
-When the session is up and the Visualizer is invited, the example prints a line that says so, and then the address of the page. After the page has loaded in the Visualizer, the example prints one line for each viewport that the page reports: it starts with the word `viewport`, the width and the height in CSS pixels, and the pixel ratio of the browser. Press the button in the Visualizer with the hand ray. The page shows the new count at once, the example prints one line for each press, and the line has this form:
+When the session is up, the example prints a line that says so, and then the address of the page. After the page has loaded in the Visualizer, the example prints one line for each viewport that the page reports: it starts with the word `viewport`, the width and the height in CSS pixels, and the pixel ratio of the browser. Press the button in the Visualizer with the hand ray. The page shows the new count at once, the example prints one line for each press, and the line has this form:
 
 ```text
 example: increment: count %lld
 ```
 
-The panel opens only when the browser of QarOS can reach the address. The Visualizer of this example runs on your machine, and the address is the one that your machine uses on its network, or `127.0.0.1` with `--loopback`. A server that listens on every interface also answers a headset on the same network; `--port` pins the port, so that a firewall rule can name it, and [Running a panel server safely](#running-a-panel-server-safely) lists what the network has to allow.
+The panel opens only when the browser of QarOS can reach the address. The Visualizer that you opened runs on your machine, and the address is the one that your machine uses on its network, or `127.0.0.1` with `--loopback`. A server that listens on every interface also answers a headset on the same network; `--port` pins the port, so that a firewall rule can name it, and [Running a panel server safely](#running-a-panel-server-safely) lists what the network has to allow.
 
 ## Expose a ROS topic as an AR panel
 
-The second example puts a ROS 2 topic on a panel. It builds a small model by hand: a value display bound to the field `data` of the newest message of `/qar_example/text`, which the example keeps under the path `message` of the data document, and a button that publishes. The panels that the repository `qar_rviz_plugin` 0.1.0 generates for any topic are built from templates; the example does not use them. It opens its page as a URL panel as the first example does, but it sizes the panel from the page once and does not follow the viewport that the page reports.
+The second example puts a ROS 2 topic on a panel. It builds a small model by hand: a value display bound to the field `data` of the newest message of `/qar_example/text`, which the example keeps under the path `message` of the data document, and a button that publishes. The panels that the repository `qar_rviz_plugin` 0.1.0 generates for any topic are built from templates; the example does not use them. It opens its page as a URL panel as the first example does, but it sizes the panel from the page and the fixed design viewport and does not follow the viewport that the page reports.
 
 ```cpp
 // The label is bound to the field "data" of the message, which the example keeps under the path "message" of
@@ -844,6 +934,11 @@ QObject::connect(&timer, &QTimer::timeout, [&] {
   executor.spin_some();
   if (!rclcpp::ok()) { app.quit(); }  // Ctrl+C has shut ROS 2 down: the loop ends too
   if (++ticks % 100 == 0) { bridge.reconcile(); }  // follow the QoS of publishers that come and go
+  if (owner && ticks % 5 == 0) {
+    std::vector<qqa::SessionEvent> events;  // the owner's news: a lost Hub, a target that came or went
+    owner->poll(events);
+    print_events(events);
+  }
   ui::UiValue message;
   if (subscription->take_latest(message)) {  // true once for each newest message; older ones are skipped
     page->set_value("message", message);
@@ -918,14 +1013,14 @@ publishing #1: std_msgs.msg.String(data='hello')
 example: rx /qar_example/text: hello
 ```
 
-In AR the same flow runs with a Visualizer. Start the example with the folder of the SDK, in a shell prepared with `env_setup.ps1`, and publish on `/qar_example/text` from a second shell as above: the label of the panel shows the message. Press the button in the Visualizer: the sink publishes `pressed 1`, `pressed 2` and so on, and prints a line that has this form for each press. Watch the topic from the second shell.
+In AR the same flow runs with a Visualizer. Start the example joined to the Hub, in a shell prepared with `env_setup.ps1`, and publish on `/qar_example/text` from a second shell as above: the label of the panel shows the message. Press the button in the Visualizer: the sink publishes `pressed 1`, `pressed 2` and so on, and prints a line that has this form for each press. Watch the topic from the second shell.
 
 ```text
 example: tx /qar_example/pressed: %s (%s)
 ```
 
 ```powershell
-.\build\vs2019-x64\examples\ros_topic_panel_example\RelWithDebInfo\qar_ros_topic_panel_example.exe --sdk-bin "$env:QAR_SDK_ROOT\bin" --serve-seconds 120 2>&1 | Tee-Object -FilePath (Join-Path $env:TEMP 'qar_ros_topic_panel_example_ar.log')
+.\build\vs2019-x64\examples\ros_topic_panel_example\RelWithDebInfo\qar_ros_topic_panel_example.exe --local --serve-seconds 120 2>&1 | Tee-Object -FilePath (Join-Path $env:TEMP 'qar_ros_topic_panel_example_ar.log')
 ```
 
 ```powershell
@@ -940,7 +1035,7 @@ Two rules make the exchange safe. A data frame is applied all or nothing, to the
 
 Everything of a session runs on the thread that owns it, which is the thread of the Qt event loop here, and nothing waits: the sockets are asynchronous, a call of the session from another thread is refused and never queued, and the ROS 2 callbacks run when the host spins the executor. A host that spins ROS 2 on a thread of its own connects to the signals of the session with a queued connection instead.
 
-No program of this repository links the QarOS SDK: the examples link the public targets of this repository and the components `render` and `url` of `qar_ogre_adapter`, and they load the QarOS library at run time.
+No program of this repository links the QarOS SDK: the examples link the public targets of this repository and the components `session` and `url` of `qar_ogre_adapter`, and they load the installed QAROS library at run time.
 
 ## Running a panel server safely
 
