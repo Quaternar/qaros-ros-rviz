@@ -60,6 +60,7 @@
 #include <QSize>
 #include <QString>
 #include <QStringList>
+#include <QSysInfo>
 #include <QTabWidget>
 #include <QTextStream>
 #include <QThread>
@@ -90,9 +91,12 @@
 // gesture adapters.
 #include "qar_qar_adapter/env_config.hpp"
 #include "qar_qar_adapter/geo_anchor.hpp"
+#include "qar_qar_adapter/gui_call_guard.hpp"
+#include "qar_qar_adapter/identity_store.hpp"
 #include "qar_qar_adapter/qar_capi_panel_sender_adapter.hpp"
 #include "qar_qar_adapter/qar_capi_render_sender_adapter.hpp"
 #include "qar_qar_adapter/qar_capi_spatial_gesture_source.hpp"
+#include "qar_qar_adapter/qar_session_owner.hpp"
 // The QarOS side of a browser-backed panel — the URL sibling of the panel
 // sender above. It borrows the same QarSession the render path owns.
 #include "qar_qar_adapter/qar_capi_url_panel_adapter.hpp"
@@ -310,14 +314,94 @@ public:
   void markNotRunning() { setProcessState(QProcess::NotRunning); }
 };
 
-/// The tool tips of "Invite peer": what it does while a live QarOS session exists, and what it
-/// needs while none does.
-constexpr const char * kInviteToolTip =
-  "Invite the selected device into the running QarOS session. Available once the panel is "
-  "connected to QarOS.";
-constexpr const char * kInviteNeedsSessionToolTip =
-  "Inviting a device needs a live QarOS session: start RViz with the live launcher and press "
-  "Connect to QarOS.";
+/// The program tag of the plugin: it names the identity folder and is part of every QarOS name.
+constexpr const char * kProgramTag = "rviz2-plugin";
+
+/// The longest a render tick waits between two refreshes of the approval countdown.
+constexpr std::chrono::milliseconds kCountdownRefresh{500};
+
+/// The phase of the Connection tab that a state of the session owner stands for.
+ConnectionPhase phaseOf(qar_qar_adapter::SessionState state)
+{
+  using qar_qar_adapter::SessionState;
+  switch (state) {
+    case SessionState::kIdle:
+      return ConnectionPhase::Idle;
+    case SessionState::kLoading:
+      return ConnectionPhase::Loading;
+    case SessionState::kWaitingForApproval:
+      return ConnectionPhase::WaitingForApproval;
+    case SessionState::kRejoining:
+      return ConnectionPhase::Rejoining;
+    case SessionState::kNeedsCode:
+      return ConnectionPhase::NeedsCode;
+    case SessionState::kPairing:
+      return ConnectionPhase::Pairing;
+    case SessionState::kRunning:
+      return ConnectionPhase::Running;
+    case SessionState::kReconnecting:
+      return ConnectionPhase::Reconnecting;
+    case SessionState::kStopping:
+      return ConnectionPhase::Stopping;
+    case SessionState::kFailed:
+      return ConnectionPhase::Failed;
+  }
+  return ConnectionPhase::Idle;
+}
+
+qar_qar_adapter::HubMode hubModeOf(HubChoice choice)
+{
+  switch (choice) {
+    case HubChoice::Local:
+      return qar_qar_adapter::HubMode::kLocal;
+    case HubChoice::Remote:
+      return qar_qar_adapter::HubMode::kRemote;
+    case HubChoice::Auto:
+      break;
+  }
+  return qar_qar_adapter::HubMode::kAuto;
+}
+
+/// The words of a device category in the target list.
+const char * categoryWords(QarDeviceCategory category)
+{
+  switch (category) {
+    case QAR_DEVICE_CATEGORY_DESKTOP_PC:
+      return "PC";
+    case QAR_DEVICE_CATEGORY_SERVER:
+      return "server";
+    case QAR_DEVICE_CATEGORY_HEADSET:
+      return "headset";
+    case QAR_DEVICE_CATEGORY_VISUALIZER:
+      return "Visualizer";
+    case QAR_DEVICE_CATEGORY_CAMERA:
+      return "camera";
+    case QAR_DEVICE_CATEGORY_OBSERVER:
+      return "observer";
+    case QAR_DEVICE_CATEGORY_UNKNOWN:
+    default:
+      break;
+  }
+  return "device";
+}
+
+const char * presenceWords(QarPeerPresence presence)
+{
+  switch (presence) {
+    case QAR_PEER_PRESENCE_ONLINE:
+      return "online";
+    case QAR_PEER_PRESENCE_OFFLINE:
+      return "offline";
+    case QAR_PEER_PRESENCE_LEAVING:
+      return "leaving";
+    case QAR_PEER_PRESENCE_RETIRED:
+      return "retired";
+    case QAR_PEER_PRESENCE_UNKNOWN:
+    default:
+      break;
+  }
+  return "unknown";
+}
 
 /// Why "Closed AR panels:" has no effect while hiding is on.
 constexpr const char * kCloseModeUnusedToolTip =
@@ -494,6 +578,11 @@ QarStreamingPanel::QarStreamingPanel(QWidget * parent)
   // is going to show. load() and the edits of the controls re-resolve from this snapshot.
   snapshotEnvironment();
   resolveSettings();
+  // The stable names of the QarOS panels and of the app volume: this program, this instance and
+  // this PC.
+  name_scope_ = qar_ar_core::make_name_scope(
+    kProgramTag, qEnvironmentVariable("QAR_PANEL_INSTANCE").trimmed().toStdString(),
+    QSysInfo::machineHostName().toStdString());
   buildUi();
   applySettingsToUi();
 
@@ -504,6 +593,17 @@ QarStreamingPanel::QarStreamingPanel(QWidget * parent)
   refreshSpatialUi();
   appendLog("Qar streaming panel constructed.");
   reportSettings();
+  // The variables that have no effect with this QAROS say so, once.
+  for (const std::string & sentence : removed_environment_sentences(
+      [this](const char * name) -> std::optional<std::string> {
+        if (qEnvironmentVariableIsSet(name)) {
+          return qEnvironmentVariable(name).toStdString();
+        }
+        return std::nullopt;
+      }))
+  {
+    appendLog("SETTINGS: " + QString::fromStdString(sentence));
+  }
 
   // Per-frame stage timing (opt-in: QAR_VIDEO_TIMING_DIR, the launcher's -TimingCsv). Say so
   // loudly, so a log can never be mistaken for an uninstrumented run, and open the
@@ -576,13 +676,12 @@ QarStreamingPanel::~QarStreamingPanel()
     ar_control_session_->set_control_sink(nullptr);
     disconnect(ar_control_session_.get(), nullptr, this, nullptr);
   }
-  // Join a connect still in flight. Closing RViz mid-connect can cost up to the
-  // ~3 s the session build takes, which is far better than unloading this DLL out
-  // from under a running thread. PendingConnect is held by shared_ptr, so the
-  // worker's own writes stay valid even though the panel is going away.
-  if (connect_thread_.joinable()) {
-    connect_thread_.join();
-  }
+  // Everything built on the QAROS session goes first, in the order of the teardown (the QarOS
+  // panels are hidden and let go, never closed), and then the session owner: its thread is
+  // joined here, so no thread of this plugin outlives it. The owner cancels a wait for approval
+  // or for the Hub that is still in progress, and every step is bounded.
+  releaseSessionConsumers(QStringLiteral("RViz is closing"), /*update_ui=*/false);
+  session_owner_.reset();
   // The ROS entities on RViz's node, and the callback group that holds them, go while this
   // library is loaded: RViz destroys its node only after it has freed the library.
   releaseRosEntities();
@@ -646,30 +745,33 @@ void QarStreamingPanel::buildUi()
   runtime_buttons->addWidget(stop_qar_button_);
   connection_layout->addLayout(runtime_buttons);
 
-  // Which kind of real device "Invite peer" invites. The group is shown in every mode, so that
-  // the way to invite a device can always be found; the button is enabled only while a live QarOS
-  // session exists (updateRuntimeStateLabel()) and says what it needs when it is not.
+  // Which Hub this program joins, the pairing with another PC's Hub and the devices the Hub
+  // lists as targets. The group shows in every mode; the preview shows the settings only.
+  hub_widget_ = new HubConnectionWidget(connection_page);
+  connection_layout->addWidget(hub_widget_);
+
+  // Which kind of real device "Invite peer" asks the Hub to start an app for. The group is shown
+  // in every mode, so that the way to invite a device can always be found; the button is enabled
+  // only in this-PC mode while connected (refreshConnectionView()) and says what it needs when
+  // it is not.
   invite_group_ = new QGroupBox("Invite a device", connection_page);
   auto * invite_layout = new QVBoxLayout(invite_group_);
   auto * invite_row = new QHBoxLayout();
   peer_kind_combo_ = new QComboBox(invite_group_);
-  peer_kind_combo_->addItem("Visualizer", "visualizer");
   peer_kind_combo_->addItem("HoloLens 2", "hololens");
-  peer_kind_combo_->addItem("Meta Quest", "quest");
-  peer_kind_combo_->addItem("ZED camera", "zed");
+  peer_kind_combo_->addItem("Headset (Quest, Android)", "headset");
   peer_kind_combo_->setToolTip(
-    "Device type to invite into the running QarOS session. Each invited peer gets its "
-    "own stereo stream of the RViz scene.");
+    "Device type whose app the QAROS Hub is asked to start. The device then joins as a target "
+    "and gets its own stereo stream of the RViz scene.");
   peer_hostname_edit_ = new QLineEdit(invite_group_);
-  peer_hostname_edit_->setPlaceholderText("HoloLens hostname (e.g. HOLOLENS-A2B3)");
+  peer_hostname_edit_->setMaxLength(253);
+  peer_hostname_edit_->setPlaceholderText("device host name or address");
   peer_hostname_edit_->setToolTip(
-    "Required for HoloLens 2 — it is the only device type the SDK can address by name. "
-    "Ignored for the other kinds.");
-  peer_hostname_edit_->setEnabled(false);  // the first kind, Visualizer, needs no host name
+    "Required for both kinds: the host name or address of the HoloLens 2 or of the headset.");
   invite_row->addWidget(peer_kind_combo_);
   invite_row->addWidget(peer_hostname_edit_, 1);
   add_peer_button_ = new QPushButton("Invite peer", invite_group_);
-  add_peer_button_->setToolTip(kInviteNeedsSessionToolTip);  // no session yet
+  add_peer_button_->setToolTip(kInviteRemoteToolTip);  // no session yet
   invite_layout->addLayout(invite_row);
   invite_layout->addWidget(add_peer_button_);
   connection_layout->addWidget(invite_group_);
@@ -900,10 +1002,10 @@ void QarStreamingPanel::buildUi()
   // Built from spatial_target_options() rather than typed out here: the list,
   // its order, its default and its help text are one unit-tested table, so the
   // dropdown cannot drift from what the controller actually arms. The default
-  // is "Action Point (QarOS scene intersect)": the drop after the minimum drop fixes
-  // the near-field action point of the minimum drop, which makes the runtime's own
-  // intersection the right default. The default needs that drop or a newer one; see
-  // spatial_interaction.hpp. Every other entry is offered too.
+  // is "Action Point (QarOS scene intersect)": the installed runtime reports its own
+  // scene intersection as the action point, which makes that the right default. The
+  // default relies on such a runtime; see spatial_interaction.hpp. Every other entry
+  // is offered too.
   {
     QString target_help = "What the pointer is resolved against.\n\n";
     for (const SpatialTargetOption & option : spatial_target_options()) {
@@ -989,15 +1091,6 @@ void QarStreamingPanel::buildUi()
 
   auto * session_group = new QGroupBox("Session (apply when you connect)", settings_page);
   auto * session_form = new QFormLayout(session_group);
-  peer_admission_combo_ = new QComboBox(session_group);
-  peer_admission_combo_->addItem("Invited peers only", "invited");
-  peer_admission_combo_->addItem("Invited peers and devices that join later", "new");
-  peer_admission_combo_->setToolTip(
-    "Which devices get a stream. Invited peers only: the devices you invite with \"Invite "
-    "peer\" (and QAR_PANEL_INVITE_PEERS). Invited peers and devices that join later: also a "
-    "device that onboards by itself after the first seconds of the session (a headset, "
-    "another machine's Visualizer). Applies at the first connect of this RViz run: a later "
-    "connect after a pause reuses the session.");
   hidden_displays_checkbox_ = new QCheckBox(
     "Start the hidden Displays copy when connecting", session_group);
   hidden_displays_checkbox_->setToolTip(
@@ -1012,7 +1105,6 @@ void QarStreamingPanel::buildUi()
     "connects, and shows it in AR in front of each user once that user's view is being "
     "streamed. In the offline preview only the page is served: \"Copy page URL\" opens it in a "
     "desktop browser. Applies at every connect.");
-  session_form->addRow("Peer admission:", peer_admission_combo_);
   session_form->addRow(hidden_displays_checkbox_);
   session_form->addRow(ar_control_checkbox_);
   settings_layout->addWidget(session_group);
@@ -1055,9 +1147,10 @@ void QarStreamingPanel::buildUi()
     "switching it on shows it again; a window that closes on the desktop (Stop streaming, a "
     "closed dock or dialog) and a removed AR tool leave their AR panel hidden and parked, and "
     "opening the window or exposing the tool again shows it again without a new QarOS panel; "
-    "\"Re-open in AR\" shows an AR tool again. Everything is closed once, when the session ends. "
-    "Off: the panel is closed and made again. A change acts on the next switch, close or "
-    "removal.");
+    "\"Re-open in AR\" shows an AR tool again. When the session ends, every AR panel is hidden "
+    "and left in QarOS under its name, not closed; the next session finds it and shows it "
+    "again. Off: the panel is closed and made again. A change acts on the next switch, close "
+    "or removal.");
   advanced_form->addRow(prime_checkbox_);
   advanced_form->addRow("Closed AR panels:", close_mode_combo_);
   advanced_form->addRow(ar_visibility_checkbox_);
@@ -1132,6 +1225,7 @@ void QarStreamingPanel::buildUi()
   // is live and applies that.
   stop_qar_button_->setEnabled(false);
   add_peer_button_->setEnabled(false);
+  hub_widget_->apply(make_connection_view(connectionInput()));
   refreshAdvancedVisibility();
   refreshTestMarkersUi();
 
@@ -1139,7 +1233,7 @@ void QarStreamingPanel::buildUi()
   // the pick mode) of the control under the pointer; a click gives a control the wheel.
   for (QWidget * control : {
       static_cast<QWidget *>(resolution_combo_), static_cast<QWidget *>(fps_combo_),
-      static_cast<QWidget *>(peer_admission_combo_), static_cast<QWidget *>(close_mode_combo_),
+      static_cast<QWidget *>(close_mode_combo_),
       static_cast<QWidget *>(ar_panel_scale_spin_), static_cast<QWidget *>(peer_kind_combo_),
       static_cast<QWidget *>(spatial_mode_combo_), static_cast<QWidget *>(spatial_target_combo_),
       static_cast<QWidget *>(ar_panel_combo_)})
@@ -1153,7 +1247,8 @@ void QarStreamingPanel::buildUi()
   // marked: a page that scrolls is a panel that is too low.
   for (QWidget * area : {
       static_cast<QWidget *>(topic_watch_list_), static_cast<QWidget *>(exposure_list_),
-      static_cast<QWidget *>(peer_list_), static_cast<QWidget *>(diagnostics_view_)})
+      static_cast<QWidget *>(peer_list_), static_cast<QWidget *>(diagnostics_view_),
+      static_cast<QWidget *>(hub_widget_->target_list())})
   {
     area->setProperty(qar_qt_streaming::kScrollsByDesignProperty, true);
   }
@@ -1263,12 +1358,6 @@ void QarStreamingPanel::buildUi()
       onSettingEdited(settings_key::kFpsCap, fps_combo_->currentData().toString());
     });
   connect(
-    peer_admission_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-    [this](int) {
-      onSettingEdited(
-        settings_key::kPeerAdmission, peer_admission_combo_->currentData().toString());
-    });
-  connect(
     hidden_displays_checkbox_, &QCheckBox::toggled, this,
     [this](bool on) { onSettingEdited(settings_key::kHiddenDisplaysOnConnect, boolWord(on)); });
   connect(
@@ -1292,16 +1381,44 @@ void QarStreamingPanel::buildUi()
   connect(
     peer_kind_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
     [this](int) {
-      const QString kind = peer_kind_combo_->currentData().toString();
-      // Only a HoloLens is addressed by name; the field is for it alone.
-      peer_hostname_edit_->setEnabled(kind == "hololens");
-      onSettingEdited(settings_key::kInviteDevice, kind);
+      onSettingEdited(settings_key::kInviteDevice, peer_kind_combo_->currentData().toString());
     });
   connect(
     peer_hostname_edit_, &QLineEdit::editingFinished, this,
     [this]() {
       onSettingEdited(settings_key::kInviteHostname, peer_hostname_edit_->text().trimmed());
     });
+
+  // --- The QAROS Hub group: the Hub settings, the pairing, the targets ---------------------------
+  connect(
+    hub_widget_, &HubConnectionWidget::modeEdited, this,
+    [this](const QString & word) {
+      onSettingEdited(settings_key::kHubMode, word);
+      refreshConnectionView();
+    });
+  connect(
+    hub_widget_, &HubConnectionWidget::hostEdited, this,
+    [this](const QString & text) {
+      onSettingEdited(settings_key::kHubHost, text);
+      refreshConnectionView();
+    });
+  connect(
+    hub_widget_, &HubConnectionWidget::portEdited, this,
+    [this](const QString & text) {
+      // An empty field is a port that is not set.
+      onSettingEdited(settings_key::kHubPort, text.isEmpty() ? QStringLiteral("0") : text);
+      refreshConnectionView();
+    });
+  connect(
+    hub_widget_, &HubConnectionWidget::pairRequested, this, &QarStreamingPanel::onPairRequested);
+  connect(
+    hub_widget_, &HubConnectionWidget::pairRefused, this,
+    [this](const QString & reason) { setLastError("Pairing: " + reason); });
+  connect(
+    hub_widget_, &HubConnectionWidget::cancelRequested, this, &QarStreamingPanel::onCancelConnect);
+  connect(
+    hub_widget_, &HubConnectionWidget::forgetConfirmed, this,
+    &QarStreamingPanel::onForgetConfirmed);
 
   // --- The size of the panel is logged, to prove it does not move ------------------------------
   connect(
@@ -1580,24 +1697,7 @@ void QarStreamingPanel::applySettingsToUi()
     select_data(fps_combo_, setting_int(effective_settings_, settings_key::kFpsCap));
   }
 
-  // Session. The environment may name an admission the list does not offer (named, any): the
-  // list then gets one more item, which shows it, and goes again when the value changes.
-  {
-    const QSignalBlocker blocker(peer_admission_combo_);
-    for (int i = peer_admission_combo_->count() - 1; i >= 0; --i) {
-      if (peer_admission_combo_->itemData(i, Qt::UserRole + 1).toBool()) {
-        peer_admission_combo_->removeItem(i);
-      }
-    }
-    const QString admission = text(settings_key::kPeerAdmission);
-    int index = peer_admission_combo_->findData(admission);
-    if (index < 0) {
-      peer_admission_combo_->addItem(admission + " (from the environment)", admission);
-      index = peer_admission_combo_->count() - 1;
-      peer_admission_combo_->setItemData(index, true, Qt::UserRole + 1);
-    }
-    peer_admission_combo_->setCurrentIndex(index);
-  }
+  // Session.
   {
     const QSignalBlocker blocker(hidden_displays_checkbox_);
     hidden_displays_checkbox_->setChecked(
@@ -1644,7 +1744,13 @@ void QarStreamingPanel::applySettingsToUi()
   }
   refreshSpatialUi();
 
-  // Connection: which device "Invite peer" invites. Only a HoloLens is addressed by name.
+  // Connection: the Hub to join, and which device "Invite peer" invites.
+  hub_widget_->set_mode_word(text(settings_key::kHubMode));
+  hub_widget_->set_host_text(text(settings_key::kHubHost));
+  {
+    const int port = setting_int(effective_settings_, settings_key::kHubPort);
+    hub_widget_->set_port_text(port > 0 ? QString::number(port) : QString());
+  }
   {
     const QSignalBlocker blocker(peer_kind_combo_);
     select_data(peer_kind_combo_, text(settings_key::kInviteDevice));
@@ -1653,10 +1759,11 @@ void QarStreamingPanel::applySettingsToUi()
     const QSignalBlocker blocker(peer_hostname_edit_);
     peer_hostname_edit_->setText(text(settings_key::kInviteHostname));
   }
-  peer_hostname_edit_->setEnabled(peer_kind_combo_->currentData().toString() == "hololens");
 
   // A control whose variable decides says so, and cannot be edited.
-  markEnvironmentControl(peer_admission_combo_, resolved(settings_key::kPeerAdmission));
+  markEnvironmentControl(hub_widget_->mode_combo(), resolved(settings_key::kHubMode));
+  markEnvironmentControl(hub_widget_->host_edit(), resolved(settings_key::kHubHost));
+  markEnvironmentControl(hub_widget_->port_edit(), resolved(settings_key::kHubPort));
   markEnvironmentControl(
     hidden_displays_checkbox_, resolved(settings_key::kHiddenDisplaysOnConnect));
   markEnvironmentControl(ar_control_checkbox_, resolved(settings_key::kArControlPanel));
@@ -1664,6 +1771,8 @@ void QarStreamingPanel::applySettingsToUi()
   markEnvironmentControl(ar_panel_scale_spin_, resolved(settings_key::kWebPanelScale));
   // After the visibility switch above has its value: the close choice is used only without hiding.
   refreshCloseModeControl();
+  // The Connection tab follows the Hub settings (the remote fields show for another PC's Hub).
+  refreshConnectionView();
 }
 
 void QarStreamingPanel::refreshCloseModeControl()
@@ -1734,12 +1843,17 @@ void QarStreamingPanel::load(const rviz_common::Config & config)
   SettingsLoadReport report;
   user_settings_ = parse_saved_settings(saved, report);
 
-  if (!user_settings_.empty() || !report.warnings.empty() || !report.unknown_keys.empty()) {
+  if (!user_settings_.empty() || !report.warnings.empty() || !report.unknown_keys.empty() ||
+    !report.migrated.empty())
+  {
     appendLog(
       QString("SETTINGS: loaded %1 values from the RViz config (version %2)")
       .arg(user_settings_.size()).arg(report.version));
     for (const std::string & warning : report.warnings) {
       appendLog("SETTINGS: " + QString::fromStdString(warning));
+    }
+    for (const std::string & change : report.migrated) {
+      appendLog("SETTINGS: " + QString::fromStdString(change));
     }
     if (!report.unknown_keys.empty()) {
       QStringList names;
@@ -2265,6 +2379,9 @@ void QarStreamingPanel::save(rviz_common::Config config) const
 // ---------------------------------------------------------------------------
 void QarStreamingPanel::onInitialize()
 {
+  // The thread of the panel's widgets: a QarOS call that takes long on it is named in the log
+  // (the guard of qar_qar_adapter), and none of the adapters' blocking calls is made on it.
+  qar_qar_adapter::mark_gui_thread();
   appendLog("QarStreamingPanel::onInitialize() — obtaining DisplayContext.");
 
   // Before anything timer-driven starts: a full-screen window covering RViz (the
@@ -2303,24 +2420,15 @@ void QarStreamingPanel::onInitialize()
   // is untouched.
   live_stream_mode_ = !qEnvironmentVariable("QAR_PANEL_LIVE_STREAM").isEmpty();
   if (live_stream_mode_) {
-    // This makes the panel LIVE-CAPABLE but does NOT connect. Capture the QAR
-    // session config now; the real connection (library_init -> runtime_create ->
-    // create_session -> join -> subscribe -> invite_peer) is built lazily on the
-    // "Connect to QarOS" button (onStartQar). Connecting during onInitialize would
-    // freeze RViz — it would run the whole zenoh/peer handshake on the GUI thread
-    // before the Qt event loop is live, so the runtime's async peer coordination
-    // could never progress. Deferring to an operator click (event loop running)
-    // lets that coordination complete. Until connect, the manager uses the
-    // simulated-peer factory and driveLiveStreaming() is a no-op (qar_factory_ == null).
-    // Tell the QAR runtime which folder to spawn app binaries (the Visualizer)
-    // from. Honour QAR_RUNTIME_BINARIES_DIR if set, else leave empty (the runtime
-    // falls back to cwd with a warning). It should point at the SDK's bin folder
-    // (run_live_rviz_stream_real.ps1 points it at <SdkRoot>/bin).
-    const QString rt_bin = qEnvironmentVariable("QAR_RUNTIME_BINARIES_DIR");
-    qar_runtime_binaries_dir_ = rt_bin.isEmpty() ? std::string() : rt_bin.toStdString();
+    // This makes the panel LIVE-CAPABLE but does NOT connect. The join to the QAROS Hub starts
+    // from the "Connect to QarOS" button (onStartQar): the session owner loads the QAROS runtime
+    // and joins the Hub on a thread of its own, and the render tick collects the result, so the
+    // GUI thread never waits for it. Connecting during onInitialize would run the join before
+    // the Qt event loop is live.
     appendLog(
       "LIVE mode: panel is live-capable. Click 'Connect to QarOS' to "
-      "open the real session — deferred, NOT connected at load.");
+      "join the QAROS Hub - deferred, NOT connected at load.");
+    refreshIdentity();
     // Relabel the runtime controls so the live connection is discoverable (buildUi
     // runs before onInitialize, so live_stream_mode_ isn't known there).
     if (start_qar_button_ != nullptr) { start_qar_button_->setText("Connect to QarOS"); }
@@ -2589,310 +2697,36 @@ void QarStreamingPanel::onStartQar()
       setLastError("Cannot connect: manager not initialized (no DisplayContext).");
       return;
     }
-    if (live_connected_) {
-      // Already connected; just (re)activate streaming.
-      manager_->set_streaming_active(true);
-      qar_running_ = true;
-      updateRuntimeStateLabel();
+    if (streamingPaused()) {
+      // "Disconnect (pause)" kept the session, the render factory and every panel built on
+      // them: streaming starts again at once, with no new join.
       appendLog("QarOS: streaming resumed.");
+      finishLiveConnect();
       return;
     }
-    // The panel must NOT start qar-runtime-launcher.exe itself. The QAR library
-    // spawns and configures the launcher from `QarSessionCreateInit.launcher_config_json`
-    // + the runtime binaries folder. An externally started launcher competes with it
-    // (peerSpec/consumer-id chaos).
-    if (pending_connect_) {
-      appendLog("QarOS: connect already in progress — RViz stays live; please wait.");
+    if (connection_phase_ == ConnectionPhase::Running ||
+      connection_phase_ == ConnectionPhase::Reconnecting)
+    {
+      appendLog("QarOS: already connected.");
       return;
     }
-    if (!qar_factory_) {
-      appendLog("Connecting to QarOS runtime (building session; RViz stays responsive)...");
-      qar_qar_adapter::QarCApiSenderFactory::Config cfg;
-      // near/far are BOTH the clip planes we render with and the range we advertise to
-      // QAR every show_frame (QarRenderFrameShow.rendered_near_far, which cannot
-      // compensate for a wrong depth encoding). The far plane matters: the Visualizer
-      // expects the window-space z-buffer value (QAR_DEPTH_ENCODING=ndc), which is
-      // reciprocal in distance, so an over-wide far plane squashes a room-sized scene
-      // into the first per-cent of the range and every object comes out the same
-      // colour (content spanning 0.14-4.99 m under a 0.1-500 m range; see
-      // qar_ogre_adapter docs/ARCHITECTURE.md, "Depth encoding"). Tunable per run for
-      // exactly that. 0.01 m near keeps close-up content out of the near plane. The
-      // far default is 150 m: a real LiDAR bag reaches much further (an Ouster OS1
-      // sees ~120 m), and everything past the far plane is simply clipped away — a
-      // 50 m far plane removes most of a 32768-point frame before it ever reaches the
-      // Visualizer. Still far short of 500 m, which costs depth precision under the
-      // reciprocal NDC encoding.
-      float near_m = 0.01f;
-      float far_m = 150.0f;
-      bool nf_ok = false;
-      const QString near_s = qEnvironmentVariable("QAR_PANEL_NEAR_M").trimmed();
-      if (!near_s.isEmpty()) {
-        const float v = near_s.toFloat(&nf_ok);
-        if (nf_ok && v > 0.0f) { near_m = v; }
-      }
-      const QString far_s = qEnvironmentVariable("QAR_PANEL_FAR_M").trimmed();
-      if (!far_s.isEmpty()) {
-        const float v = far_s.toFloat(&nf_ok);
-        if (nf_ok && v > near_m) { far_m = v; }
-      }
-      cfg.near_far = QarNearFar{near_m, far_m};
-      // depth_scale converts our metric metres into whatever a consumer that honours
-      // it expects ("norm" is shorthand for 1/far, i.e. metres -> [0,1] across the
-      // frustum). It cannot make metric depth right for the Visualizer, which needs
-      // QAR_DEPTH_ENCODING=ndc (qar_ogre_adapter docs/ARCHITECTURE.md, "Depth
-      // encoding").
-      const QString ds = qEnvironmentVariable("QAR_PANEL_DEPTH_SCALE").trimmed().toLower();
-      if (ds == "norm") {
-        cfg.depth_scale = 1.0f / far_m;
-      } else if (!ds.isEmpty()) {
-        bool ok = false;
-        const float v = ds.toFloat(&ok);
-        if (ok && v > 0.0f) {
-          cfg.depth_scale = v;
-        } else {
-          setLastError(QString("bad QAR_PANEL_DEPTH_SCALE '%1' (use a number or 'norm')")
-            .arg(ds));
-        }
-      }
-      appendLog(QString("LIVE: near/far = %1 / %2 m, depth_scale = %3")
-        .arg(near_m).arg(far_m).arg(cfg.depth_scale));
-      if (!qar_runtime_binaries_dir_.empty()) {
-        cfg.runtime_binaries_folder_path = qar_runtime_binaries_dir_;
-      }
-      // The session GUID is always unique and non-zero (handled inside the factory).
-      // The launcher config defaults to {"enableMixer": true};
-      // QAR_PANEL_LAUNCHER_CONFIG overrides it (e.g. '{"enableMixer": false}' for the
-      // direct RViz -> Visualizer path used when debugging).
-      const QString lcfg = qEnvironmentVariable("QAR_PANEL_LAUNCHER_CONFIG");
-      if (!lcfg.isEmpty()) { cfg.launcher_config_json = lcfg.toStdString(); }
-      // QAR library log folder (TRACE severity is the factory default) — full library
-      // logs should accompany bug reports to the QarOS vendor. Empty => %TEMP%/quaternar.
-      const QString qlog = qEnvironmentVariable("QAR_PANEL_LOG_DIR");
-      if (!qlog.isEmpty()) { cfg.log_folder_path = qlog.toStdString(); }
-      // Library log severity and console duplication. TRACE (+ console) is the default
-      // so that full logs accompany bug reports to the QarOS vendor —
-      // but TRACE costs real I/O (tens of MB per minute once frames flow: 480k lines /
-      // 81 MB in six minutes), so QAR_PANEL_LOG_SEVERITY / _CONSOLE lower it
-      // when the question is throughput or stability rather than protocol.
-      //
-      // Resolved by a pure function because the vendor library gives the QAR_LOG_SEVERITY
-      // ENVIRONMENT VARIABLE precedence over QarLibraryInit.log_severity: a run passing
-      // severity=warn still logs at TRACE when a stale QAR_LOG_SEVERITY=trace sits in
-      // the shell. The adapter exports the decision to the environment as well
-      // (QarCApiSenderFactory ctor); see qar_qar_adapter::resolve_library_logging for the
-      // precedence and qar_ogre_adapter docs/QAROS_INTEGRATION_NOTES.md, "Logging
-      // control", for the measurements.
-      {
-        const QByteArray panel_severity = qgetenv("QAR_PANEL_LOG_SEVERITY");
-        const QByteArray env_severity = qgetenv("QAR_LOG_SEVERITY");
-        const QByteArray panel_console = qgetenv("QAR_PANEL_LOG_CONSOLE");
-        const qar_qar_adapter::LibraryLogging logging = qar_qar_adapter::resolve_library_logging(
-          panel_severity.isEmpty() ? nullptr : panel_severity.constData(),
-          env_severity.isEmpty() ? nullptr : env_severity.constData(),
-          panel_console.isEmpty() ? nullptr : panel_console.constData(),
-          qar_qar_adapter::LogSeverity::kTrace);
-        cfg.log_severity = static_cast<QarLogSeverity>(static_cast<int>(logging.severity));
-        cfg.enable_console_logging = logging.console;
-        appendLog(
-          QString("LIVE: QarOS library logging: severity=%1 (from %2), console duplicate to "
-            "stdout=%3%4")
-          .arg(QString::fromLatin1(qar_qar_adapter::log_severity_name(logging.severity)))
-          .arg(QString::fromLatin1(logging.severity_source))
-          .arg(QString::fromLatin1(logging.console ? "on" : "off"))
-          .arg(logging.environment_overridden ?
-            QString(" - QAR_LOG_SEVERITY in the environment disagrees and is overwritten "
-              "(the vendor library would otherwise obey it over the init struct)") :
-            QString()));
-        if (!logging.warning.empty()) {
-          appendLog(QString("LIVE: WARNING: %1").arg(QString::fromStdString(logging.warning)));
-        }
-      }
-      // Distinct payload for the Visualizer connection string. Defaults to "auto"
-      // (fresh UUID per invite) because that is what allows several Visualizers to
-      // be invited and streamed to at once. Set QAR_PANEL_VISUALIZER_GUID=off to
-      // fall back to the stock string, where every invite collapses onto one peer;
-      // set a literal GUID to address one specific instance.
-      const QString qvguid = qEnvironmentVariable("QAR_PANEL_VISUALIZER_GUID");
-      if (!qvguid.isEmpty()) {
-        cfg.visualizer_conn_suffix =
-          (qvguid.toLower() == "off") ? std::string() : qvguid.toStdString();
-      }
-      // qar_render_sender_frame_opengl takes an OUT frame, so QAR owns the textures and
-      // we must copy our Ogre color/depth INTO them. The hook does that with an FBO blit
-      // (glBlitFramebuffer) on the render thread. QAR_PANEL_GL_SUBMIT=supply-own still
-      // allows a supply-own run for comparison, but it renders black against the real
-      // SDK (QAR overwrites the ids we pass). See qar_ogre_adapter
-      // docs/QAROS_INTEGRATION_NOTES.md, "Render-into and the GL context".
-      cfg.copy_hook = qar_qar_adapter::make_gl_copy_image_hook();
-      const QString submit = qEnvironmentVariable("QAR_PANEL_GL_SUBMIT").trimmed().toLower();
-      if (submit == "supply-own") {
-        cfg.submit_mode = qar_qar_adapter::GlSubmitMode::kSupplyOwnTextureIds;
-        appendLog("LIVE: GL submit mode = supply-own (expected BLACK against the real SDK)");
-      } else if (!submit.isEmpty() && submit != "render-into") {
-        setLastError(QString("unknown QAR_PANEL_GL_SUBMIT '%1' (use render-into|supply-own)")
-          .arg(submit));
-      }
-      // --- Multi-peer (one Visualizer == one physical client head) --------------
-      // Connect invites NOTHING by default: the operator spawns Visualizers on demand
-      // with "Invite peer", and a real-device session often wants none at all. Set
-      // QAR_PANEL_VISUALIZERS=N to auto-invite N of them at connect.
-      bool n_ok = false;
-      const int n_viz = qEnvironmentVariable("QAR_PANEL_VISUALIZERS").trimmed().toInt(&n_ok);
-      if (n_ok && n_viz > 0) { cfg.auto_invite_visualizers = static_cast<uint32_t>(n_viz); }
-      bool max_ok = false;
-      const int max_peers = qEnvironmentVariable("QAR_PANEL_MAX_PEERS").trimmed().toInt(&max_ok);
-      if (max_ok && max_peers > 0) { cfg.max_peers = static_cast<uint32_t>(max_peers); }
-      // --- App volume (the mixer's unit of work) --------------------------------
-      // Every render stream is keyed to one app volume; with the mixer enabled a
-      // stream without one lands nowhere and the Visualizer stays empty. Size and
-      // scale are env-tunable because the right values depend on how big the RViz
-      // scene is: nothing clips the content to the box, but it states where the
-      // app is meant to be, so a 20 m grid needs a big box or a small app_scale.
-      if (qEnvironmentVariable("QAR_PANEL_APP_VOLUME").trimmed().toLower() == "off") {
-        cfg.create_app_volume = false;
-        appendLog("LIVE: app volume DISABLED — streams get app_volume_id=NULL "
-          "(mixer-off path only)");
-      }
-      const QString vol_name = qEnvironmentVariable("QAR_PANEL_VOLUME_NAME").trimmed();
-      if (!vol_name.isEmpty()) { cfg.app_volume_name = vol_name.toStdString(); }
-      // The box covers size / app_scale metres of the scene. A stated size is the edge of the
-      // cube; with only the scale stated the edge is the default one times the scale, so the box
-      // keeps holding the same part of the scene (choose_app_volume_size()).
-      bool vs_ok = false;
-      const float vol_size =
-        qEnvironmentVariable("QAR_PANEL_VOLUME_SIZE").trimmed().toFloat(&vs_ok);
-      bool vsc_ok = false;
-      const float vol_scale =
-        qEnvironmentVariable("QAR_PANEL_VOLUME_SCALE").trimmed().toFloat(&vsc_ok);
-      const float default_edge_m = cfg.app_volume_width_m;
-      const AppVolumeSize volume_size = choose_app_volume_size(
-        vs_ok ? std::optional<float>(vol_size) : std::nullopt,
-        vsc_ok ? std::optional<float>(vol_scale) : std::nullopt, default_edge_m);
-      cfg.app_volume_width_m = volume_size.edge_m;
-      cfg.app_volume_length_m = volume_size.edge_m;
-      cfg.app_volume_height_m = volume_size.edge_m;
-      if (vsc_ok && vol_scale > 0.0f) { cfg.app_volume_scale = vol_scale; }
-      bool vy_ok = false;
-      const float vol_y = qEnvironmentVariable("QAR_PANEL_VOLUME_Y").trimmed().toFloat(&vy_ok);
-      if (vy_ok) { cfg.app_volume_center_y_m = vol_y; }
-      // The centre of the box is the RViz ground until QarOS reports where the scene really is
-      // (the placement rule of the AR panels falls back to it).
-      volume_center_y_m_ = cfg.app_volume_center_y_m;
-      // How the panels with a fixed place are hung: from a fixed height of the room (the default)
-      // or from the RViz ground.
-      const QByteArray fixed_poses_text = qEnvironmentVariable("QAR_PANEL_FIXED_POSES").toUtf8();
-      const FixedPoseChoice fixed_poses = parse_fixed_pose_mode(
-        fixed_poses_text.isEmpty() ? nullptr : fixed_poses_text.constData());
-      fixed_pose_mode_ = fixed_poses.mode;
-      if (!fixed_poses.warning.empty()) {
-        appendLog(QString("LIVE: WARNING: %1").arg(QString::fromStdString(fixed_poses.warning)));
-      }
-      if (cfg.create_app_volume) {
-        const QString edge_source =
-          volume_size.source == AppVolumeSizeSource::Stated ?
-          QStringLiteral("QAR_PANEL_VOLUME_SIZE") :
-          volume_size.source == AppVolumeSizeSource::FromScale ?
-          QString("%1 m x app_scale %2")
-            .arg(static_cast<double>(default_edge_m)).arg(static_cast<double>(vol_scale)) :
-          QStringLiteral("default size");
-        appendLog(QString("LIVE: app volume '%1' %2 m cube (%3) at y=%4 m, app_scale=%5, fixed "
-            "panel poses: %6")
-          .arg(QString::fromStdString(cfg.app_volume_name))
-          .arg(static_cast<double>(cfg.app_volume_width_m))
-          .arg(edge_source)
-          .arg(static_cast<double>(cfg.app_volume_center_y_m))
-          .arg(static_cast<double>(cfg.app_volume_scale))
-          .arg(QString::fromLatin1(to_string(fixed_pose_mode_))));
-      } else {
-        appendLog(QString("LIVE: fixed panel poses: %1")
-          .arg(QString::fromLatin1(to_string(fixed_pose_mode_))));
-      }
-      // The frame QarOS draws around the video of an AR panel (QAR_PANEL_AR_FRAME).
-      readArFrame();
-      // Which subscription peers may get a stream. The subscription surfaces the
-      // runtime's internal app peers too (5 ids for 1 Visualizer), so
-      // the default admits only the ones we invited ourselves. 'named' additionally
-      // admits peers whose display name matches QAR_PANEL_PEER_NAME_FILTER — the
-      // policy for Visualizers that join the session on their own, once a traced run
-      // (QAR_ADAPTER_TRACE=1, "peer_spec" lines) shows what they call themselves.
-      //
-      // The policy is the "Peer Admission" setting AS IT IS NOW: QAR_PANEL_PEER_ADMISSION when
-      // it is set and acceptable, else the value saved in the RViz configuration or chosen in
-      // the Settings tab, else invited. It is read here, at the first connect of the run,
-      // because the factory's configuration is assembled once.
-      const QString adm = QString::fromStdString(
-        setting_text(effective_settings_, settings_key::kPeerAdmission));
-      // A variable the rule refused keeps the error it always had.
-      const QString refused_admission = refusedEnvironmentText(settings_key::kPeerAdmission);
-      if (!refused_admission.isEmpty()) {
-        setLastError(QString("unknown QAR_PANEL_PEER_ADMISSION '%1' "
-          "(use invited|new|named|any)").arg(refused_admission));
-      }
-      if (adm == "any") {
-        cfg.admission = qar_qar_adapter::PeerAdmission::kAny;
-        appendLog("LIVE: peer admission = ANY (diagnostic — will also admit internal "
-          "runtime peers)");
-      } else if (adm == "named") {
-        cfg.admission = qar_qar_adapter::PeerAdmission::kInvitedOrNamed;
-        appendLog("LIVE: peer admission = NAMED — note that the SDK's display names "
-          "are auto-generated and change between updates, so this rarely matches.");
-      } else if (adm == "new") {
-        // The policy for a demo with REAL onboarded peers (HoloLens, Quest, another
-        // machine's Visualizer). They join via QAROS onboarding, never via
-        // qar_session_invite_peer, so 'invited' would silently refuse them.
-        cfg.admission = qar_qar_adapter::PeerAdmission::kInvitedOrNew;
-        appendLog("LIVE: peer admission = NEW — peers present in the first few seconds "
-          "are the runtime's own; anything joining later is treated as a real "
-          "consumer and gets a stream.");
-      }
-      bool settle_ok = false;
-      const int settle = qEnvironmentVariable("QAR_PANEL_PEER_SETTLE_MS").trimmed()
-        .toInt(&settle_ok);
-      if (settle_ok && settle >= 0) { cfg.baseline_settle_ms = static_cast<uint32_t>(settle); }
-      const QString name_filter = qEnvironmentVariable("QAR_PANEL_PEER_NAME_FILTER").trimmed();
-      if (!name_filter.isEmpty()) { cfg.admission_name_filter = name_filter.toStdString(); }
-      // Real devices invited right after the session comes up, e.g.
-      // "hololens:HOLOLENS-A2B3,hololens:HOLOLENS-C4D5,quest". Invited devices land in
-      // the allow-list, so they need no admission heuristic.
-      const QString invite_peers = qEnvironmentVariable("QAR_PANEL_INVITE_PEERS").trimmed();
-      if (!invite_peers.isEmpty()) {
-        cfg.invite_peers = invite_peers.toStdString();
-        appendLog(QString("LIVE: inviting devices at connect: %1").arg(invite_peers));
-      }
-      appendLog(QString("LIVE: auto-invite %1, admission=%2, max_peers=%3")
-        .arg(cfg.auto_invite_visualizers == 0
-          ? QString("OFF (use 'Invite peer' to open a Visualizer)")
-          : QString("%1 Visualizer(s)").arg(cfg.auto_invite_visualizers))
-        .arg(adm)
-        .arg(cfg.max_peers));
-      appendLog(QString("SETTINGS: peer admission '%1' (%2) is what this connect uses.")
-        .arg(adm, settingSourceWords(effective_settings_, settings_key::kPeerAdmission)));
-      // Build the session on a worker and let the render tick collect it. The
-      // constructor blocks for ~2.9 s (2.1 s of it inside
-      // qar_runtime_create_session, which spawns the runtime launcher), and doing
-      // that on the Qt thread would freeze RViz for the whole of it.
-      auto pending = std::make_shared<PendingConnect>();
-      pending_connect_ = pending;
-      connect_thread_ = std::thread(
-        [pending, cfg]() {
-          try {
-            pending->factory =
-              std::make_shared<qar_qar_adapter::QarCApiSenderFactory>(cfg);
-          } catch (const std::exception & e) {
-            pending->error = e.what();
-            pending->threw = true;
-          } catch (...) {
-            pending->error = "unknown exception";
-            pending->threw = true;
-          }
-          // Release: everything written above is visible to the Qt thread once it
-          // observes done, and the Qt thread owns the session exclusively after.
-          pending->done.store(true, std::memory_order_release);
-        });
-      updateRuntimeStateLabel();
-      return;  // pollPendingConnect() finishes this from the render tick
+    if (connection_phase_ != ConnectionPhase::Idle &&
+      connection_phase_ != ConnectionPhase::Failed)
+    {
+      appendLog("QarOS: connect already in progress - RViz stays live; please wait.");
+      return;
     }
-    finishLiveConnect();
+    // The owner loads the QAROS runtime and joins the Hub on its own thread: this click returns
+    // at once, and the render tick collects the state changes.
+    ensureSessionOwner();
+    clearLastError();
+    owner_failure_message_.clear();
+    appendLog(
+      "Connecting to QarOS (the QAROS runtime is loaded and the Hub joined on a thread of its "
+      "own; RViz stays responsive)...");
+    connection_phase_ = ConnectionPhase::Loading;
+    session_owner_->connect();
+    updateRuntimeStateLabel();
     return;
   }
 
@@ -3010,6 +2844,34 @@ void QarStreamingPanel::applyPendingGeoFix()
   if (!geo_enabled_ || !qar_factory_ || !live_connected_) {
     return;
   }
+  if (geo_in_flight_) {
+    // The change was queued for the session's thread; its outcome comes back on a later tick, and
+    // the newest fix waits until then.
+    std::string outcome;
+    if (!qar_factory_->take_geo_anchor_result(outcome)) {
+      return;
+    }
+    geo_in_flight_ = false;
+    if (!outcome.empty()) {
+      // Non-fatal: streaming continues un-georeferenced. Log once so a missing
+      // anchor is visible without spamming a line per fix.
+      if (!geo_applied_) {
+        appendLog(QString("GEO: anchor NOT set — %1").arg(QString::fromStdString(outcome)));
+        geo_enabled_ = false;
+      }
+      return;
+    }
+    geo_last_lat_ = geo_queued_lat_;
+    geo_last_lon_ = geo_queued_lon_;
+    geo_last_alt_ = geo_queued_alt_;
+    const bool first = !geo_applied_;
+    geo_applied_ = true;
+    if (first) {
+      appendLog(QString("GEO: app volume anchored at lat=%1 lon=%2 alt=%3 m "
+          "(ECEF WGS84, ENU axes).")
+        .arg(geo_last_lat_, 0, 'f', 7).arg(geo_last_lon_, 0, 'f', 7).arg(geo_last_alt_, 0, 'f', 2));
+    }
+  }
   double lat = 0.0, lon = 0.0, alt = 0.0;
   {
     std::lock_guard<std::mutex> lk(gps_mutex_);
@@ -3035,6 +2897,8 @@ void QarStreamingPanel::applyPendingGeoFix()
     return;
   }
 
+  // Queued for the session's thread: an empty answer means accepted, and the outcome is taken
+  // above on a later tick.
   const std::string err = qar_factory_->set_geo_anchor_wgs84(lat, lon, alt);
   if (!err.empty()) {
     // Non-fatal: streaming continues un-georeferenced. Log once so a missing
@@ -3045,49 +2909,471 @@ void QarStreamingPanel::applyPendingGeoFix()
     }
     return;
   }
-  geo_last_lat_ = lat;
-  geo_last_lon_ = lon;
-  geo_last_alt_ = alt;
-  const bool first = !geo_applied_;
-  geo_applied_ = true;
-  if (first) {
-    appendLog(QString("GEO: app volume anchored at lat=%1 lon=%2 alt=%3 m "
-        "(ECEF WGS84, ENU axes).")
-      .arg(lat, 0, 'f', 7).arg(lon, 0, 'f', 7).arg(alt, 0, 'f', 2));
+  geo_in_flight_ = true;
+  geo_queued_lat_ = lat;
+  geo_queued_lon_ = lon;
+  geo_queued_alt_ = alt;
+}
+
+qar_qar_adapter::SessionOwnerConfig QarStreamingPanel::makeSessionOwnerConfig()
+{
+  qar_qar_adapter::SessionOwnerConfig cfg;
+  currentHubSettings(cfg.mode, cfg.remote);
+  cfg.program_tag = kProgramTag;
+  cfg.instance = qEnvironmentVariable("QAR_PANEL_INSTANCE").trimmed().toStdString();
+  cfg.display_name = "RViz2 (QAROS ROS plugin) on " + QSysInfo::machineHostName().toStdString();
+
+  // How long the Hub waits for the person to click Allow: 0 is the Hub's own default (120 s),
+  // and the Hub takes at most 600 s.
+  approval_timeout_s_ = 120;
+  const QString timeout_text = qEnvironmentVariable("QAR_PANEL_APPROVAL_TIMEOUT_S").trimmed();
+  if (!timeout_text.isEmpty()) {
+    bool timeout_ok = false;
+    const int seconds = timeout_text.toInt(&timeout_ok);
+    if (!timeout_ok || seconds < 0) {
+      appendLog(
+        QString("LIVE: WARNING: QAR_PANEL_APPROVAL_TIMEOUT_S='%1' is not a number of seconds "
+          "(0 to 600) - the Hub's default of 120 s applies").arg(timeout_text));
+    } else {
+      const int clamped = std::min(seconds, 600);
+      cfg.approval_timeout_ms = static_cast<std::uint32_t>(clamped) * 1000U;
+      approval_timeout_s_ = clamped > 0 ? clamped : 120;
+    }
+  }
+  bool max_ok = false;
+  const int max_targets = qEnvironmentVariable("QAR_PANEL_MAX_PEERS").trimmed().toInt(&max_ok);
+  if (max_ok && max_targets > 0) { cfg.max_targets = static_cast<std::uint32_t>(max_targets); }
+
+  // QAROS library log folder (TRACE severity is the default): full library logs should
+  // accompany bug reports to the QarOS vendor. Empty => %TEMP%/quaternar.
+  const QString qlog = qEnvironmentVariable("QAR_PANEL_LOG_DIR");
+  if (!qlog.isEmpty()) { cfg.log_folder_path = qlog.toStdString(); }
+  // Library log severity and console duplication. TRACE (+ console) is the default
+  // so that full logs accompany bug reports to the QarOS vendor -
+  // but TRACE costs real I/O (tens of MB per minute once frames flow: 480k lines /
+  // 81 MB in six minutes), so QAR_PANEL_LOG_SEVERITY / _CONSOLE lower it
+  // when the question is throughput or stability rather than protocol.
+  //
+  // Resolved by a pure function because the vendor library gives the QAR_LOG_SEVERITY
+  // ENVIRONMENT VARIABLE precedence over QarLibraryInit.log_severity: a run passing
+  // severity=warn still logs at TRACE when a stale QAR_LOG_SEVERITY=trace sits in
+  // the shell. The owner exports the decision to the environment as well
+  // (QarSessionOwner); see qar_qar_adapter::resolve_library_logging for the
+  // precedence and qar_ogre_adapter docs/QAROS_INTEGRATION_NOTES.md, "Logging
+  // control", for the measurements.
+  {
+    const QByteArray panel_severity = qgetenv("QAR_PANEL_LOG_SEVERITY");
+    const QByteArray env_severity = qgetenv("QAR_LOG_SEVERITY");
+    const QByteArray panel_console = qgetenv("QAR_PANEL_LOG_CONSOLE");
+    const qar_qar_adapter::LibraryLogging logging = qar_qar_adapter::resolve_library_logging(
+      panel_severity.isEmpty() ? nullptr : panel_severity.constData(),
+      env_severity.isEmpty() ? nullptr : env_severity.constData(),
+      panel_console.isEmpty() ? nullptr : panel_console.constData(),
+      qar_qar_adapter::LogSeverity::kTrace);
+    cfg.log_severity = static_cast<QarLogSeverity>(static_cast<int>(logging.severity));
+    cfg.enable_console_logging = logging.console;
+    appendLog(
+      QString("LIVE: QarOS library logging: severity=%1 (from %2), console duplicate to "
+        "stdout=%3%4")
+      .arg(QString::fromLatin1(qar_qar_adapter::log_severity_name(logging.severity)))
+      .arg(QString::fromLatin1(logging.severity_source))
+      .arg(QString::fromLatin1(logging.console ? "on" : "off"))
+      .arg(logging.environment_overridden ?
+        QString(" - QAR_LOG_SEVERITY in the environment disagrees and is overwritten "
+          "(the vendor library would otherwise obey it over the init struct)") :
+        QString()));
+    if (!logging.warning.empty()) {
+      appendLog(QString("LIVE: WARNING: %1").arg(QString::fromStdString(logging.warning)));
+    }
+  }
+  // The owner's log lines (every one starts with "QAROS: ") reach stderr unchanged, which is the
+  // file the launcher keeps, and are queued for the diagnostics view: the sink runs on the owner
+  // thread and must not touch a widget.
+  const std::shared_ptr<OwnerLogQueue> queue = owner_log_;
+  cfg.log_sink = [queue](const std::string & line) {
+      std::fprintf(stderr, "%s\n", line.c_str());
+      std::fflush(stderr);
+      constexpr std::size_t kMaxQueuedLines = 2000;
+      std::lock_guard<std::mutex> lock(queue->mutex);
+      if (queue->lines.size() < kMaxQueuedLines) {
+        queue->lines.push_back(line);
+      }
+    };
+  return cfg;
+}
+
+void QarStreamingPanel::currentHubSettings(
+  qar_qar_adapter::HubMode & mode, qar_qar_adapter::HubEndpoint & endpoint) const
+{
+  mode = hubModeOf(hub_choice_from_word(setting_text(effective_settings_, settings_key::kHubMode)));
+  endpoint.host = setting_text(effective_settings_, settings_key::kHubHost);
+  const int port = setting_int(effective_settings_, settings_key::kHubPort);
+  endpoint.port = (port > 0 && port <= 65535) ? static_cast<std::uint16_t>(port) : 0;
+}
+
+std::string QarStreamingPanel::hubSettingsSignature() const
+{
+  std::string signature;
+  for (const char * key : {settings_key::kHubMode, settings_key::kHubHost,
+      settings_key::kHubPort})
+  {
+    signature += setting_text(effective_settings_, key) + "|";
+  }
+  return signature;
+}
+
+qar_qar_adapter::QarCApiSenderFactory::Config QarStreamingPanel::makeFactoryConfig()
+{
+  qar_qar_adapter::QarCApiSenderFactory::Config cfg;
+  // near/far are BOTH the clip planes we render with and the range we advertise to
+  // QAR every show_frame (QarRenderFrameShow.rendered_near_far, which cannot
+  // compensate for a wrong depth encoding). The far plane matters: the Visualizer
+  // expects the window-space z-buffer value (QAR_DEPTH_ENCODING=ndc), which is
+  // reciprocal in distance, so an over-wide far plane squashes a room-sized scene
+  // into the first per-cent of the range and every object comes out the same
+  // colour (content spanning 0.14-4.99 m under a 0.1-500 m range; see
+  // qar_ogre_adapter docs/ARCHITECTURE.md, "Depth encoding"). Tunable per run for
+  // exactly that. 0.01 m near keeps close-up content out of the near plane. The
+  // far default is 150 m: a real LiDAR bag reaches much further (an Ouster OS1
+  // sees ~120 m), and everything past the far plane is simply clipped away - a
+  // 50 m far plane removes most of a 32768-point frame before it ever reaches the
+  // Visualizer. Still far short of 500 m, which costs depth precision under the
+  // reciprocal NDC encoding.
+  float near_m = 0.01f;
+  float far_m = 150.0f;
+  bool nf_ok = false;
+  const QString near_s = qEnvironmentVariable("QAR_PANEL_NEAR_M").trimmed();
+  if (!near_s.isEmpty()) {
+    const float v = near_s.toFloat(&nf_ok);
+    if (nf_ok && v > 0.0f) { near_m = v; }
+  }
+  const QString far_s = qEnvironmentVariable("QAR_PANEL_FAR_M").trimmed();
+  if (!far_s.isEmpty()) {
+    const float v = far_s.toFloat(&nf_ok);
+    if (nf_ok && v > near_m) { far_m = v; }
+  }
+  cfg.near_far = QarNearFar{near_m, far_m};
+  // depth_scale converts our metric metres into whatever a consumer that honours
+  // it expects ("norm" is shorthand for 1/far, i.e. metres -> [0,1] across the
+  // frustum). It cannot make metric depth right for the Visualizer, which needs
+  // QAR_DEPTH_ENCODING=ndc (qar_ogre_adapter docs/ARCHITECTURE.md, "Depth
+  // encoding").
+  const QString ds = qEnvironmentVariable("QAR_PANEL_DEPTH_SCALE").trimmed().toLower();
+  if (ds == "norm") {
+    cfg.depth_scale = 1.0f / far_m;
+  } else if (!ds.isEmpty()) {
+    bool ok = false;
+    const float v = ds.toFloat(&ok);
+    if (ok && v > 0.0f) {
+      cfg.depth_scale = v;
+    } else {
+      setLastError(QString("bad QAR_PANEL_DEPTH_SCALE '%1' (use a number or 'norm')")
+        .arg(ds));
+    }
+  }
+  appendLog(QString("LIVE: near/far = %1 / %2 m, depth_scale = %3")
+    .arg(near_m).arg(far_m).arg(cfg.depth_scale));
+  // Folder of the per-frame trace files of the senders (QAR_ADAPTER_FRAME_TRACE). The QAROS
+  // library's own logs go to the same variable's folder through the session owner. Empty =>
+  // %TEMP%/quaternar.
+  const QString qlog = qEnvironmentVariable("QAR_PANEL_LOG_DIR");
+  if (!qlog.isEmpty()) { cfg.log_folder_path = qlog.toStdString(); }
+  // qar_render_sender_frame_opengl takes an OUT frame, so QAR owns the textures and
+  // we must copy our Ogre color/depth INTO them. The hook does that with an FBO blit
+  // (glBlitFramebuffer) on the render thread. QAR_PANEL_GL_SUBMIT=supply-own still
+  // allows a supply-own run for comparison, but it renders black against the real
+  // SDK (QAR overwrites the ids we pass). See qar_ogre_adapter
+  // docs/QAROS_INTEGRATION_NOTES.md, "Render-into and the GL context".
+  cfg.copy_hook = qar_qar_adapter::make_gl_copy_image_hook();
+  const QString submit = qEnvironmentVariable("QAR_PANEL_GL_SUBMIT").trimmed().toLower();
+  if (submit == "supply-own") {
+    cfg.submit_mode = qar_qar_adapter::GlSubmitMode::kSupplyOwnTextureIds;
+    appendLog("LIVE: GL submit mode = supply-own (expected BLACK against the real SDK)");
+  } else if (!submit.isEmpty() && submit != "render-into") {
+    setLastError(QString("unknown QAR_PANEL_GL_SUBMIT '%1' (use render-into|supply-own)")
+      .arg(submit));
+  }
+  bool max_ok = false;
+  const int max_peers = qEnvironmentVariable("QAR_PANEL_MAX_PEERS").trimmed().toInt(&max_ok);
+  if (max_ok && max_peers > 0) { cfg.max_peers = static_cast<uint32_t>(max_peers); }
+  appendLog(QString("LIVE: max_peers=%1 (the session owner serves at most that many targets)")
+    .arg(cfg.max_peers));
+  // --- App volume (the mixer's unit of work) --------------------------------
+  // Every render stream is keyed to one app volume; with the mixer enabled a
+  // stream without one lands nowhere and the Visualizer stays empty. Size and
+  // scale are env-tunable because the right values depend on how big the RViz
+  // scene is: nothing clips the content to the box, but it states where the
+  // app is meant to be, so a 20 m grid needs a big box or a small app_scale.
+  if (qEnvironmentVariable("QAR_PANEL_APP_VOLUME").trimmed().toLower() == "off") {
+    cfg.create_app_volume = false;
+    appendLog("LIVE: app volume DISABLED - streams get app_volume_id=NULL "
+      "(mixer-off path only)");
+  }
+  const QString vol_name = qEnvironmentVariable("QAR_PANEL_VOLUME_NAME").trimmed();
+  if (!vol_name.isEmpty()) { cfg.app_volume_name = vol_name.toStdString(); }
+  // The box covers size / app_scale metres of the scene. A stated size is the edge of the
+  // cube; with only the scale stated the edge is the default one times the scale, so the box
+  // keeps holding the same part of the scene (choose_app_volume_size()).
+  bool vs_ok = false;
+  const float vol_size =
+    qEnvironmentVariable("QAR_PANEL_VOLUME_SIZE").trimmed().toFloat(&vs_ok);
+  bool vsc_ok = false;
+  const float vol_scale =
+    qEnvironmentVariable("QAR_PANEL_VOLUME_SCALE").trimmed().toFloat(&vsc_ok);
+  const float default_edge_m = cfg.app_volume_width_m;
+  const AppVolumeSize volume_size = choose_app_volume_size(
+    vs_ok ? std::optional<float>(vol_size) : std::nullopt,
+    vsc_ok ? std::optional<float>(vol_scale) : std::nullopt, default_edge_m);
+  cfg.app_volume_width_m = volume_size.edge_m;
+  cfg.app_volume_length_m = volume_size.edge_m;
+  cfg.app_volume_height_m = volume_size.edge_m;
+  if (vsc_ok && vol_scale > 0.0f) { cfg.app_volume_scale = vol_scale; }
+  bool vy_ok = false;
+  const float vol_y = qEnvironmentVariable("QAR_PANEL_VOLUME_Y").trimmed().toFloat(&vy_ok);
+  if (vy_ok) { cfg.app_volume_center_y_m = vol_y; }
+  // The centre of the box is the RViz ground until QarOS reports where the scene really is
+  // (the placement rule of the AR panels falls back to it).
+  volume_center_y_m_ = cfg.app_volume_center_y_m;
+  // How the panels with a fixed place are hung: from a fixed height of the room (the default)
+  // or from the RViz ground.
+  const QByteArray fixed_poses_text = qEnvironmentVariable("QAR_PANEL_FIXED_POSES").toUtf8();
+  const FixedPoseChoice fixed_poses = parse_fixed_pose_mode(
+    fixed_poses_text.isEmpty() ? nullptr : fixed_poses_text.constData());
+  fixed_pose_mode_ = fixed_poses.mode;
+  if (!fixed_poses.warning.empty()) {
+    appendLog(QString("LIVE: WARNING: %1").arg(QString::fromStdString(fixed_poses.warning)));
+  }
+  if (cfg.create_app_volume) {
+    const QString edge_source =
+      volume_size.source == AppVolumeSizeSource::Stated ?
+      QStringLiteral("QAR_PANEL_VOLUME_SIZE") :
+      volume_size.source == AppVolumeSizeSource::FromScale ?
+      QString("%1 m x app_scale %2")
+        .arg(static_cast<double>(default_edge_m)).arg(static_cast<double>(vol_scale)) :
+      QStringLiteral("default size");
+    appendLog(QString("LIVE: app volume '%1' %2 m cube (%3) at y=%4 m, app_scale=%5, fixed "
+        "panel poses: %6")
+      .arg(QString::fromStdString(cfg.app_volume_name))
+      .arg(static_cast<double>(cfg.app_volume_width_m))
+      .arg(edge_source)
+      .arg(static_cast<double>(cfg.app_volume_center_y_m))
+      .arg(static_cast<double>(cfg.app_volume_scale))
+      .arg(QString::fromLatin1(to_string(fixed_pose_mode_))));
+  } else {
+    appendLog(QString("LIVE: fixed panel poses: %1")
+      .arg(QString::fromLatin1(to_string(fixed_pose_mode_))));
+  }
+  // The frame QarOS draws around the video of an AR panel (QAR_PANEL_AR_FRAME).
+  readArFrame();
+  cfg.name_scope = name_scope_;
+  return cfg;
+}
+
+// ---------------------------------------------------------------------------
+// The QAROS session: the owner, its events, and what is built on its session
+// ---------------------------------------------------------------------------
+void QarStreamingPanel::ensureSessionOwner()
+{
+  if (session_owner_) {
+    // The owner and the QAROS library it holds are made once and live until RViz closes the
+    // panel: a new Hub setting is passed on and applied at the next connect.
+    const std::string signature = hubSettingsSignature();
+    if (signature != owner_hub_signature_) {
+      owner_hub_signature_ = signature;
+      qar_qar_adapter::HubMode mode = qar_qar_adapter::HubMode::kAuto;
+      qar_qar_adapter::HubEndpoint endpoint;
+      currentHubSettings(mode, endpoint);
+      session_owner_->configure(mode, std::move(endpoint));
+      appendLog("QAROS: the Hub settings changed; the session owner applies them at the next "
+        "connect.");
+    }
+    return;
+  }
+  owner_hub_signature_ = hubSettingsSignature();
+  session_owner_ = std::make_shared<qar_qar_adapter::QarSessionOwner>(makeSessionOwnerConfig());
+  appendLog(
+    QString("QAROS: session owner made (program %1, Hub mode setting '%2')")
+    .arg(
+      QString::fromLatin1(kProgramTag),
+      QString::fromStdString(setting_text(effective_settings_, settings_key::kHubMode))));
+}
+
+void QarStreamingPanel::pollSessionOwner()
+{
+  // The lines of the owner's log, queued by its thread.
+  std::vector<std::string> lines;
+  {
+    std::lock_guard<std::mutex> lock(owner_log_->mutex);
+    lines.swap(owner_log_->lines);
+  }
+  for (const std::string & line : lines) {
+    appendToView(QString::fromStdString(line));
+  }
+
+  // The release that "Forget pairing" asked for runs here, outside the click: the click may be an
+  // AR click that the panel manager is delivering, and the release destroys that manager.
+  if (pending_session_action_ != PendingSessionAction::None) {
+    const PendingSessionAction action = pending_session_action_;
+    pending_session_action_ = PendingSessionAction::None;
+    releaseSessionConsumers(QStringLiteral("the pairing is forgotten"));
+    if (session_owner_ && action == PendingSessionAction::Forget) {
+      session_owner_->forget();
+    }
+    updateRuntimeStateLabel();
+  }
+
+  if (!session_owner_) {
+    return;
+  }
+  std::vector<qar_qar_adapter::SessionEvent> events;
+  session_owner_->poll(events);
+  for (const qar_qar_adapter::SessionEvent & event : events) {
+    handleSessionEvent(event);
+  }
+  pollAttach();
+  // The countdown of the approval wait is local: it counts from the configured timeout.
+  if (connection_phase_ == ConnectionPhase::WaitingForApproval) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - approval_shown_ >= kCountdownRefresh) {
+      approval_shown_ = now;
+      refreshConnectionView();
+    }
   }
 }
 
-void QarStreamingPanel::pollPendingConnect()
+void QarStreamingPanel::handleSessionEvent(const qar_qar_adapter::SessionEvent & event)
 {
-  if (!pending_connect_ ||
-    !pending_connect_->done.load(std::memory_order_acquire))
-  {
-    return;
+  using Kind = qar_qar_adapter::SessionEvent::Kind;
+  using qar_qar_adapter::SessionState;
+  switch (event.kind) {
+    case Kind::kState: {
+        connection_phase_ = phaseOf(event.state);
+        const std::string & message = event.status.message;
+        if (event.state == SessionState::kWaitingForApproval) {
+          approval_started_ = std::chrono::steady_clock::now();
+          approval_shown_ = approval_started_;
+        }
+        if (event.state == SessionState::kFailed || event.state == SessionState::kNeedsCode) {
+          owner_failure_message_ = message;
+          if (!message.empty()) {
+            setLastError("QarOS: " + QString::fromStdString(message));
+          }
+        }
+        if (event.state == SessionState::kRunning) {
+          clearLastError();
+          owner_failure_message_.clear();
+          refreshIdentity();
+          if (!qar_factory_) {
+            onSessionRunning();
+          }
+        } else if (event.state != SessionState::kReconnecting && qar_factory_) {
+          // The owner left the running state on its own: what was built on its session goes.
+          releaseSessionConsumers(QStringLiteral("the QAROS session ended"));
+        }
+        refreshTargetList();
+        updateRuntimeStateLabel();
+        break;
+      }
+    case Kind::kProgress:
+      // The owner logged it ("QAROS: progress ..."); the State line is made from the state.
+      break;
+    case Kind::kTargetUp:
+    case Kind::kTargetDown:
+      refreshTargetList();
+      refreshConnectionView();
+      break;
+    case Kind::kInviteDone: {
+        invites_in_flight_ = std::max(0, invites_in_flight_ - 1);
+        const QString device = QString::fromStdString(event.text);
+        if (event.status.code != 0) {
+          setLastError(
+            QString("Invite %1 failed: %2")
+            .arg(device, QString::fromStdString(event.status.message)));
+        } else {
+          clearLastError();
+          appendLog(
+            QString("LIVE: invited %1 as peer %2. Its stream opens when the device connects.")
+            .arg(device, QString::fromStdString(qar_ogre_streaming::peer_id_to_hex(
+                event.target.id).substr(0, 10))));
+        }
+        refreshConnectionView();
+        break;
+      }
+    case Kind::kForgetDone:
+      refreshIdentity();
+      if (event.status.code != 0) {
+        setLastError("Forget pairing: " + QString::fromStdString(event.status.message));
+      } else {
+        clearLastError();
+        appendLog("QarOS: the pairing with the Hub was forgotten; the next connect needs a code.");
+      }
+      updateRuntimeStateLabel();
+      break;
+    case Kind::kLog:
+      appendLog("QAROS: " + QString::fromStdString(event.text));
+      break;
   }
-  const std::shared_ptr<PendingConnect> pending = pending_connect_;
-  pending_connect_.reset();
-  if (connect_thread_.joinable()) {
-    connect_thread_.join();  // already finished; this only reaps it
-  }
+}
 
-  // Every way out of a connect refreshes the state line: pending_connect_ was reset above, so
-  // CONNECTING must not outlive the attempt, whatever its result.
-  if (pending->threw) {
+void QarStreamingPanel::onSessionRunning()
+{
+  if (!manager_ || !session_owner_) {
+    setLastError("Cannot stream: the streaming manager is not initialized (no DisplayContext).");
+    if (session_owner_) {
+      session_owner_->disconnect();
+    }
+    return;
+  }
+  appendLog("QarOS: the Hub session is open; making the render factory.");
+  qar_factory_ = std::make_shared<qar_qar_adapter::QarCApiSenderFactory>(
+    session_owner_, makeFactoryConfig());
+  if (!qar_factory_->begin_attach()) {
     setLastError(
-      QString("QarOS connect threw: %1").arg(QString::fromStdString(pending->error)));
-    updateRuntimeStateLabel();
+      QString("QarOS connect failed: %1").arg(QString::fromStdString(qar_factory_->last_error())));
+    qar_factory_->detach();
+    qar_factory_.reset();
+    session_owner_->disconnect();
     return;
   }
-  if (!pending->factory || !pending->factory->ready()) {
-    setLastError(QString("QarOS connect failed: %1").arg(
-        pending->factory
-        ? QString::fromStdString(pending->factory->last_error())
-        : QString("session was not built")));
-    updateRuntimeStateLabel();
+  // The app volume is made on the owner's thread; the tick watches the attach (pollAttach), so
+  // the window stays alive however long the volume takes.
+  attach_pending_ = true;
+  appendLog("QarOS: the app volume of the session is being made on the owner's thread.");
+  updateRuntimeStateLabel();
+}
+
+void QarStreamingPanel::pollAttach()
+{
+  if (!attach_pending_) {
     return;
   }
-  qar_factory_ = pending->factory;
-  finishLiveConnect();
+  if (!qar_factory_) {
+    attach_pending_ = false;
+    return;
+  }
+  using AttachState = qar_qar_adapter::QarCApiSenderFactory::AttachState;
+  const AttachState state = qar_factory_->attach_state();
+  if (state == AttachState::kPending) {
+    return;
+  }
+  attach_pending_ = false;
+  if (state == AttachState::kAttached) {
+    finishLiveConnect();
+    return;
+  }
+  setLastError(
+    QString("QarOS connect failed: %1").arg(QString::fromStdString(qar_factory_->last_error())));
+  qar_factory_->detach();
+  qar_factory_.reset();
+  if (session_owner_) {
+    session_owner_->disconnect();
+  }
+  updateRuntimeStateLabel();
+}
+
+bool QarStreamingPanel::sessionReadyForPanels() const
+{
+  return qar_factory_ && !attach_pending_ && qar_factory_->ready();
 }
 
 void QarStreamingPanel::finishLiveConnect()
@@ -3103,14 +3389,11 @@ void QarStreamingPanel::finishLiveConnect()
   live_connected_ = true;
   qar_running_ = true;
   updateRuntimeStateLabel();
-  // Connect invites nothing by default, so say what actually happened rather than
-  // claiming to wait for a peer that was never asked for.
-  if (qar_factory_->invited_peers().empty()) {
-    appendLog("Connected to QarOS: session open, streaming active. No peer invited — "
-      "pick a device kind and click 'Invite peer' to open a Visualizer.");
-  } else {
-    appendLog("Connected to QarOS: streaming active; waiting for the invited peer(s).");
-  }
+  // Every target of the Hub gets a stream as it comes online; nothing is invited by default.
+  appendLog(
+    "Connected to QarOS: session open, streaming active; a stream opens for each target that "
+    "is online.");
+  inviteFromEnvironment();
   // How a panel is switched off from now on: hidden (the QarOS panel stays) or closed.
   appendLog(
     arVisibilityHides()
@@ -3123,14 +3406,423 @@ void QarStreamingPanel::finishLiveConnect()
   // so the headset can toggle, edit, add and remove the real displays. It is made once
   // the first peer's 3D stream is open (driveLiveStreaming()): a panel made before anything
   // can receive it shows black until the first frame arrives. A failure there (it logs its
-  // own and carries on) can never leave the connect half done. Connect can run more than
-  // once ("Disconnect (pause)" pauses, "Connect to QarOS" resumes); the start is idempotent.
+  // own and carries on) can never leave the connect half done. A connect can run more than
+  // once (a resume after a pause runs this again); the start is idempotent.
   hidden_displays_start_pending_ = true;
 
   // Last: the AR control panel. The page is served now; its QarOS panels are made by the
   // render tick, each in front of its user once that user's head pose is known. Idempotent
-  // like the start above: a resume creates nothing new.
+  // like the start above: a second connect creates nothing new.
   startArControlPage(true);
+}
+
+void QarStreamingPanel::inviteFromEnvironment()
+{
+  const QString list = qEnvironmentVariable("QAR_PANEL_INVITE_PEERS").trimmed();
+  if (list.isEmpty() || !session_owner_) {
+    return;
+  }
+  if (environment_invites_done_) {
+    appendLog(
+      "LIVE: QAR_PANEL_INVITE_PEERS was handled when this session first connected; it is not "
+      "handled again on a resume.");
+    return;
+  }
+  environment_invites_done_ = true;
+  if (session_owner_->effective_mode() == qar_qar_adapter::HubMode::kRemote) {
+    appendLog(
+      "LIVE: QAR_PANEL_INVITE_PEERS is ignored: device invites are served only to an app that "
+      "joined the Hub on its own PC.");
+    return;
+  }
+  appendLog(QString("LIVE: inviting devices at connect: %1").arg(list));
+  for (const QString & item : list.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+    const int colon = item.indexOf(QLatin1Char(':'));
+    const QString word = (colon < 0 ? item : item.left(colon)).trimmed().toLower();
+    const QString host = colon < 0 ? QString() : item.mid(colon + 1).trimmed();
+    qar_qar_adapter::DeviceKind kind = qar_qar_adapter::DeviceKind::kHoloLens;
+    if (word == QLatin1String("hololens")) {
+      kind = qar_qar_adapter::DeviceKind::kHoloLens;
+    } else if (word == QLatin1String("headset")) {
+      kind = qar_qar_adapter::DeviceKind::kHeadset;
+    } else {
+      appendLog(
+        QString("LIVE: QAR_PANEL_INVITE_PEERS entry '%1' skipped: the kind is hololens or "
+          "headset.").arg(item.trimmed()));
+      continue;
+    }
+    if (host.isEmpty()) {
+      appendLog(
+        QString("LIVE: QAR_PANEL_INVITE_PEERS entry '%1' skipped: it needs a host (kind:host).")
+        .arg(item.trimmed()));
+      continue;
+    }
+    const std::string refusal = session_owner_->invite_device(kind, host.toStdString());
+    if (!refusal.empty()) {
+      appendLog(
+        QString("LIVE: invite %1 '%2' refused: %3")
+        .arg(word, host, QString::fromStdString(refusal)));
+      continue;
+    }
+    ++invites_in_flight_;
+  }
+}
+
+void QarStreamingPanel::releaseUrlPanel(
+  const std::shared_ptr<qar_ar_core::IQarUrlPanelAdapter> & adapter)
+{
+  if (!adapter) {
+    return;
+  }
+  if (!arVisibilityHides()) {
+    adapter->close();
+    return;
+  }
+  // Hidden, then let go: the QarOS panel stays in the Hub under its name, and the next session
+  // finds it and shows it again. Nothing is closed.
+  if (!adapter->set_state(QAR_GUI_PANEL_STATE_HIDDEN)) {
+    appendLog(
+      QString("AR VISIBILITY: set_state(HIDDEN) failed at the end of the session: %1")
+      .arg(QString::fromStdString(adapter->last_error())));
+  }
+  adapter->detach();
+}
+
+void QarStreamingPanel::releaseSessionConsumers(const QString & reason, bool update_ui)
+{
+  if (!live_stream_mode_) {
+    return;
+  }
+  // A start that waits for its dock to be fitted ends here: no stream is added to a session that
+  // is going.
+  cancelPendingDockStarts(reason);
+  hidden_displays_start_pending_ = false;
+  const bool built = qar_factory_ || panel_manager_ || panel_sender_factory_ ||
+    panel_input_source_ || url_panel_factory_ || spatial_gesture_source_ || !live_peers_.empty();
+  live_connected_ = false;
+  attach_pending_ = false;
+  geo_in_flight_ = false;
+  qar_running_ = false;
+  environment_invites_done_ = false;
+  if (!built) {
+    return;
+  }
+  const auto started = std::chrono::steady_clock::now();
+  appendLog(QString("QarOS: releasing everything built on the session (%1).").arg(reason));
+  geo_applied_ = false;
+
+  // 1. The QarOS panels of the streamed windows: the manager hides each of them and lets go of
+  //    its sender and its input subscription. Then the windows and their video sources, which
+  //    no stream reads.
+  panel_manager_.reset();
+  panel_sender_factory_.reset();
+  panel_input_source_.reset();
+  video_regions_.clear();
+  video_panels_.clear();
+  streamed_panels_.clear();
+  for (auto & connection : dock_close_connections_) {
+    QObject::disconnect(connection.second);
+  }
+  dock_close_connections_.clear();
+  visibility_requests_.clear();
+  control_commands_.clear();
+  control_toggles_.clear();
+
+  // 2. The browser panels (the AR tools and the AR control panel): hidden and let go.
+  for (const std::unique_ptr<ArToolPanel> & tool : ar_tools_) {
+    if (!tool) {
+      continue;
+    }
+    releaseUrlPanel(tool->ar_panel);
+    tool->ar_panel.reset();
+    tool->ar_panel_pending = true;
+    tool->pending_show = false;
+    tool->pending_hide = false;
+    tool->ar_hidden = false;
+    tool->pending_logged = false;
+    tool->open_retry_at = std::chrono::steady_clock::time_point{};
+    if (ExposedEntity * row = exposures_.find_by_panel_id(tool->panel_id)) {
+      row->ar_panel_open = false;
+    }
+  }
+  for (auto & parked : parked_tool_panels_) {
+    releaseUrlPanel(parked.second.adapter);
+  }
+  parked_tool_panels_.clear();
+  for (ArControlInstance & instance : control_instances_) {
+    releaseUrlPanel(instance.adapter);
+    instance.adapter.reset();
+    instance.next_attempt = std::chrono::steady_clock::time_point{};
+  }
+  url_panel_factory_.reset();
+
+  // 3. The render senders of the 3D streams, and the simulated factory back in their place.
+  if (manager_) {
+    manager_->set_streaming_active(false);
+    for (const QarPeerId & id : live_peers_) {
+      manager_->destroy_stream(id);
+      if (qar_factory_) {
+        qar_factory_->forget(id);
+      }
+    }
+    if (mock_factory_) {
+      manager_->set_sender_factory(mock_factory_);
+    }
+  }
+  live_peers_.clear();
+  sender_factory_ = mock_factory_;
+  invites_in_flight_ = 0;
+
+  // 4. The gesture subscription of the app volume.
+  spatial_gesture_source_.reset();
+  spatial_subscription_attempted_ = false;
+
+  // 5. The render factory lets go of the volume; the owner then takes the session back.
+  if (qar_factory_) {
+    qar_factory_->detach();
+    qar_factory_.reset();
+  }
+
+  if (update_ui) {
+    refreshStreamablePanels();
+    updateArPanelStatus();
+    refreshExposureList();
+  }
+  ar_control_dirty_ = true;
+  ar_control_status_dirty_ = true;
+  // The hides and detaches above were queued for the owner's thread, which runs them before it
+  // releases the session.
+  const std::size_t queued_tasks =
+    session_owner_ ? session_owner_->task_stats().queued : std::size_t{0};
+  appendLog(
+    QString("QarOS: %1 session task(s) queued; the owner runs them before it releases the "
+      "session (%2 ms on this thread). AR panels are hidden in the Hub; start them again with "
+      "'Stream panel to AR' after the next connect.")
+    .arg(static_cast<qulonglong>(queued_tasks))
+    .arg(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started).count()));
+}
+
+std::string QarStreamingPanel::panelCommonName(const std::string & key) const
+{
+  return qar_ar_core::make_panel_common_name(key, name_scope_);
+}
+
+void QarStreamingPanel::appendToView(const QString & line) const
+{
+  if (diagnostics_view_ != nullptr) {
+    diagnostics_view_->appendPlainText(
+      QDateTime::currentDateTime().toString("HH:mm:ss.zzz ") + line);
+  }
+}
+
+void QarStreamingPanel::onPairRequested(const QString & code, const QString & host, int port)
+{
+  if (!session_owner_ || connection_phase_ != ConnectionPhase::NeedsCode) {
+    setLastError("Pairing: the Hub is not waiting for a code (press Connect to QarOS first).");
+    return;
+  }
+  // The host and the port are settings; the code is not kept anywhere and is never logged.
+  onSettingEdited(settings_key::kHubHost, host);
+  onSettingEdited(settings_key::kHubPort, QString::number(port));
+  qar_qar_adapter::HubEndpoint hub;
+  hub.host = host.toStdString();
+  hub.port = static_cast<std::uint16_t>(port);
+  session_owner_->submit_code(code.toStdString(), std::move(hub));
+  appendLog(
+    QString("QarOS: pairing code sent to the Hub at %1:%2.").arg(host).arg(port));
+  clearLastError();
+  connection_phase_ = ConnectionPhase::Pairing;
+  updateRuntimeStateLabel();
+}
+
+void QarStreamingPanel::onForgetConfirmed()
+{
+  if (!live_stream_mode_) {
+    return;
+  }
+  // Forgetting needs the owner even when this run never connected.
+  ensureSessionOwner();
+  appendLog("QarOS: forgetting the pairing with the Hub (the session is released first).");
+  pending_session_action_ = PendingSessionAction::Forget;
+  if (qar_factory_) {
+    connection_phase_ = ConnectionPhase::Stopping;
+  }
+  updateRuntimeStateLabel();
+}
+
+void QarStreamingPanel::onCancelConnect()
+{
+  if (!session_owner_) {
+    return;
+  }
+  appendLog("QarOS: cancelling the join.");
+  session_owner_->cancel();
+}
+
+bool QarStreamingPanel::streamingPaused() const
+{
+  return live_stream_mode_ && !live_connected_ && qar_factory_ && !attach_pending_ &&
+         (connection_phase_ == ConnectionPhase::Running ||
+         connection_phase_ == ConnectionPhase::Reconnecting);
+}
+
+ConnectionInput QarStreamingPanel::connectionInput() const
+{
+  ConnectionInput input;
+  input.phase = live_stream_mode_ ? connection_phase_ : ConnectionPhase::Preview;
+  input.mode_setting =
+    hub_choice_from_word(setting_text(effective_settings_, settings_key::kHubMode));
+  input.program_name =
+    QFileInfo(QCoreApplication::applicationFilePath()).fileName().toStdString();
+  if (input.program_name.empty()) {
+    input.program_name = "rviz2.exe";
+  }
+  input.has_remote_identity = identity_present_;
+  input.streaming_paused = streamingPaused();
+  input.attaching = attach_pending_;
+  if (session_owner_) {
+    const qar_qar_adapter::HubMode mode = session_owner_->effective_mode();
+    input.mode_resolved = mode != qar_qar_adapter::HubMode::kAuto;
+    input.remote_resolved = mode == qar_qar_adapter::HubMode::kRemote;
+    input.has_remote_identity = identity_present_ || session_owner_->has_remote_identity();
+    const std::vector<qar_qar_adapter::TargetInfo> targets = session_owner_->targets();
+    input.target_count = targets.size();
+    for (const qar_qar_adapter::TargetInfo & target : targets) {
+      input.served_count += target.served ? 1U : 0U;
+    }
+  }
+  input.identity_host = identity_host_;
+  input.identity_port = identity_port_;
+  input.pairing_id = identity_short_id_;
+  // The fields hold what the person typed; while a rejoin runs, the stored pairing is the Hub.
+  if (hub_widget_ != nullptr) {
+    input.host = hub_widget_->host_text().toStdString();
+    int port = 0;
+    if (parse_hub_port(hub_widget_->port_text().toStdString(), port)) {
+      input.port = port;
+    }
+  }
+  if (input.host.empty() || input.phase == ConnectionPhase::Rejoining) {
+    if (identity_present_) {
+      input.host = identity_host_;
+      input.port = identity_port_;
+    }
+  }
+  if (input.phase == ConnectionPhase::WaitingForApproval) {
+    const double elapsed = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - approval_started_).count();
+    input.approval_seconds_left = std::max(0, approval_timeout_s_ - static_cast<int>(elapsed));
+  }
+  input.failure_message = owner_failure_message_;
+  input.invite_in_flight = invites_in_flight_ > 0;
+  return input;
+}
+
+void QarStreamingPanel::refreshConnectionView()
+{
+  if (hub_widget_ == nullptr) {
+    return;
+  }
+  const ConnectionView view = make_connection_view(connectionInput());
+  hub_widget_->apply(view);
+  if (add_peer_button_ != nullptr) {
+    add_peer_button_->setEnabled(view.invite_enabled);
+    add_peer_button_->setToolTip(QString::fromStdString(view.invite_tooltip));
+    const QString text = invites_in_flight_ > 0 ? QStringLiteral("Inviting...")
+                                                : QStringLiteral("Invite peer");
+    if (add_peer_button_->text() != text) {
+      add_peer_button_->setText(text);
+    }
+  }
+  if (live_stream_mode_ && runtime_state_label_ != nullptr) {
+    // The status strip says what the State line says.
+    runtime_state_label_->setFullText(QString::fromStdString(view.state_text));
+    switch (connection_phase_) {
+      case ConnectionPhase::Running:
+        runtime_state_label_->setStyleSheet(
+          streamingPaused() ? "font-weight: bold; color: #d35400;" :
+          "font-weight: bold; color: #27ae60;");
+        break;
+      case ConnectionPhase::Failed:
+        runtime_state_label_->setStyleSheet("font-weight: bold; color: #c0392b;");
+        break;
+      case ConnectionPhase::Idle:
+      case ConnectionPhase::Preview:
+        runtime_state_label_->setStyleSheet("font-weight: bold;");
+        break;
+      case ConnectionPhase::Loading:
+      case ConnectionPhase::WaitingForApproval:
+      case ConnectionPhase::Rejoining:
+      case ConnectionPhase::NeedsCode:
+      case ConnectionPhase::Pairing:
+      case ConnectionPhase::Reconnecting:
+      case ConnectionPhase::Stopping:
+        runtime_state_label_->setStyleSheet("font-weight: bold; color: #d35400;");
+        break;
+    }
+  }
+}
+
+void QarStreamingPanel::refreshTargetList()
+{
+  if (hub_widget_ == nullptr) {
+    return;
+  }
+  std::vector<HubTargetRow> rows;
+  const bool joined = connection_phase_ == ConnectionPhase::Running ||
+    connection_phase_ == ConnectionPhase::Reconnecting;
+  if (session_owner_ && joined) {
+    for (const qar_qar_adapter::TargetInfo & target : session_owner_->targets()) {
+      HubTargetRow row;
+      if (!target.device_name.empty()) {
+        row.name = target.device_name;
+      } else if (!target.display_name.empty()) {
+        row.name = target.display_name;
+      } else {
+        row.name = qar_ogre_streaming::peer_id_to_hex(target.id).substr(0, 8);
+      }
+      row.category = categoryWords(target.category);
+      row.presence = presenceWords(target.presence);
+      row.served = target.served;
+      row.not_served_reason = target.not_served_reason;
+      rows.push_back(std::move(row));
+    }
+  }
+  hub_widget_->set_targets(rows);
+}
+
+void QarStreamingPanel::refreshIdentity()
+{
+  identity_present_ = false;
+  identity_host_.clear();
+  identity_port_ = 0;
+  identity_short_id_.clear();
+  const std::string dir = qar_qar_adapter::default_identity_dir(
+    kProgramTag, qEnvironmentVariable("QAR_PANEL_INSTANCE").trimmed().toStdString());
+  if (!dir.empty()) {
+    qar_qar_adapter::IdentityRecord record;
+    std::string error;
+    if (qar_qar_adapter::read_identity(
+        qar_qar_adapter::identity_file_path(dir), record, error) ==
+      qar_qar_adapter::IdentityRead::kOk)
+    {
+      identity_present_ = true;
+      identity_host_ = record.host;
+      identity_port_ = record.port;
+      identity_short_id_ = record.id.substr(0, 8);
+    }
+  }
+  // The fields start from the stored pairing when the person has typed nothing yet. Nothing is
+  // saved by this: only an edit is the person's own value.
+  if (hub_widget_ != nullptr && identity_present_ && hub_widget_->host_text().isEmpty()) {
+    hub_widget_->set_host_text(QString::fromStdString(identity_host_));
+    if (hub_widget_->port_text().isEmpty() && identity_port_ > 0) {
+      hub_widget_->set_port_text(QString::number(identity_port_));
+    }
+  }
+  refreshConnectionView();
 }
 
 void QarStreamingPanel::startArControlPage(bool live)
@@ -3163,21 +3855,38 @@ void QarStreamingPanel::onStopQar()
   // An AR panel whose dock is still being fitted is not started after the session has been
   // stopped.
   cancelPendingDockStarts(
-    live_stream_mode_ && live_connected_ ? QStringLiteral("disconnected from QarOS")
+    live_stream_mode_ && live_connected_ ? QStringLiteral("streaming paused")
                                          : QStringLiteral("the Qar runtime was stopped"));
 
-  // LIVE: "Disconnect (pause)" pauses streaming. The QAR session/handles are kept alive
-  // (torn down in the panel dtor, in the correct order: manager_/streams before
-  // qar_factory_/session) so we never leave the render tick pointing at a destroyed
-  // session. Clicking "Connect to QarOS" again resumes.
-  if (live_stream_mode_ && live_connected_) {
-    if (manager_) {
-      manager_->set_streaming_active(false);
+  // LIVE: "Disconnect (pause)" pauses streaming. The QAROS session, the render factory, the panel
+  // manager with the streamed windows, the URL panels and the AR control panel stay as they are;
+  // "Connect to QarOS" resumes at once. Everything built on the session is released only by
+  // "Forget pairing", by a session that ends on its own and when RViz closes the panel.
+  if (live_stream_mode_) {
+    if (attach_pending_) {
+      // Stopped while the app volume is being made: the factory lets go and the session is given
+      // back, as after a failed attach.
+      appendLog("QarOS: the connect was stopped while the session was being set up.");
+      attach_pending_ = false;
+      if (qar_factory_) {
+        qar_factory_->detach();
+        qar_factory_.reset();
+      }
+      if (session_owner_) {
+        session_owner_->disconnect();
+      }
+      updateRuntimeStateLabel();
+      return;
     }
-    live_connected_ = false;
-    qar_running_ = false;
-    updateRuntimeStateLabel();
-    appendLog("QarOS: streaming paused (session kept open).");
+    if (live_connected_) {
+      if (manager_) {
+        manager_->set_streaming_active(false);
+      }
+      live_connected_ = false;
+      qar_running_ = false;
+      updateRuntimeStateLabel();
+      appendLog("QarOS: streaming paused (session kept open).");
+    }
     return;
   }
 
@@ -3191,10 +3900,10 @@ void QarStreamingPanel::onStopQar()
 
 void QarStreamingPanel::onInvitePeer()
 {
-  // "Invite peer" means "add a physical client head", i.e. invite a real device into the
-  // running QarOS session. The button is enabled only while live and connected; a simulated
-  // peer has its own button (onAddSimulatedPeer()), so this one never adds one by mistake.
-  if (!live_stream_mode_ || !live_connected_) {
+  // "Invite peer" asks the Hub of this PC to start the app of a real device. The button is
+  // enabled only in this-PC mode while connected; a simulated peer has its own button
+  // (onAddSimulatedPeer()), so this one never adds one by mistake.
+  if (!live_stream_mode_ || !live_connected_ || !session_owner_) {
     setLastError("Invite peer: not connected to QarOS.");
     return;
   }
@@ -3208,50 +3917,35 @@ void QarStreamingPanel::onAddSimulatedPeer()
 
 void QarStreamingPanel::inviteSelectedPeer()
 {
-  if (!qar_factory_) {
+  if (!session_owner_) {
     setLastError("Invite peer: not connected to QarOS.");
     return;
   }
   const QString kind_text = (peer_kind_combo_ != nullptr)
-    ? peer_kind_combo_->currentData().toString() : QString("visualizer");
-  qar_qar_adapter::PeerKind kind = qar_qar_adapter::PeerKind::kVisualizer;
-  if (!qar_qar_adapter::parse_peer_kind(kind_text.toStdString(), kind)) {
-    setLastError(QString("Invite peer: unknown device kind '%1'.").arg(kind_text));
-    return;
-  }
-  const QString hostname = (peer_hostname_edit_ != nullptr)
+    ? peer_kind_combo_->currentData().toString() : QString("hololens");
+  const qar_qar_adapter::DeviceKind kind = kind_text == QLatin1String("headset")
+    ? qar_qar_adapter::DeviceKind::kHeadset : qar_qar_adapter::DeviceKind::kHoloLens;
+  const QString host = (peer_hostname_edit_ != nullptr)
     ? peer_hostname_edit_->text().trimmed() : QString();
-  if (qar_qar_adapter::peer_kind_needs_hostname(kind) && hostname.isEmpty()) {
+  if (host.isEmpty()) {
     setLastError(
-      "Invite peer: a HoloLens needs its device hostname — type it in the field next "
-      "to the device selector. It is the only device type the SDK can address by name.");
+      "Invite peer: type the host name or address of the device in the field next to the "
+      "device selector.");
     return;
   }
 
-  QarPeerId invited{};
-  const std::string err =
-    qar_factory_->invite_additional_peer(kind, hostname.toStdString(), invited);
-  if (!err.empty()) {
-    setLastError(QString("Invite %1 failed: %2")
-      .arg(kind_text, QString::fromStdString(err)));
+  // The call returns at once: the Hub's answer arrives as an event of the session owner, and the
+  // button reads "Inviting..." until then.
+  const std::string refusal = session_owner_->invite_device(kind, host.toStdString());
+  if (!refusal.empty()) {
+    setLastError(QString("Invite %1 failed: %2").arg(kind_text, QString::fromStdString(refusal)));
     return;
   }
   clearLastError();
+  ++invites_in_flight_;
   appendLog(
-    QString("LIVE: invited %1%2 as peer %3 (%4 invited in total). Its stream opens "
-      "when the device connects.")
-    .arg(kind_text)
-    .arg(hostname.isEmpty() ? QString() : QString(" '%1'").arg(hostname))
-    .arg(QString::fromStdString(
-        qar_ogre_streaming::peer_id_to_hex(invited).substr(0, 10)))
-    .arg(qar_factory_->invited_peers().size()));
-  if (kind == qar_qar_adapter::PeerKind::kVisualizer) {
-    appendLog(
-      "NOTE: each Visualizer invite carries a fresh GUID by default "
-      "(QAR_PANEL_VISUALIZER_GUID=auto), so every invite opens its own Visualizer. "
-      "With QAR_PANEL_VISUALIZER_GUID=off or a fixed GUID, repeated invites address "
-      "the same Visualizer and return the peer that already exists.");
-  }
+    QString("LIVE: inviting %1 '%2'; the Hub's answer follows.").arg(kind_text, host));
+  refreshConnectionView();
 }
 
 qar_ogre_streaming::SceneLightingConfig QarStreamingPanel::buildSceneLightingConfig() const
@@ -3996,6 +4690,13 @@ void QarStreamingPanel::onRenderTick()
   // AR tap on "Add" stays open. See scheduleArPanelInputPump().
   scheduleArPanelInputPump();
 
+  // The state of the join to the QAROS Hub: the events of the session owner, the lines of its
+  // log, a release that a click asked for. Before the early-outs below, because the join goes on
+  // whatever state the 3D path is in. Nothing here waits for QAROS.
+  if (live_stream_mode_) {
+    pollSessionOwner();
+  }
+
   // AR GUI panels run BEFORE the early-outs below: they are independent of the
   // Ogre scene path (a widget capture needs no DisplayContext and no peer), and
   // they are paced by their own per-panel FPS cap, so an idle 3D stream must not
@@ -4024,9 +4725,6 @@ void QarStreamingPanel::onRenderTick()
     return;
   }
   if (live_stream_mode_) {
-    // Adopt a background connect the moment it lands. This runs before the
-    // live_connected_ gate because that is exactly the window it covers.
-    pollPendingConnect();
     if (live_connected_) {
       // Both of these call into QAR, so they belong on this thread, not on the
       // ROS executor that delivered the fix.
@@ -4984,6 +5682,29 @@ void QarStreamingPanel::emitHeartbeat()
   // proves the runtime is silent, and a line that appears only when an event
   // lands could never make it.
   line += QString(" || %1").arg(spatialCountersLine());
+  if (live_stream_mode_) {
+    // The session owner's task queue and the guard of the calls the GUI thread makes: a queue that
+    // never drains or a call that took long on this thread shows here, by name.
+    if (session_owner_) {
+      const qar_qar_adapter::QarSessionOwner::TaskStats tasks = session_owner_->task_stats();
+      line += QString(" | tasks q=%1 run=%2 slow=%3")
+        .arg(static_cast<qulonglong>(tasks.queued))
+        .arg(
+          tasks.running.empty() ? QStringLiteral("-") :
+          QString("%1/%2ms").arg(QString::fromStdString(tasks.running))
+          .arg(tasks.running_ms, 0, 'f', 0))
+        .arg(
+          tasks.slowest.empty() ? QStringLiteral("-") :
+          QString("%1/%2ms").arg(QString::fromStdString(tasks.slowest))
+          .arg(tasks.slowest_ms, 0, 'f', 0));
+    }
+    const qar_qar_adapter::GuiCallStats guard = qar_qar_adapter::gui_call_stats();
+    line += QString(" | gui_calls slow=%1 worst=%2")
+      .arg(static_cast<qulonglong>(guard.slow))
+      .arg(
+        guard.worst.empty() ? QStringLiteral("-") :
+        QString("%1/%2ms").arg(QString::fromStdString(guard.worst)).arg(guard.worst_ms, 0, 'f', 0));
+  }
   // RViz's own Image/Camera displays, last so every earlier field keeps its place:
   // "No Image" leaves nothing in the log to tell "RViz never saw the publisher"
   // from "saw it, received nothing", so this field carries that evidence.
@@ -5050,36 +5771,35 @@ void QarStreamingPanel::updateRuntimeStateLabel()
   if (runtime_state_label_ == nullptr) {
     return;
   }
-  // The buttons that follow the state. "Connect to QarOS" is off while a connect is pending
-  // (a second click would only log that one is in progress), "Disconnect (pause)" is on while
-  // running, "Invite peer" is on while live and connected, and "Stream panel to AR" is on
-  // while a QarOS session exists (connected or paused).
-  const bool connecting = static_cast<bool>(pending_connect_);
-  if (start_qar_button_ != nullptr) { start_qar_button_->setEnabled(!connecting); }
-  if (stop_qar_button_ != nullptr) { stop_qar_button_->setEnabled(qar_running_ && !connecting); }
-  if (add_peer_button_ != nullptr) {
-    // The group is always shown; without a live QarOS session the button says what it needs.
-    const bool live_session = live_stream_mode_ && live_connected_;
-    add_peer_button_->setEnabled(live_session);
-    add_peer_button_->setToolTip(live_session ? kInviteToolTip : kInviteNeedsSessionToolTip);
+  // The buttons that follow the state. "Connect to QarOS" is on while no join is under way or
+  // running, and while streaming is paused on an open session (a second click in any other state
+  // would only log that one is in progress). "Disconnect (pause)" is on while streaming runs,
+  // "Invite peer" is on in this-PC mode while streaming runs, and "Stream panel to AR" is on while
+  // a QarOS session exists.
+  const bool can_connect = connection_phase_ == ConnectionPhase::Idle ||
+    connection_phase_ == ConnectionPhase::Failed || streamingPaused();
+  const bool streaming = live_connected_ &&
+    (connection_phase_ == ConnectionPhase::Running ||
+    connection_phase_ == ConnectionPhase::Reconnecting);
+  if (start_qar_button_ != nullptr) {
+    start_qar_button_->setEnabled(live_stream_mode_ ? can_connect : true);
+  }
+  if (stop_qar_button_ != nullptr) {
+    stop_qar_button_->setEnabled(live_stream_mode_ ? streaming : qar_running_);
   }
   if (stream_panel_button_ != nullptr) {
-    stream_panel_button_->setEnabled(static_cast<bool>(qar_factory_));
+    stream_panel_button_->setEnabled(static_cast<bool>(qar_factory_) && !attach_pending_);
   }
+  // The Connection tab, the invite button and (in a QarOS run) the status strip follow the join.
+  refreshConnectionView();
   // The AR control panel's line and its two buttons follow the same states.
   refreshArControlStatus(true);
-  // CONNECTING is its own state: the session is being built on a worker thread and
-  // the panel stays interactive throughout, so reporting STOPPED for those ~3 s
-  // would read as "the click did nothing".
-  if (connecting) {
-    runtime_state_label_->setFullText("Qar runtime: CONNECTING...");
-    runtime_state_label_->setStyleSheet("font-weight: bold; color: #d35400;");
+  if (live_stream_mode_) {
     return;
   }
+  // The offline preview has its own simulated runtime.
   runtime_state_label_->setFullText(
-    qar_running_
-    ? (live_connected_ ? "Qar runtime: RUNNING (live)" : "Qar runtime: RUNNING (offline preview)")
-    : "Qar runtime: STOPPED");
+    qar_running_ ? "Qar runtime: RUNNING (offline preview)" : "Qar runtime: STOPPED");
   runtime_state_label_->setStyleSheet(
     qar_running_ ? "font-weight: bold; color: #27ae60;" : "font-weight: bold;");
 }
@@ -5332,7 +6052,7 @@ QString QarStreamingPanel::ensurePanelManager()
   if (panel_manager_) {
     return QString();
   }
-  if (!qar_factory_ || !qar_factory_->ready()) {
+  if (!sessionReadyForPanels()) {
     return "QarOS session is not running — connect to QarOS first (live mode)";
   }
 
@@ -5340,7 +6060,7 @@ QString QarStreamingPanel::ensurePanelManager()
   // This is the whole click path: a streamed QWidget reacts to being poked in AR
   // through a per-panel contact binding (qar_ogre_adapter
   // docs/QAROS_INTEGRATION_NOTES.md, "Panel pixel coordinates and
-  // content_scale"). Since the minimum drop it is
+  // content_scale"). It is
   // qar_gui_panels_subscribe_all_gesture_events, one reader carrying hover / tap /
   // long-press / DRAG, so the same source also makes a QSlider handle draggable
   // in AR.
@@ -5374,6 +6094,22 @@ QString QarStreamingPanel::startPanelManager(qar_qt_streaming::QtPanelStreamingC
   // "never served a frame" warning — is lost from the .err.log. The panel IS the
   // sink, and it forwards to appendLog.
   config.diagnostics = this;
+  // The stable QarOS name of every panel is made from its key and this scope: the same name
+  // finds the same panel in the next session, so a panel that was hidden at the end of one
+  // session is found and shown again.
+  config.name_scope = name_scope_;
+  // What a size change of a window does to its QarOS panel (QAR_PANEL_RESIZE): by default the
+  // panel stays and its video sender is swapped.
+  {
+    const QByteArray resize_text = qgetenv(qar_qt_streaming::kPanelResizeModeEnv);
+    const qar_qt_streaming::PanelResizeModeChoice resize =
+      qar_qt_streaming::parse_panel_resize_mode(
+      resize_text.isEmpty() ? nullptr : resize_text.constData());
+    config.resize_mode = resize.mode;
+    if (!resize.warning.empty()) {
+      appendLog(QString("AR PANEL: %1").arg(QString::fromStdString(resize.warning)));
+    }
+  }
   // The frame of QarOS in every AR panel (QAR_PANEL_AR_FRAME, else the library default); the
   // height of a panel that is placed before it exists comes from the manager (ar_panel_height_m).
   config.ar_frame = ar_frame_;
@@ -6878,7 +7614,8 @@ QString QarStreamingPanel::exposeEntity(const AddTopicSelection & selection)
   session->set_control_sink(this);
   // The page measures the viewport it was actually given and tells us; that is
   // the only source of the number, because the SDK does not state the rule
-  // (docs/SDK_COMPATIBILITY.md, "The QarOS in-AR browser"). Direct
+  // (docs/SDK_COMPATIBILITY.md, "The QarOS in-AR browser"). The number is logged and
+  // shown; the size of the panel does not depend on it. Direct
   // connection: the session lives on this thread, which is also the thread that
   // may touch the QarOS panel.
   const std::string session_panel_id = generated.model.root.id;
@@ -6963,15 +7700,15 @@ void QarStreamingPanel::onArToolViewport(
   if (ar_panel_scale_spin_ != nullptr) {
     sizing.scale = ar_panel_scale_spin_->value();
   }
-  qar_web_panels::use_reported_viewport(sizing, report.viewport);
+  // The report is logged; the size comes from the design viewport (see arControlPanelSize()).
+  qar_web_panels::use_design_viewport(sizing);
   const qar_web_panels::UrlPanelSizeResult sized = qar_web_panels::size_url_panel_for(
     tool->session->model(), web_panel_server_->config().render.theme, sizing);
 
   // The entity name, not the panel id: the status line is read by an operator
   // who knows /scan, not the UUID we minted for it. It carries the panel the
-  // viewport produced as well as the viewport itself, because "the panel is too
-  // small" is the problem this whole path solves and the metres are the answer
-  // to it.
+  // design viewport produced as well as the viewport the page reported, because "the panel
+  // is too small" is the problem this whole path solves and the metres are the answer to it.
   const QString fitted = QString(" -> panel %1x%2 m, theme x%3, %4")
     .arg(static_cast<double>(sized.size.width_meters), 0, 'f', 2)
     .arg(static_cast<double>(sized.size.height_meters), 0, 'f', 2)
@@ -6982,7 +7719,8 @@ void QarStreamingPanel::onArToolViewport(
 
   // Only when it actually moves. The page re-reports on every resize, and a
   // resize is what a re-placement causes, so pushing an unchanged size would be
-  // a loop; a millimetre of rounding is not a change.
+  // a loop; a millimetre of rounding is not a change. The size comes from the design
+  // viewport, so a report alone never moves it.
   const bool moved =
     std::abs(sized.size.width_meters - tool->placement.size.width_meters) > 0.005f ||
     std::abs(sized.size.height_meters - tool->placement.size.height_meters) > 0.005f;
@@ -6990,7 +7728,11 @@ void QarStreamingPanel::onArToolViewport(
     appendLog(QString("AR TOOL: %1 — %2.")
       .arg(QString::fromStdString(tool->entity.name), QString::fromStdString(sized.note)));
   }
-  if (moved && tool->ar_panel) {
+  if ((moved || tool->placement_refused) && tool->ar_panel &&
+    urlPanelResizeAllowed(
+      tool->resize_guard, QString("AR TOOL: '%1'").arg(QString::fromStdString(tool->entity.name)),
+      tool->placement.size, sized.size))
+  {
     if (!placeArToolPanel(*tool, sized.size)) {
       if (ExposedEntity * row = exposures_.find_by_panel_id(panel_id); row != nullptr) {
         row->last_error = tool->ar_panel->last_error();
@@ -7004,6 +7746,7 @@ bool QarStreamingPanel::placeArToolPanel(ArToolPanel & tool, const QarGuiPanelSi
 {
   // The pose of the slot is lifted again for the new height: a panel that became taller reaches
   // further down and may need to go up, and one that became shorter comes back to its slot.
+  tool.placement_refused = false;
   qar_ar_core::UrlPanelPlacement placement = tool.placement;
   placement.size = size;
   const GroundedPose grounded = liftAboveGround(tool.nominal_pose, size.height_meters);
@@ -7085,6 +7828,7 @@ std::string QarStreamingPanel::parkedToolKey(RosEntityKind kind, const std::stri
 void QarStreamingPanel::hideParkedToolPanels()
 {
   for (auto & entry : parked_tool_panels_) {
+    drainParkedResults(entry.second);
     if (entry.second.pending_hide) {
       carryOutParkedHide(entry.second);
     }
@@ -7106,6 +7850,150 @@ void QarStreamingPanel::carryOutParkedHide(ParkedToolPanel & parked)
   setLastError(
     QString("AR tool: could not hide the QarOS panel of '%1' (%2); it stays visible and "
       "is kept until the session ends.").arg(name, refusal));
+}
+
+void QarStreamingPanel::drainParkedResults(ParkedToolPanel & parked)
+{
+  if (!parked.adapter) {
+    return;
+  }
+  std::vector<qar_ar_core::PanelOpResult> results;
+  parked.adapter->drain_results(results);
+  for (const qar_ar_core::PanelOpResult & result : results) {
+    if (result.ok || result.op != qar_ar_core::PanelOpResult::Op::State) {
+      continue;
+    }
+    const QString name = QString::fromStdString(parked.name);
+    const QString refusal = result.error.empty() ? QStringLiteral("no reason given")
+                                                 : QString::fromStdString(result.error);
+    appendLog(QString("AR TOOL: retired %1; its QarOS panel could not be hidden (%2), so "
+      "it stays visible and is kept until the session ends.").arg(name, refusal));
+    setLastError(
+      QString("AR tool: could not hide the QarOS panel of '%1' (%2); it stays visible and "
+        "is kept until the session ends.").arg(name, refusal));
+  }
+}
+
+void QarStreamingPanel::drainArToolResults(ArToolPanel & tool)
+{
+  if (!tool.ar_panel) {
+    return;
+  }
+  std::vector<qar_ar_core::PanelOpResult> results;
+  tool.ar_panel->drain_results(results);
+  for (const qar_ar_core::PanelOpResult & result : results) {
+    if (!tool.ar_panel) {
+      break;  // an earlier result let the panel go; the rest was about it
+    }
+    if (result.ok) {
+      continue;  // the success branch ran when the call was accepted
+    }
+    const QString reason = result.error.empty() ? QStringLiteral("no reason given")
+                                                : QString::fromStdString(result.error);
+    const QString name = QString::fromStdString(tool.entity.name);
+    ExposedEntity * row = exposures_.find_by_panel_id(tool.panel_id);
+    switch (result.op) {
+      case qar_ar_core::PanelOpResult::Op::Create:
+        // The panel was never made: the tool is pending again and the open is tried later.
+        appendLog(QString("AR TOOL: %1 could not be made in AR: %2; trying again shortly")
+          .arg(name, reason));
+        tool.ar_panel.reset();
+        tool.ar_panel_pending = true;
+        tool.ar_hidden = false;
+        tool.pending_logged = true;  // said just now
+        tool.open_retry_at = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        if (row != nullptr) {
+          row->last_error = result.error;
+          row->ar_panel_open = false;
+        }
+        refreshExposureList();
+        break;
+      case qar_ar_core::PanelOpResult::Op::Navigate:
+        appendLog(QString("AR TOOL: %1 - QarOS would not open the page: %2").arg(name, reason));
+        if (row != nullptr) {
+          row->last_error = result.error;
+        }
+        refreshExposureList();
+        break;
+      case qar_ar_core::PanelOpResult::Op::Placement:
+        // Asked again with the next report of the page.
+        tool.placement_refused = true;
+        appendLog(QString("AR TOOL: %1 - QarOS would not place the panel: %2").arg(name, reason));
+        if (row != nullptr) {
+          row->last_error = result.error;
+        }
+        refreshExposureList();
+        break;
+      case qar_ar_core::PanelOpResult::Op::State:
+        if (result.state == QAR_GUI_PANEL_STATE_HIDDEN) {
+          reportArToolHideRefused(tool, reason);
+        } else {
+          reportArToolShowRefused(tool, reason);
+        }
+        break;
+      case qar_ar_core::PanelOpResult::Op::VisibleTo:
+      case qar_ar_core::PanelOpResult::Op::Close:
+      case qar_ar_core::PanelOpResult::Op::Detach:
+        break;
+    }
+  }
+}
+
+void QarStreamingPanel::reportArToolHideRefused(ArToolPanel & tool, const QString & reason)
+{
+  ExposedEntity * row = exposures_.find_by_panel_id(tool.panel_id);
+  const QString name = "tool:" + QString::fromStdString(tool.entity.name);
+  // QarOS refused: the panel stays visible, nothing is closed, and the page's switch is told the
+  // truth.
+  tool.ar_hidden = false;
+  appendLog(
+    QString("AR VISIBILITY: set_state(HIDDEN) failed for '%1': %2 - left visible (nothing is "
+      "closed)").arg(name, reason));
+  setLastError(
+    QString("AR tool: could not hide '%1' in AR (%2); it stays visible.")
+    .arg(QString::fromStdString(tool.entity.name), reason));
+  if (row != nullptr) {
+    row->last_error = reason.toStdString();
+  }
+  ar_control_resync_ = true;
+  refreshExposureList();
+}
+
+void QarStreamingPanel::reportArToolShowRefused(ArToolPanel & tool, const QString & reason)
+{
+  ExposedEntity * row = exposures_.find_by_panel_id(tool.panel_id);
+  const QString name = "tool:" + QString::fromStdString(tool.entity.name);
+  if (arVisibilityHides()) {
+    // Hiding is the way of the switch: nothing is closed and nothing is made again, because
+    // closing a QarOS panel while a session runs crashed the desktop Visualizer. The panel stays
+    // as it is, and the page's switch is told the truth.
+    tool.ar_hidden = true;
+    appendLog(
+      QString("AR VISIBILITY: set_state(VISIBLE) failed for '%1': %2 - left as it is (hiding is "
+        "the way of the switch: no panel is closed or made again)").arg(name, reason));
+    setLastError(
+      QString("AR tool: could not show '%1' again (%2); it was not re-created.")
+      .arg(QString::fromStdString(tool.entity.name), reason));
+    if (row != nullptr) {
+      row->last_error = reason.toStdString();
+    }
+    ar_control_resync_ = true;
+    refreshExposureList();
+    return;
+  }
+  // Closing is the way of the switch: QarOS would not show it, so it is closed and made again by
+  // the next open.
+  appendLog(QString("AR VISIBILITY: set_state(VISIBLE) failed for '%1': %2 - re-created it")
+    .arg(name, reason));
+  tool.ar_panel->close();
+  tool.ar_panel.reset();
+  tool.ar_hidden = false;
+  tool.ar_panel_pending = true;
+  tool.pending_logged = false;
+  if (row != nullptr) {
+    row->ar_panel_open = false;
+  }
+  refreshExposureList();
 }
 
 void QarStreamingPanel::refreshExposureList()
@@ -7240,13 +8128,15 @@ void QarStreamingPanel::showArToolAgain(ArToolPanel & tool)
     if (ar_panel_scale_spin_ != nullptr && web_panel_server_ && tool.session) {
       qar_web_panels::UrlPanelSizing sizing = urlPanelSizing();
       sizing.scale = ar_panel_scale_spin_->value();
-      if (tool.viewport) {
-        qar_web_panels::use_reported_viewport(sizing, *tool.viewport);
-      }
+      qar_web_panels::use_design_viewport(sizing);
       const qar_web_panels::UrlPanelSizeResult sized = qar_web_panels::size_url_panel_for(
         tool.session->model(), web_panel_server_->config().render.theme, sizing);
-      if (std::abs(sized.size.width_meters - tool.placement.size.width_meters) > 0.005f ||
-        std::abs(sized.size.height_meters - tool.placement.size.height_meters) > 0.005f)
+      if ((std::abs(sized.size.width_meters - tool.placement.size.width_meters) > 0.005f ||
+        std::abs(sized.size.height_meters - tool.placement.size.height_meters) > 0.005f) &&
+        urlPanelResizeAllowed(
+          tool.resize_guard,
+          QString("AR TOOL: '%1'").arg(QString::fromStdString(tool.entity.name)),
+          tool.placement.size, sized.size))
       {
         placeArToolPanel(tool, sized.size);
       }
@@ -7258,37 +8148,7 @@ void QarStreamingPanel::showArToolAgain(ArToolPanel & tool)
     refreshExposureList();
     return;
   }
-  const QString reason = QString::fromStdString(tool.ar_panel->last_error());
-  if (arVisibilityHides()) {
-    // Hiding is the way of the switch: nothing is closed and nothing is made again, because
-    // closing a QarOS panel while a session runs crashed the desktop Visualizer. The panel stays
-    // as it is, and the page's switch is told the truth.
-    appendLog(
-      QString("AR VISIBILITY: set_state(VISIBLE) failed for '%1': %2 - left as it is (hiding is "
-        "the way of the switch: no panel is closed or made again)").arg(name, reason));
-    setLastError(
-      QString("AR tool: could not show '%1' again (%2); it was not re-created.")
-      .arg(QString::fromStdString(tool.entity.name), reason));
-    if (row != nullptr) {
-      row->last_error = reason.toStdString();
-    }
-    ar_control_resync_ = true;
-    refreshExposureList();
-    return;
-  }
-  // Closing is the way of the switch: QarOS would not show it, so it is closed and made again
-  // on this very tick.
-  appendLog(QString("AR VISIBILITY: set_state(VISIBLE) failed for '%1': %2 - re-created it")
-    .arg(name, reason));
-  tool.ar_panel->close();
-  tool.ar_panel.reset();
-  tool.ar_hidden = false;
-  tool.ar_panel_pending = true;
-  tool.pending_logged = false;
-  if (row != nullptr) {
-    row->ar_panel_open = false;
-  }
-  refreshExposureList();
+  reportArToolShowRefused(tool, QString::fromStdString(tool.ar_panel->last_error()));
 }
 
 void QarStreamingPanel::hideArTool(ArToolPanel & tool)
@@ -7310,20 +8170,7 @@ void QarStreamingPanel::hideArTool(ArToolPanel & tool)
     refreshExposureList();
     return;
   }
-  // QarOS refused: the panel stays visible, nothing is closed, and the page's switch is told the
-  // truth.
-  const QString reason = QString::fromStdString(tool.ar_panel->last_error());
-  appendLog(
-    QString("AR VISIBILITY: set_state(HIDDEN) failed for '%1': %2 - left visible (nothing is "
-      "closed)").arg(name, reason));
-  setLastError(
-    QString("AR tool: could not hide '%1' in AR (%2); it stays visible.")
-    .arg(QString::fromStdString(tool.entity.name), reason));
-  if (row != nullptr) {
-    row->last_error = reason.toStdString();
-  }
-  ar_control_resync_ = true;
-  refreshExposureList();
+  reportArToolHideRefused(tool, QString::fromStdString(tool.ar_panel->last_error()));
 }
 
 void QarStreamingPanel::onCopyExposureUrl()
@@ -7340,7 +8187,7 @@ void QarStreamingPanel::onCopyExposureUrl()
 
 QString QarStreamingPanel::openArPanelFor(ArToolPanel & tool)
 {
-  if (!qar_factory_ || !qar_factory_->ready()) {
+  if (!sessionReadyForPanels()) {
     return "QarOS session is not running — connect to QarOS first (live mode)";
   }
   ensureUrlPanelFactory();
@@ -7356,6 +8203,7 @@ QString QarStreamingPanel::openArPanelFor(ArToolPanel & tool)
   qar_ar_core::UrlPanelDesc desc;
   desc.url = row->page_url;
   desc.display_name = tool.entity.name;
+  desc.common_name = panelCommonName("tool:" + parkedToolKey(tool.entity.kind, tool.entity.name));
   // No call asks QarOS where the operator is: the viewer's pose comes only with a render
   // sender's frame information (qar_ogre_adapter docs/QAROS_INTEGRATION_NOTES.md,
   // "Known SDK limitations"), so a fixed placement is the best available choice; each
@@ -7370,22 +8218,19 @@ QString QarStreamingPanel::openArPanelFor(ArToolPanel & tool)
   desc.placement.pose.position = fixedPanelPosition(-0.7f * static_cast<float>(slot), -1.2f);
   desc.placement.pose.orientation = QarQuaternion{0.0f, 0.0f, 0.0f, 1.0f};
 
-  // Size from the PAGE, not from a guess. qar_ui_model::measure_page walks the
-  // generated widget tree with the AR theme's own numbers and says how many CSS
-  // pixels it wants; url_panel_sizing turns those into metres at the same
-  // arc-minutes of text a QWidget panel gets (see its file comment). A fixed
-  // landscape size would show only the top half of a generated form, which is
-  // portrait.
+  // Size from the PAGE, not from a guess. qar_ui_model::fit_page_to_viewport and measure_page
+  // walk the generated widget tree with the AR theme's own numbers for the design viewport;
+  // url_panel_sizing turns the result into metres at the same arc-minutes of text a QWidget
+  // panel gets (see its file comment). A fixed landscape size would show only the top half of a
+  // generated form, which is portrait.
   qar_web_panels::UrlPanelSizing sizing = urlPanelSizing();
   if (ar_panel_scale_spin_ != nullptr) {
     sizing.scale = ar_panel_scale_spin_->value();
   }
-  // If this panel has been open before, its page has already said what viewport
-  // the runtime gives it, and that retires the estimate — see the "the viewport
-  // does NOT follow the panel" section of url_panel_sizing.hpp.
-  if (tool.viewport) {
-    qar_web_panels::use_reported_viewport(sizing, *tool.viewport);
-  }
+  // The design viewport, not a viewport that a page reported: the size must not depend on a
+  // value that the panel's own size produces. See the "DESIGN viewport" section of
+  // url_panel_sizing.hpp.
+  qar_web_panels::use_design_viewport(sizing);
   const qar_web_panels::UrlPanelSizeResult sized = qar_web_panels::size_url_panel_for(
     tool.session->model(), web_panel_server_->config().render.theme, sizing);
   desc.placement.size = sized.size;
@@ -7574,6 +8419,7 @@ void QarStreamingPanel::tickArToolPanels()
   }
 
   for (auto & tool : ar_tools_) {
+    drainArToolResults(*tool);
     if (tool->pending_hide) {
       hideArTool(*tool);
     }
@@ -8510,9 +9356,9 @@ void QarStreamingPanel::startSpatialGestureSource()
     return;
   }
   spatial_gesture_source_ = std::move(source);
-  // The FALLBACK aiming ray. Since the drop after the minimum drop the gesture
-  // carries its own aim -- its start point (the hand) through its action point -- and that
-  // is what a plane or fixed-depth target normally intersects. This wire is for
+  // The FALLBACK aiming ray. The gesture carries its own aim -- its start point (the
+  // hand) through its action point -- and that is what a plane or fixed-depth target
+  // normally intersects. This wire is for
   // the one case the header still allows: the runtime intersected nothing, so
   // it hands the start point back as the action point, and without a ray
   // "Ground plane (z = 0)" cannot be an intersection at all and degrades to
@@ -8543,8 +9389,8 @@ void QarStreamingPanel::startSpatialGestureSource()
     "SPATIAL: target 'Action Point (QarOS scene intersect)' is the default and needs no "
     "ray - it publishes the runtime's own scene intersection verbatim.");
   appendLog(
-    "SPATIAL: aiming ray = the SDK's own, start point -> action point (the drop after the "
-    "minimum drop says: "
+    "SPATIAL: aiming ray = the SDK's own, start point -> action point (the runtime's header "
+    "says: "
     "'from the start point to the action point is the ray the user is pointing along'). "
     "It falls back to OUR straight eye-through-hand line, from qar_render_sender_last_hands "
     "+ the frame's eye pose, only when the runtime intersected nothing and the two points "
@@ -8559,8 +9405,10 @@ void QarStreamingPanel::refreshScenePlacement()
   // pinch-to-zoom (-> app_scale), and the QarOS session publishes
   // `appVolume/appPose/updated` / `appScale/updated` for our volume as the
   // operator uses them. So it is re-read here, on the Qt thread, once per tick
-  // — three getters — and recorded in scene_placement_ as a DIAGNOSTIC. Read
-  // the block below before wiring it into anything.
+  // and recorded in scene_placement_ as a DIAGNOSTIC. The read is the factory's cache: it is
+  // filled by the owner's thread (a query at attach, the volume's update subscription and a
+  // slow refresh), because each query to the session takes seconds. Read the block below before
+  // wiring it into anything.
   if (!qar_factory_) {
     return;
   }
@@ -9058,7 +9906,8 @@ void QarStreamingPanel::onArControlViewport(const qar_web_panels::PanelViewportR
     ar_control_viewport_->css_width != report.viewport.css_width ||
     ar_control_viewport_->css_height != report.viewport.css_height;
   ar_control_viewport_ = report.viewport;
-  // The QarOS panels are resized by the next tick, and only when the size moves.
+  // The next tick works the size out again from the design viewport, the page and the size box,
+  // and resizes the QarOS panels only when that size moves. The report itself does not enter it.
   ar_control_resize_pending_ = true;
   if (changed) {
     // The reason is a text the page chose; the rest of the line is numbers.
@@ -9630,9 +10479,10 @@ QarStreamingPanel::ArControlInstance * QarStreamingPanel::findControlInstance(
 
 void QarStreamingPanel::tickArControlPlacement(SteadyTime now)
 {
-  // An instance that could not be made is tried again, slowly: each attempt is a synchronous
-  // QarOS call.
+  // An instance that could not be made is tried again, slowly: each attempt queues a QarOS call
+  // for the owner's thread.
   for (ArControlInstance & instance : control_instances_) {
+    drainArControlResults(instance, now);
     if (!instance.adapter && now >= instance.next_attempt) {
       createArControlInstance(instance, now);
     }
@@ -9740,22 +10590,22 @@ void QarStreamingPanel::tickArControlPlacement(SteadyTime now)
 
 qar_web_panels::UrlPanelSizeResult QarStreamingPanel::arControlPanelSize()
 {
-  // As an AR tool: from the page's own measurement and the size box, then from the viewport the
-  // page reports once it has been laid out in the headset.
+  // From the page's model, the size box and the design viewport. The viewport that the page
+  // reports is not an input: a runtime may derive that viewport from the panel's size, and a size
+  // computed from it would then chase itself. The size is therefore the same before and after
+  // the first report.
   qar_web_panels::UrlPanelSizing sizing = urlPanelSizing();
   if (ar_panel_scale_spin_ != nullptr) {
     sizing.scale = ar_panel_scale_spin_->value();
   }
-  if (ar_control_viewport_) {
-    qar_web_panels::use_reported_viewport(sizing, *ar_control_viewport_);
-  }
+  qar_web_panels::use_design_viewport(sizing);
   return qar_web_panels::size_url_panel_for(
     ar_control_session_->model(), web_panel_server_->config().render.theme, sizing);
 }
 
 bool QarStreamingPanel::createArControlInstance(ArControlInstance & instance, SteadyTime now)
 {
-  if (!qar_factory_ || !qar_factory_->ready() || !ar_control_session_ || !web_panel_server_) {
+  if (!sessionReadyForPanels() || !ar_control_session_ || !web_panel_server_) {
     instance.next_attempt = now + std::chrono::seconds(1);
     return false;  // no QarOS session yet: not a failure to report
   }
@@ -9764,6 +10614,9 @@ bool QarStreamingPanel::createArControlInstance(ArControlInstance & instance, St
   qar_ar_core::UrlPanelDesc desc;
   desc.url = ar_control_page_url_;
   desc.display_name = ar_control::kPageTitle;
+  // One name for each instance: "everybody", or the peer's id, which stays the same for the same
+  // receiver.
+  desc.common_name = panelCommonName("ar-control:" + instance.key);
   desc.placement.size = arControlPanelSize().size;
   // The pose in front of the viewer (or the fixed spot) is lifted above the RViz ground; the yaw
   // rule is not touched, only the height. The request keeps the pose it was given, so that a
@@ -9832,6 +10685,76 @@ void QarStreamingPanel::logArControlInstance(const ArControlInstance & instance)
     .arg(QString::fromStdString(instance.key), who, vector3Words(instance.placement.pose.position))
     .arg(yawDegrees(instance.placement.pose.orientation), 0, 'f', 1)
     .arg(basis));
+}
+
+void QarStreamingPanel::drainArControlResults(ArControlInstance & instance, SteadyTime now)
+{
+  if (!instance.adapter) {
+    return;
+  }
+  std::vector<qar_ar_core::PanelOpResult> results;
+  instance.adapter->drain_results(results);
+  for (const qar_ar_core::PanelOpResult & result : results) {
+    if (!instance.adapter) {
+      break;  // an earlier result let the panel go; the rest was about it
+    }
+    const bool show_outcome = result.op == qar_ar_core::PanelOpResult::Op::State &&
+      result.state == QAR_GUI_PANEL_STATE_VISIBLE && instance.show_asked;
+    if (show_outcome) {
+      instance.show_asked = false;
+    }
+    if (result.ok) {
+      continue;  // the success branch ran when the call was accepted
+    }
+    const std::string reason = result.error.empty() ? std::string("QarOS refused the request")
+                                                    : result.error;
+    const QString key = QString::fromStdString(instance.key);
+    switch (result.op) {
+      case qar_ar_core::PanelOpResult::Op::Create:
+        instance.adapter.reset();
+        instance.last_error = reason;
+        instance.next_attempt = now + std::chrono::seconds(5);
+        if (instance.last_error != instance.logged_error) {
+          instance.logged_error = instance.last_error;
+          appendLog(
+            QString("AR CONTROL PANEL: could not create instance '%1' - %2; trying again every "
+              "5 s").arg(key, QString::fromStdString(instance.last_error)));
+        }
+        ar_control_status_dirty_ = true;
+        break;
+      case qar_ar_core::PanelOpResult::Op::Placement:
+        // Asked again with the next report of the page.
+        instance.placement.size.width_meters = 0.0f;
+        instance.placement.size.height_meters = 0.0f;
+        appendLog(
+          QString("AR CONTROL PANEL: could not resize instance '%1' - %2")
+          .arg(key, QString::fromStdString(reason)));
+        break;
+      case qar_ar_core::PanelOpResult::Op::State:
+        if (show_outcome) {
+          instance.show_failed = true;
+          control_show_failed_ = true;
+          control_show_failed_at_ = now;
+          control_show_failure_ = reason;
+          appendLog(
+            QString("AR CONTROL PANEL: could not show instance '%1' - %2")
+            .arg(key, QString::fromStdString(reason)));
+          ar_control_status_dirty_ = true;
+        } else {
+          appendLog(
+            QString("AR VISIBILITY: set_state(%1) failed for control panel instance '%2': %3")
+            .arg(
+              result.state == QAR_GUI_PANEL_STATE_VISIBLE ? QStringLiteral("VISIBLE") :
+              QStringLiteral("HIDDEN"), key, QString::fromStdString(reason)));
+        }
+        break;
+      case qar_ar_core::PanelOpResult::Op::Navigate:
+      case qar_ar_core::PanelOpResult::Op::VisibleTo:
+      case qar_ar_core::PanelOpResult::Op::Close:
+      case qar_ar_core::PanelOpResult::Op::Detach:
+        break;
+    }
+  }
 }
 
 void QarStreamingPanel::applyInstanceVisibility(ArControlInstance & instance, bool visible)
@@ -9940,6 +10863,7 @@ void QarStreamingPanel::applyArControlShow(SteadyTime now)
     instance.wanted_visible = true;
     if (instance.adapter->set_state(QAR_GUI_PANEL_STATE_VISIBLE)) {
       instance.show_failed = false;
+      instance.show_asked = true;  // a refusal may still follow, through drainArControlResults()
       ++shown;
       continue;
     }
@@ -9966,6 +10890,43 @@ void QarStreamingPanel::applyArControlShow(SteadyTime now)
   ar_control_status_dirty_ = true;
 }
 
+bool QarStreamingPanel::urlPanelResizeAllowed(
+  qar_web_panels::UrlPanelResizeGuard & guard, const QString & what,
+  const QarGuiPanelSize & held, const QarGuiPanelSize & wanted)
+{
+  // A size that depends only on the design viewport, the page and the size box settles after the
+  // first placement. This is the bound for any other cause of a resize loop.
+  const double floor_m = urlPanelSizing().min_width_m;
+  const QString held_text = QString("%1 x %2 m")
+    .arg(static_cast<double>(held.width_meters), 0, 'f', 2)
+    .arg(static_cast<double>(held.height_meters), 0, 'f', 2);
+  switch (guard.check(
+      std::chrono::steady_clock::now(), static_cast<double>(wanted.width_meters), floor_m))
+  {
+    case qar_web_panels::UrlPanelResizeGuard::Verdict::Allowed:
+      return true;
+    case qar_web_panels::UrlPanelResizeGuard::Verdict::BelowFloor:
+      appendLog(
+        QString("%1: a width of %2 m is below the %3 m floor - size held at %4")
+        .arg(what)
+        .arg(static_cast<double>(wanted.width_meters), 0, 'f', 2)
+        .arg(floor_m, 0, 'f', 2)
+        .arg(held_text));
+      return false;
+    case qar_web_panels::UrlPanelResizeGuard::Verdict::TooOften:
+      appendLog(
+        QString("%1 resized %2 times in %3 s - size held at %4")
+        .arg(what)
+        .arg(static_cast<qulonglong>(qar_web_panels::UrlPanelResizeGuard::kMaxResizes))
+        .arg(static_cast<qlonglong>(qar_web_panels::UrlPanelResizeGuard::kWindow.count()))
+        .arg(held_text));
+      return false;
+    case qar_web_panels::UrlPanelResizeGuard::Verdict::TooOftenQuiet:
+      return false;
+  }
+  return false;
+}
+
 void QarStreamingPanel::applyArControlResize()
 {
   if (!ar_control_resize_pending_) {
@@ -9977,7 +10938,7 @@ void QarStreamingPanel::applyArControlResize()
     any = any || static_cast<bool>(instance.adapter);
   }
   if (!any) {
-    return;  // the first instance is made at the size the page has reported by then
+    return;  // the first instance is made at its final size: nothing to resize yet
   }
   const qar_web_panels::UrlPanelSizeResult sized = arControlPanelSize();
   bool moved_any = false;
@@ -9991,6 +10952,13 @@ void QarStreamingPanel::applyArControlResize()
       std::abs(sized.size.width_meters - instance.placement.size.width_meters) > 0.005f ||
       std::abs(sized.size.height_meters - instance.placement.size.height_meters) > 0.005f;
     if (!moved) {
+      continue;
+    }
+    if (!urlPanelResizeAllowed(
+        instance.resize_guard,
+        QString("AR CONTROL PANEL: instance '%1'").arg(QString::fromStdString(instance.key)),
+        instance.placement.size, sized.size))
+    {
       continue;
     }
     qar_ar_core::UrlPanelPlacement placement = instance.placement;
@@ -10030,12 +10998,15 @@ ControlPanelSnapshot QarStreamingPanel::controlPanelSnapshot()
 {
   ControlPanelSnapshot snapshot;
   if (live_stream_mode_) {
-    if (pending_connect_) {
+    const bool joining = connection_phase_ == ConnectionPhase::Loading ||
+      connection_phase_ == ConnectionPhase::WaitingForApproval ||
+      connection_phase_ == ConnectionPhase::Rejoining ||
+      connection_phase_ == ConnectionPhase::NeedsCode ||
+      connection_phase_ == ConnectionPhase::Pairing;
+    if (joining) {
       snapshot.connection = ConnectionState::Connecting;
     } else if (live_connected_) {
       snapshot.connection = ConnectionState::Live;
-    } else if (qar_factory_) {
-      snapshot.connection = ConnectionState::Paused;
     } else {
       snapshot.connection = ConnectionState::Offline;
     }

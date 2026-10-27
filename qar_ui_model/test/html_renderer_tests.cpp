@@ -509,9 +509,9 @@ TEST(ThemeCss, CarriesTheFallbacksWebKit610Needs)
 // The page is laid out into a viewport the runtime chooses, not one we declare
 // (docs/SDK_COMPATIBILITY.md, "The QarOS in-AR browser"), so content past its
 // fold is not rasterised at all and no panel size brings it back. It is
-// reachable by CLICK. The QarOS SDK 2026-09-21 release added DRAG, so the pager
-// is a judgement about hitting a thin thumb in mid air rather than a
-// constraint: the rail is click-only on purpose.
+// reachable by CLICK. The QarOS SDK has a DRAG gesture, so the pager is a
+// judgement about hitting a thin thumb in mid air rather than a constraint: the
+// rail is click-only on purpose.
 // See qar_ui_model/scroll_paging.hpp.
 
 TEST(HtmlRenderer, CarriesAClickPagerForContentBelowTheFold)

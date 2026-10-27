@@ -229,8 +229,26 @@ std::vector<SettingSpec> build_specs()
   specs.push_back(fps);
 
   specs.push_back(choice_spec(
-      settings_key::kPeerAdmission, "QAR_PANEL_PEER_ADMISSION", "invited",
-      {"invited", "new"}, {"invited", "new", "named", "any"}));
+      settings_key::kHubMode, "QAR_PANEL_HUB_MODE", "auto", {"auto", "local", "remote"}));
+
+  SettingSpec hub_host;
+  hub_host.key = settings_key::kHubHost;
+  hub_host.env = "QAR_PANEL_HUB_HOST";
+  hub_host.kind = SettingKind::Text;
+  hub_host.default_value = "";
+  hub_host.min_length = 0;
+  hub_host.max_length = 253;
+  hub_host.allowed_chars = ".-:_";
+  specs.push_back(hub_host);
+
+  SettingSpec hub_port;
+  hub_port.key = settings_key::kHubPort;
+  hub_port.env = "QAR_PANEL_HUB_PORT";
+  hub_port.kind = SettingKind::Int;
+  hub_port.default_value = "0";
+  hub_port.min = 0.0;
+  hub_port.max = 65535.0;
+  specs.push_back(hub_port);
   specs.push_back(bool_spec(
       settings_key::kHiddenDisplaysOnConnect, "QAR_PANEL_HIDDEN_DISPLAYS", "true"));
   specs.push_back(bool_spec(settings_key::kArControlPanel, "QAR_PANEL_AR_CONTROL", "true"));
@@ -264,15 +282,14 @@ std::vector<SettingSpec> build_specs()
   specs.push_back(frame);
 
   specs.push_back(choice_spec(
-      settings_key::kInviteDevice, nullptr, "visualizer",
-      {"visualizer", "hololens", "quest", "zed"}));
+      settings_key::kInviteDevice, nullptr, "hololens", {"hololens", "headset"}));
 
   SettingSpec hostname;
   hostname.key = settings_key::kInviteHostname;
   hostname.kind = SettingKind::Text;
   hostname.default_value = "";
   hostname.min_length = 0;
-  hostname.max_length = 64;
+  hostname.max_length = 253;
   hostname.allowed_chars = ".-";
   specs.push_back(hostname);
 
@@ -373,9 +390,18 @@ bool canonicalize_setting(
         const std::string canonical = std::to_string(value);
         const bool listed = spec.choices.empty() ||
           std::find(spec.choices.begin(), spec.choices.end(), canonical) != spec.choices.end();
-        if (!parsed || !listed) {
-          out_error = spec.choices.empty() ? std::string("not a whole number")
-                                           : "not one of " + join(spec.choices, "|");
+        const bool ranged = !(spec.max > 0.0) ||
+          (static_cast<double>(value) >= spec.min && static_cast<double>(value) <= spec.max);
+        if (!parsed || !listed || !ranged) {
+          if (!spec.choices.empty()) {
+            out_error = "not one of " + join(spec.choices, "|");
+          } else if (spec.max > 0.0) {
+            out_error = "not a whole number from " +
+              std::to_string(static_cast<long long>(spec.min)) + " to " +
+              std::to_string(static_cast<long long>(spec.max));
+          } else {
+            out_error = "not a whole number";
+          }
           return false;
         }
         out_value = canonical;
@@ -421,15 +447,58 @@ bool canonicalize_setting(
   return false;
 }
 
-SettingsText parse_saved_settings(const SettingsText & config, SettingsLoadReport & report)
+namespace
+{
+
+/// The saved text of the setting "Invite Device" in a configuration of an older plugin, mapped to
+/// the kinds that QAROS can start an app for.
+const char * migrated_invite_device(const std::string & word)
+{
+  const std::string lower = lowered(trimmed(word));
+  if (lower == "quest") {
+    return "headset";
+  }
+  if (lower == "visualizer" || lower == "zed") {
+    return "hololens";
+  }
+  return nullptr;
+}
+
+/// Brings a configuration below the current version to the current keys and values, in place.
+void migrate_saved_config(SettingsText & config, SettingsLoadReport & report)
+{
+  const auto admission = config.find("Peer Admission");
+  if (admission != config.end()) {
+    report.migrated.push_back(
+      "Peer Admission '" + printable(admission->second) +
+      "' has no meaning with this QAROS (every target gets a stream) and is not kept");
+    config.erase(admission);
+  }
+  const auto device = config.find(settings_key::kInviteDevice);
+  if (device != config.end()) {
+    if (const char * mapped = migrated_invite_device(device->second)) {
+      report.migrated.push_back(
+        std::string(settings_key::kInviteDevice) + " '" + printable(device->second) +
+        "' cannot be started by this QAROS; it is read as '" + mapped + "'");
+      device->second = mapped;
+    }
+  }
+}
+
+}  // namespace
+
+SettingsText parse_saved_settings(const SettingsText & saved_config, SettingsLoadReport & report)
 {
   report = SettingsLoadReport();
   SettingsText result;
+  SettingsText config = saved_config;
 
   bool any_known = false;
   for (const SettingSpec & spec : panel_setting_specs()) {
     any_known = any_known || config.find(spec.key) != config.end();
   }
+  // The keys of an older plugin that this plugin has dropped still make a configuration "ours".
+  any_known = any_known || config.find("Peer Admission") != config.end();
 
   const auto version = config.find(kSettingsVersionKey);
   if (version != config.end()) {
@@ -449,6 +518,10 @@ SettingsText parse_saved_settings(const SettingsText & config, SettingsLoadRepor
     }
   } else if (any_known) {
     report.version = 1;
+  }
+
+  if (report.version >= 1 && report.version < kPanelSettingsVersion) {
+    migrate_saved_config(config, report);
   }
 
   for (const SettingSpec & spec : panel_setting_specs()) {
@@ -575,6 +648,29 @@ double setting_double(const ResolvedSettings & settings, const char * key)
 const std::string & setting_text(const ResolvedSettings & settings, const char * key)
 {
   return resolved_or_default_text(settings, key);
+}
+
+const std::vector<std::string> & removed_environment_variables()
+{
+  static const std::vector<std::string> names = {
+    "QAR_PANEL_LAUNCHER_CONFIG", "QAR_PANEL_VISUALIZER_GUID", "QAR_PANEL_VISUALIZERS",
+    "QAR_PANEL_PEER_ADMISSION", "QAR_PANEL_PEER_SETTLE_MS", "QAR_PANEL_PEER_NAME_FILTER",
+    "QAR_RUNTIME_BINARIES_DIR"};
+  return names;
+}
+
+std::vector<std::string> removed_environment_sentences(const EnvLookup & env)
+{
+  std::vector<std::string> sentences;
+  if (!env) {
+    return sentences;
+  }
+  for (const std::string & name : removed_environment_variables()) {
+    if (env(name.c_str()).has_value()) {
+      sentences.push_back("ignored: " + name + " has no effect with this QAROS");
+    }
+  }
+  return sentences;
 }
 
 bool pick_target_id_from_word(const std::string & word, int & out_id)

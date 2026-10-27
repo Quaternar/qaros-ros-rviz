@@ -918,9 +918,11 @@ const char kRuntimeChunk5[] = R"QARJS(
     var scale = fitQuantise(
       fitScale(natural ? num(natural[columns - 1]) : 0, viewport), num(vars['--qar-font']));
     /* A pixel of resize noise must not restyle the document. The scale cannot
-       oscillate on its own - restyling does not change the viewport the
-       runtime gives us, so there is no feedback path - but a resize storm can
-       still arrive, and settling once is the whole intent. */
+       oscillate on its own - restyling does not change the viewport of the
+       browser - but the viewport can follow the size of the panel, and the
+       size of the panel is not computed from what this page reports (the
+       host uses a design viewport), so a resize storm settles once, which is
+       the whole intent. */
     if (appliedFit && appliedFit.columns === columns &&
       Math.abs(scale - appliedFit.scale) <= num(fitConfig.deadband)) { return appliedFit; }
     for (var name in vars) {

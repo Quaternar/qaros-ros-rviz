@@ -34,6 +34,10 @@
 #include "qar_ogre_streaming/qar_scene_lighting.hpp"
 #include "qar_ogre_streaming/types.hpp"
 
+#include "qar_ar_core/common_name.hpp"
+#include "qar_qar_adapter/qar_capi_render_sender_adapter.hpp"
+#include "qar_qar_adapter/qar_session_owner.hpp"
+
 #include <QPointer>
 
 #include <utility>
@@ -74,8 +78,10 @@
 #include "qar_rviz_streaming/ar_control_router.hpp"
 #include "qar_rviz_streaming/ar_exposure_registry.hpp"
 #include "qar_rviz_streaming/ar_panel_generator.hpp"
+#include "qar_rviz_streaming/connection_view.hpp"
 #include "qar_rviz_streaming/display_class_catalog.hpp"
 #include "qar_rviz_streaming/grid_floor_plane.hpp"
+#include "qar_rviz_streaming/hub_connection_widget.hpp"
 #include "qar_rviz_streaming/panel_ground_rule.hpp"
 #include "qar_rviz_streaming/panel_settings.hpp"
 #include "qar_rviz_streaming/ros_graph_tree.hpp"
@@ -107,6 +113,7 @@ class QTimer;
 
 namespace qar_qar_adapter
 {
+class QarSessionOwner;
 class QarCApiSenderFactory;
 class QarCApiPanelSenderFactory;
 class QarCApiPanelInputSource;
@@ -231,7 +238,7 @@ protected:
 private Q_SLOTS:
   void onStartQar();
   void onStopQar();
-  /// @brief "Invite peer" (Connection tab). Enabled only while live and connected.
+  /// @brief "Invite peer" (Connection tab). Enabled only in this-PC mode while connected.
   void onInvitePeer();
   /// @brief "Add simulated peer" (Diagnostics tab, Simulated peers): the offline preview's peer.
   void onAddSimulatedPeer();
@@ -829,17 +836,83 @@ private:
   void appendLog(const QString & line) const;
   /// @brief Emit the periodic tick/FPS heartbeat if the period has elapsed.
   void emitHeartbeat();
-  /// @brief Adopt a finished background connect, if one has completed.
-  void pollPendingConnect();
-  /// @brief Qt-thread wiring once qar_factory_ exists (manager, state, logs).
+  // --- The QAROS session (session owner) ----------------------------------------
+  /// @brief Makes the session owner when there is none. Later calls pass the Hub settings (mode,
+  /// host, port) to the existing owner when they changed; it applies them at its next connect. The
+  /// owner is never destroyed and made again: it, and the QAROS library it holds, live until the
+  /// panel is destroyed. GUI thread; makes no QAROS call and never waits.
+  void ensureSessionOwner();
+  /// @brief The configuration of the owner: the settings in force and the environment. Logs how
+  /// the QAROS library logging was decided; call it when the owner is made.
+  qar_qar_adapter::SessionOwnerConfig makeSessionOwnerConfig();
+  /// @brief The Hub mode, host and port of the settings in force.
+  void currentHubSettings(
+    qar_qar_adapter::HubMode & mode, qar_qar_adapter::HubEndpoint & endpoint) const;
+  /// @brief The text of the Hub settings in force, to tell when the owner has to be given new
+  /// ones.
+  std::string hubSettingsSignature() const;
+  /// @brief The panel is connected to QarOS but streaming is paused: the session, the render
+  /// factory and everything built on them stay, and "Connect to QarOS" resumes.
+  bool streamingPaused() const;
+  /// @brief Drains the owner's events and the lines its log sink queued. Called by every render
+  /// tick; makes no blocking call.
+  void pollSessionOwner();
+  void handleSessionEvent(const qar_qar_adapter::SessionEvent & event);
+  /// @brief The owner is in kRunning: makes the render factory and starts its attach, which the
+  /// owner's thread carries out. pollAttach() finishes the connect.
+  void onSessionRunning();
+  /// @brief While the attach runs: looks at the factory's attach state on every tick, finishes the
+  /// connect when the app volume is there and takes the failure path when it is not. Makes no
+  /// QarOS call that waits.
+  void pollAttach();
+  /// @brief The render factory exists, its attach is done and the owner's session is open: the
+  /// panels may be made.
+  bool sessionReadyForPanels() const;
+  /// @brief Qt-thread wiring once qar_factory_ exists (manager, state, logs). Also the resume of a
+  /// paused session: everything it starts is idempotent.
   void finishLiveConnect();
+  /// @brief The Config of the render factory: clip planes, depth scale, the app volume, the GL
+  /// submit mode, read from the environment.
+  qar_qar_adapter::QarCApiSenderFactory::Config makeFactoryConfig();
+  /// @brief Asks the Hub to start the apps of QAR_PANEL_INVITE_PEERS ("hololens:<host>,
+  /// headset:<host>"). This-PC mode only; each invite is asynchronous. Once per session: a resume
+  /// logs one line and sends nothing.
+  void inviteFromEnvironment();
+  /// @brief Releases everything built on the QAROS session in the order of the teardown: the 3D
+  /// streams, the gesture subscription, the QarOS panels (hidden, then let go), the panel manager,
+  /// the render factory. Leaves the session itself to the owner. GUI thread; safe to call twice.
+  /// @param update_ui false in the destructor, where the lists of the panel and of RViz's docks
+  /// are not read.
+  void releaseSessionConsumers(const QString & reason, bool update_ui = true);
+  /// @brief Hides a URL panel and lets go of it (the next session finds it by its name), or
+  /// closes it when "AR Visibility" says close.
+  void releaseUrlPanel(const std::shared_ptr<qar_ar_core::IQarUrlPanelAdapter> & adapter);
+  /// @brief Refreshes the Connection tab, the status strip and the buttons from the facts.
+  void refreshConnectionView();
+  /// @brief The facts of the Connection tab.
+  ConnectionInput connectionInput() const;
+  /// @brief Rewrites the target list from the owner's table.
+  void refreshTargetList();
+  /// @brief The identity file of this program, read again.
+  void refreshIdentity();
+  /// @brief Appends a line to the diagnostics view only (the line is already on stderr).
+  void appendToView(const QString & line) const;
+  /// @brief "Pair" or Enter in the code field.
+  void onPairRequested(const QString & code, const QString & host, int port);
+  /// @brief The confirmed "Forget pairing".
+  void onForgetConfirmed();
+  /// @brief "Cancel" while the join is in progress.
+  void onCancelConnect();
+  /// @brief The QarOS common name of the panel with @p key: a stable name made of the key, the
+  /// program, the instance and this PC (see qar_ar_core/common_name.hpp).
+  std::string panelCommonName(const std::string & key) const;
   void setLastError(const QString & error);
   void clearLastError();
   void refreshContextStatus();
   void refreshPeerList();
   /// @brief Refreshes the state line of the status strip AND the buttons that follow the
-  /// state ("Connect to QarOS" is off while a connect is pending, "Disconnect (pause)" is on
-  /// while running, "Invite peer" is on while live and connected, "Stream panel to AR" is on
+  /// state ("Connect to QarOS" is off while a connect is pending, "Disconnect (pause)" is on while
+  /// running, "Invite peer" is on in this-PC mode while connected, "Stream panel to AR" is on
   /// while a QarOS session exists). Called on every path that changes or ends a connect.
   void updateRuntimeStateLabel();
 
@@ -883,10 +956,9 @@ private:
   /// lighting.
   qar_ogre_streaming::SceneLightingConfig buildSceneLightingConfig() const;
 
-  /// Invite the device selected in the peer-kind combo into the running QarOS
-  /// session — one invited device per physical client head. Uses the hostname field
-  /// for HoloLens, the only device type the SDK can address by name. Logs the
-  /// outcome; no-op unless live and connected.
+  /// Asks the Hub to start the app of the device selected in the peer-kind combo (the host
+  /// field names the device). The answer arrives from the session owner as an event, so the call
+  /// returns at once. Logs the outcome; no-op unless connected in this-PC mode.
   void inviteSelectedPeer();
 
   /// Render one tick of every active streaming stream (initialize targets on
@@ -936,9 +1008,9 @@ private:
   std::vector<QWidget *> page_contents_;
   QPushButton * start_qar_button_ = nullptr;
   QPushButton * stop_qar_button_ = nullptr;
-  /// "Invite peer": enabled only while live and connected; outside a live QarOS session it is
-  /// disabled and its tool tip says what it needs. The simulated peer of the preview has its own
-  /// button (add_sim_peer_button_).
+  /// "Invite peer": enabled only in this-PC mode while connected; otherwise it is disabled and
+  /// its tool tip says what it needs. The simulated peer of the preview has its own button
+  /// (add_sim_peer_button_).
   QPushButton * add_peer_button_ = nullptr;
   QPushButton * add_sim_peer_button_ = nullptr;
   QPushButton * remove_peer_button_ = nullptr;
@@ -950,6 +1022,8 @@ private:
   /// "Start test markers" / "Stop test markers" (Diagnostics tab). Follows test_markers_process_
   /// and the two QAR_PANEL_TEST_MARKERS_* variables; it is not saved in the configuration.
   QPushButton * test_markers_button_ = nullptr;
+  /// The "QAROS Hub" group of the Connection tab: the Hub to join, the pairing, the targets.
+  HubConnectionWidget * hub_widget_ = nullptr;
   /// The groups that one mode shows: "Invite a device" (every mode; only its button follows the
   /// session), "Advanced" (Settings, shown by "Show advanced options") and "Simulated peers"
   /// (Diagnostics; always shown in the preview, advanced when streaming to QarOS). "Advanced"
@@ -961,8 +1035,6 @@ private:
   // --- Settings tab: the persisted controls and the switches around them ---------------------
   QComboBox * resolution_combo_ = nullptr;
   QComboBox * fps_combo_ = nullptr;
-  /// "Peer admission:" - invited or new (QAR_PANEL_PEER_ADMISSION may also say named or any).
-  QComboBox * peer_admission_combo_ = nullptr;
   QCheckBox * hidden_displays_checkbox_ = nullptr;
   QCheckBox * ar_control_checkbox_ = nullptr;
   QCheckBox * show_advanced_checkbox_ = nullptr;
@@ -976,9 +1048,9 @@ private:
   QLabel * ar_control_status_label_ = nullptr;
   QPushButton * ar_control_show_button_ = nullptr;
   QPushButton * ar_control_copy_button_ = nullptr;
-  /// Which device type "Invite peer" invites, and the hostname HoloLens needs - it is the only
-  /// device type the SDK can address by name. Both are shown in every mode; the button needs a
-  /// live QarOS session (updateRuntimeStateLabel()).
+  /// Which device type "Invite peer" invites (HoloLens 2 or a headset), and the host name or
+  /// address of the device, which both kinds need. Both are shown in every mode; the button needs
+  /// a QarOS session in this-PC mode (updateRuntimeStateLabel()).
   QComboBox * peer_kind_combo_ = nullptr;
   QLineEdit * peer_hostname_edit_ = nullptr;
   QListWidget * peer_list_ = nullptr;
@@ -1168,40 +1240,63 @@ private:
   // The concrete simulated-peer factory (typed handle so the panel can set the base
   // config and query per-peer sources); also passed to the manager as the base factory.
   std::shared_ptr<AnimatedMockSenderFactory> mock_factory_;
+  // The owner of the QAROS session (Hub join, target list). Declared BEFORE qar_factory_ and the
+  // panel factories, so it is destroyed after the factory, the panel managers and the senders:
+  // all of them borrow its session, and none may outlive the hand-back. Null until the first
+  // connect (or forget) in QAR_PANEL_LIVE_STREAM mode.
+  std::shared_ptr<qar_qar_adapter::QarSessionOwner> session_owner_;
   // Sender factory backed by the real QAR C API. Non-null only in
-  // QAR_PANEL_LIVE_STREAM mode; then it (not mock_factory_) is the manager's
-  // sender factory.
+  // QAR_PANEL_LIVE_STREAM mode, between the owner's kRunning and the release of the session;
+  // then it (not mock_factory_) is the manager's sender factory.
   std::shared_ptr<qar_qar_adapter::QarCApiSenderFactory> qar_factory_;
   // live_stream_mode_: this is a live-capable panel (QAR_PANEL_LIVE_STREAM set in a
-  // real-SDK build). It does NOT mean connected — the panel connects to the QarOS
-  // runtime only when the operator clicks "Connect to QarOS" (onStartQar), never at
-  // load (connecting during onInitialize would freeze RViz and run the zenoh/peer
-  // handshake before the Qt event loop is live). qar_factory_ stays null until
-  // connected, so driveLiveStreaming() is a no-op meanwhile.
+  // real-SDK build). It does NOT mean connected: the panel joins the QAROS Hub
+  // only when the operator clicks "Connect to QarOS" (onStartQar), never at load.
+  // qar_factory_ stays null until connected, so driveLiveStreaming() is a no-op meanwhile.
   bool live_stream_mode_ = false;
   bool live_connected_ = false;
+  /// The factory's attach was started and has not ended; pollAttach() watches it.
+  bool attach_pending_ = false;
 
-  // --- Asynchronous connect -----------------------------------------------
-  // Building the session is a straight line of BLOCKING SDK calls, and the two
-  // that matter cannot be moved off the click: of about 2.9 s in total,
-  // qar_runtime_create_session takes about 2.1 s (it spawns the runtime launcher
-  // and waits for it) and qar_session_join about 0.7 s. Everything else together
-  // is a few ms, so there is nothing worth hoisting to panel construction.
-  //
-  // The SDK offers no async bootstrap, so the build runs on a worker thread and
-  // the render tick polls for it. The handoff is strictly sequential — the
-  // worker publishes with release, the Qt thread acquires and from then on is
-  // the ONLY thread that calls into the session — so the runtime is never used
-  // concurrently, which the SDK's API conventions caution against.
-  struct PendingConnect
+  // --- The join to the QAROS Hub --------------------------------------------
+  // The session owner does the joining on a thread of its own (library load, runtime, approval
+  // or pairing); the render tick drains its events (pollSessionOwner()), so no call that waits
+  // for QAROS runs on the GUI thread. These are the GUI thread's copies of what it reported.
+  ConnectionPhase connection_phase_ = ConnectionPhase::Idle;
+  /// The plain-words cause of the last failure or refusal.
+  std::string owner_failure_message_;
+  /// The Hub settings that the owner holds, to tell when it has to be given new ones.
+  std::string owner_hub_signature_;
+  /// When the wait for approval began, and how long it lasts at most (seconds), for the countdown.
+  std::chrono::steady_clock::time_point approval_started_{};
+  /// When the countdown on screen was last refreshed.
+  std::chrono::steady_clock::time_point approval_shown_{};
+  int approval_timeout_s_ = 120;
+  /// How many device invites are in flight (each answer is an event of the owner).
+  int invites_in_flight_ = 0;
+  /// True once the invites of QAR_PANEL_INVITE_PEERS were handled for the session that is open: a
+  /// resume after a pause connects again and must not invite the devices a second time. Reset when
+  /// the session is released.
+  bool environment_invites_done_ = false;
+  /// A release of the session that a click asked for. It runs at the next render tick, outside
+  /// the click: the click may be an AR click delivered by the panel manager that the release
+  /// destroys.
+  enum class PendingSessionAction { None, Forget };
+  PendingSessionAction pending_session_action_ = PendingSessionAction::None;
+  /// The identity file of this program (a pairing with another PC's Hub), as last read.
+  bool identity_present_ = false;
+  std::string identity_host_;
+  int identity_port_ = 0;
+  std::string identity_short_id_;
+  /// The lines that the owner's log sink queued from the owner thread (it must not touch Qt).
+  struct OwnerLogQueue
   {
-    std::atomic<bool> done{false};
-    std::shared_ptr<qar_qar_adapter::QarCApiSenderFactory> factory;
-    std::string error;
-    bool threw = false;
+    std::mutex mutex;
+    std::vector<std::string> lines;
   };
-  std::shared_ptr<PendingConnect> pending_connect_;
-  std::thread connect_thread_;
+  std::shared_ptr<OwnerLogQueue> owner_log_ = std::make_shared<OwnerLogQueue>();
+  /// The common-name scope of this program, instance and PC.
+  qar_ar_core::NameScope name_scope_;
 
   // --- Geolocation -> app volume world anchor -------------------------------
   // QarOS georeferences an app volume with a QarGeoAnchorFrame: an ECEF WGS84
@@ -1237,7 +1332,12 @@ private:
   bool gps_have_fix_ = false;      ///< guarded by gps_mutex_
   bool gps_fix_pending_ = false;   ///< a new fix awaits the render tick
   bool geo_enabled_ = true;        ///< QAR_PANEL_GEO=off disables the whole path
-  bool geo_applied_ = false;       ///< an anchor has been pushed at least once
+  bool geo_applied_ = false;       ///< an anchor has been set at least once
+  /// An anchor change is queued on the session's thread; its outcome is still to be taken.
+  bool geo_in_flight_ = false;
+  double geo_queued_lat_ = 0.0;    ///< the fix of the change in flight
+  double geo_queued_lon_ = 0.0;
+  double geo_queued_alt_ = 0.0;
   double geo_last_lat_ = 0.0;      ///< fix the current anchor was built from
   double geo_last_lon_ = 0.0;
   double geo_last_alt_ = 0.0;
@@ -1257,11 +1357,6 @@ private:
   /// Sender creation is asynchronous, so "no sender yet" happens on most early ticks.
   /// Log that once per session instead of once per tick.
   bool live_sender_pending_logged_ = false;
-  // Runtime-binaries dir captured at onInitialize; it builds the
-  // QarCApiSenderFactory::Config lazily on connect. Stored as a plain string so the
-  // panel header need not include the QAR C API (QarCApiSenderFactory stays a
-  // forward declaration; the full type is only used in the .cpp).
-  std::string qar_runtime_binaries_dir_;
   std::shared_ptr<qar_ogre_streaming::IQarRenderSenderFactory> sender_factory_;
   // QAR lighting rig for the shared RViz scene. Declared BEFORE manager_ so it is
   // destroyed AFTER it (members die in reverse declaration order) — the manager's
@@ -1533,16 +1628,19 @@ private:
     /// When the QarOS panel could not be made or taken over, the earliest time to try again (a
     /// refused attempt must not be repeated on every render tick).
     std::chrono::steady_clock::time_point open_retry_at{};
-    /// What the live panel was last given, so a viewport report can resize it
+    /// QarOS refused the placement that was last asked for after it had accepted the call: the
+    /// next viewport report places the panel again.
+    bool placement_refused = false;
+    /// What the live panel was last given, so a resize can compare with it
     /// without recomputing where it hangs in the room.
     qar_ar_core::UrlPanelPlacement placement;
     /// The pose of the tool's slot before the ground rule: the rule is applied to it again when
     /// the panel is resized, so that a panel that becomes shorter comes back down.
     QarPose nominal_pose{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
-    /// The CSS viewport the page reported measuring itself into, once it has.
-    /// Empty until then: a panel opens before its page has ever been laid out,
-    /// so the first size is always the estimate and the report corrects it.
+    /// The CSS viewport the page reported measuring itself into, once it has. A diagnostic: it
+    /// is logged and never decides the size of the panel.
     std::optional<qar_ui_model::ViewportBody> viewport;
+    qar_web_panels::UrlPanelResizeGuard resize_guard;  ///< at most 3 resizes in 10 s
     /// Coalescing clock: a 500 Hz topic still costs one conversion per refresh.
     std::chrono::steady_clock::time_point last_push{};
     double refresh_hz = 5.0;
@@ -1550,10 +1648,9 @@ private:
     bool result_published = false;
   };
   ArToolPanel * findArTool(const std::string & panel_id);
-  /// A page told us the CSS viewport it was actually laid out into. Logs it,
-  /// re-sizes the live AR panel to that aspect, and shows it in the status
-  /// line. See qar_web_panels/url_panel_sizing.hpp for what "re-sizes" means
-  /// and why matching the reported aspect is the fix for the squeeze.
+  /// A page told us the CSS viewport it was actually laid out into. Logs it, shows it in the
+  /// status line, and sizes the live AR panel again from the design viewport (the report does not
+  /// enter the size). See qar_web_panels/url_panel_sizing.hpp for why.
   void onArToolViewport(
     const std::string & panel_id, const qar_web_panels::PanelViewportReport & report);
   /// Open the QarOS URL panel for @p tool, or take over the parked panel of the same entity
@@ -1582,9 +1679,21 @@ private:
   /// reported and the panel stays visible; nothing is closed.
   void hideArTool(ArToolPanel & tool);
   /// Gives the live QarOS panel of @p tool the size @p size, hung from the pose of its slot
-  /// raised above the RViz ground for that height. @return false when QarOS refuses (the reason is
-  /// the panel's last error and the placement is unchanged).
+  /// raised above the RViz ground for that height. @return false when the call is refused at once
+  /// (the reason is the panel's last error and the placement is unchanged); true means accepted,
+  /// and a refusal that follows arrives through drainArToolResults().
   bool placeArToolPanel(ArToolPanel & tool, const QarGuiPanelSize & size);
+  /// Takes the outcomes of the calls the QarOS panel of @p tool only queued
+  /// (IQarUrlPanelAdapter::drain_results) and carries out the failure branch of each: a panel that
+  /// could not be made is tried again later, a refused hide or show is reported and undone, a
+  /// refused navigation or placement is recorded on the row of the tool.
+  void drainArToolResults(ArToolPanel & tool);
+  /// The hide of @p tool was refused: the panel stays visible, nothing is closed, the page's
+  /// switch is told the truth.
+  void reportArToolHideRefused(ArToolPanel & tool, const QString & reason);
+  /// The show of @p tool was refused: left as it is when hiding is the way of the switch, else
+  /// closed and made again by the next open.
+  void reportArToolShowRefused(ArToolPanel & tool, const QString & reason);
   /// Push whatever ROS has produced since the last push, at the tool's cadence.
   void pushArToolData(ArToolPanel & tool, std::chrono::steady_clock::time_point now);
   /// Run one routed control intent against the bridges and ack the viewer.
@@ -1719,12 +1828,14 @@ private:
     float ground_room_y = 0.0f;            ///< room height of the RViz ground it was checked with
     bool wanted_visible = true;            ///< what the placement policy last asked for
     bool show_failed = false;              ///< the last "Show AR control panel" was refused
+    bool show_asked = false;               ///< a "Show AR control panel" was accepted, outcome open
     bool has_head = false;                 ///< head and gaze below belong to the pose
     QarVector3 head{};
     QarVector3 gaze{};
     std::string last_error;
     std::string logged_error;              ///< the failure already written to the log
     std::chrono::steady_clock::time_point next_attempt{};
+    qar_web_panels::UrlPanelResizeGuard resize_guard;  ///< at most 3 resizes in 10 s
   };
 
   /// A command of the page that the next render tick carries out.
@@ -1786,7 +1897,8 @@ private:
   std::size_t ar_control_viewers_ = 0;
   /// Since when instances exist and no viewer is connected to the page.
   std::chrono::steady_clock::time_point ar_control_no_viewer_since_{};
-  /// The newest viewport a viewer of the page reported; the QarOS panels are sized to it.
+  /// The newest viewport a viewer of the page reported. A diagnostic: it is logged, and the
+  /// panels are sized from the design viewport.
   std::optional<qar_ui_model::ViewportBody> ar_control_viewport_;
   bool ar_control_resize_pending_ = false;
   /// "Show AR control panel" was pressed: show the instances (first press) or make the ones that
@@ -1831,8 +1943,18 @@ private:
   void logArControlInstance(const ArControlInstance & instance);
   ArControlInstance * findControlInstance(const std::string & key);
   void applyInstanceVisibility(ArControlInstance & instance, bool visible);
+  /// Takes the outcomes of the calls the QarOS panel of @p instance only queued and carries out
+  /// the failure branch of each: a panel that could not be made is tried again in 5 s, a refused
+  /// show is reported like one refused at once, a refused resize is asked again with the next
+  /// report of the page.
+  void drainArControlResults(ArControlInstance & instance, SteadyTime now);
   void applyArControlShow(SteadyTime now);
   void applyArControlResize();
+  /// Asks the resize budget of one URL panel for a resize from @p held to @p wanted. A refusal
+  /// is written to the log (the first one of a burst) under @p what and the panel keeps its size.
+  bool urlPanelResizeAllowed(
+    qar_web_panels::UrlPanelResizeGuard & guard, const QString & what,
+    const QarGuiPanelSize & held, const QarGuiPanelSize & wanted);
   void publishArControlState(SteadyTime now);
   void refreshArControlStatus(bool force);
   QString arControlStatusText(SteadyTime now) const;
@@ -1878,9 +2000,11 @@ private:
   /// The QarOS panels of AR tools that were removed while hiding is the way of the switch: hidden
   /// and kept, by entity kind and name, until the session ends or the same entity is exposed
   /// again (which takes the panel over). Closing a QarOS panel while a session runs crashed the
-  /// desktop Visualizer, so a removed tool's panel is never closed before the session ends; the
-  /// adapter closes it once when it is destroyed. Declared AFTER the members the adapters borrow
-  /// (the QarOS session of qar_factory_ and the URL panel factory) so it dies before them.
+  /// desktop Visualizer, so a removed tool's panel is never closed while the session runs; at
+  /// the end of the session it is hidden and detached like every other AR panel
+  /// (releaseUrlPanel), and closed only if hiding is switched off by then. Declared AFTER the
+  /// members the adapters borrow (the QarOS session of qar_factory_ and the URL panel factory)
+  /// so it dies before them.
   struct ParkedToolPanel
   {
     std::shared_ptr<qar_ar_core::IQarUrlPanelAdapter> adapter;
@@ -1899,6 +2023,9 @@ private:
   /// Hide one parked panel (clearing its pending_hide) and log the retire line of its tool: the
   /// panel is parked, or QarOS refused the hide and it stays visible and kept. Never closes.
   void carryOutParkedHide(ParkedToolPanel & parked);
+  /// Takes the outcomes of the hides that parked panels only queued and reports a refused one:
+  /// the panel stays visible and kept until the session ends.
+  void drainParkedResults(ParkedToolPanel & parked);
 
   /// Declared LAST of the AR tool members so it is destroyed FIRST: a tool borrows
   /// the bridges' entities, the server's session and the render path's QarOS

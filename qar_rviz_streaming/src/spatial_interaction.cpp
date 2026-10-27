@@ -63,10 +63,9 @@ const std::vector<SpatialTargetOption> & spatial_target_options()
   // default_spatial_target_id().
   //
   // The Action Point leads: it is the only target the runtime itself computed,
-  // so it is the only one that can be exactly what the AR user saw. The SDK
-  // header of the drop after the minimum drop says the action point is "the
-  // intersection the gesture acts on, or the start point when nothing was
-  // intersected"; the minimum drop handed back a near-field point on every gesture.
+  // so it is the only one that can be exactly what the AR user saw. The installed
+  // header says the action point is "the intersection the gesture acts on, or the
+  // start point when nothing was intersected".
   //
   // The failure of landing on the operator's own hand is guarded: a no-hit
   // gesture is the one where the action point EQUALS the start point, which is
