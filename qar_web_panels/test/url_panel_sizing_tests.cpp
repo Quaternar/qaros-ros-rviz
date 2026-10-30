@@ -12,6 +12,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <map>
@@ -350,10 +352,13 @@ TEST(UrlPanelSizing, TheNoteIsOneReadableLine)
 }
 
 // ---------------------------------------------------------------------------
-// A viewport the page reported. The browser viewport does NOT take the
-// panel's shape, so a panel whose aspect disagrees with it is stretched
-// non-uniformly — a horizontal squeeze. Once the page says what it was given,
-// the panel simply becomes that viewport in metres.
+// A given viewport (a report, or the design viewport). These tests pin the pure
+// function `size_url_panel` / `size_url_panel_for` for an explicit viewport, as
+// a runtime with a FIXED viewport would report it. A panel whose aspect
+// disagrees with the viewport its page is drawn into is stretched
+// non-uniformly (a horizontal squeeze). With a viewport given, the panel simply
+// becomes that viewport in metres. The plugin gives the design viewport, not a
+// report; see UrlPanelSizingLoop below.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -499,8 +504,8 @@ TEST(ReportedViewport, UseReportedViewportCopiesWhatThePageSent)
 // Fitting the page to the viewport, and paying for it in metres
 // ---------------------------------------------------------------------------
 //
-// Matching the aspect is necessary and not sufficient. The runtime's viewport
-// is 500 x 500 CSS px, fixed; a generated page wants 756. Matching that gives a
+// Matching the aspect is necessary and not sufficient. The design viewport is
+// 500 x 500 CSS px; a generated page wants 756. Matching that gives a
 // 0.33 m square panel holding a layout squeezed into two thirds of the width it
 // was drawn for: text mixed one on top of another, buttons squeezed almost next
 // to each other, a panel too small to read. The page shrinks its own theme by k
@@ -510,8 +515,8 @@ TEST(ReportedViewport, UseReportedViewportCopiesWhatThePageSent)
 namespace
 {
 
-/// The runtime's measured viewport: 500 x 500 CSS px, devicePixelRatio 2.0.
-constexpr double kLiveViewportPx = 500.0;
+/// The design viewport of the plugin's URL panels: 500 x 500 CSS px.
+constexpr double kLiveViewportPx = qar_web_panels::kDesignViewportCss;
 
 }  // namespace
 
@@ -633,4 +638,178 @@ TEST(ViewportFitSizing, ThePanelStillFollowsTheViewportsAspect)
   EXPECT_NEAR(
     static_cast<double>(r.size.width_meters),
     420.0 * meters_per_css_px(theme) / r.theme_scale, 1e-3);
+}
+
+// ---------------------------------------------------------------------------
+// A viewport that follows the panel. A runtime that derives the page's viewport
+// from the panel's size closes a loop with any size that is computed from the
+// reported viewport: the panel shrinks by a frame's worth of pixels per round.
+// The size of a URL panel therefore comes from the design viewport.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+/// The viewport a runtime of the "follows the panel" kind gives the page: about
+/// 634 CSS px per metre, less a fixed frame of 52 x 79 CSS px, never below 1.
+qar_ui_model::ViewportBody following_viewport(const UrlPanelSizeResult & panel)
+{
+  qar_ui_model::ViewportBody report;
+  report.css_width = std::max(1.0, 634.0 * static_cast<double>(panel.size.width_meters) - 52.0);
+  report.css_height = std::max(1.0, 638.0 * static_cast<double>(panel.size.height_meters) - 79.0);
+  report.content_height = report.css_height;
+  return report;
+}
+
+/// The size of a URL panel as the plugin computes it when a page has reported
+/// @p report: the report is logged and nothing else, the design viewport decides.
+UrlPanelSizeResult size_like_the_plugin(
+  const UiModel & model, const ArTheme & theme, const qar_ui_model::ViewportBody * report)
+{
+  (void)report;
+  UrlPanelSizing sizing;
+  qar_web_panels::use_design_viewport(sizing);
+  return size_url_panel_for(model, theme, sizing);
+}
+
+}  // namespace
+
+TEST(UrlPanelSizingLoop, AViewportThatFollowsThePanelCannotShrinkIt)
+{
+  const ArTheme theme;
+  const UiModel model = form(16);
+  const UrlPanelSizing bounds;
+
+  // The first size is made before any report exists.
+  UrlPanelSizeResult current = size_like_the_plugin(model, theme, nullptr);
+  const float first_width = current.size.width_meters;
+  ASSERT_GE(static_cast<double>(first_width), bounds.min_width_m);
+
+  for (int round = 1; round <= 10; ++round) {
+    // The page reports the viewport the panel gave it; the plugin sizes the panel again.
+    const qar_ui_model::ViewportBody report = following_viewport(current);
+    const UrlPanelSizeResult next = size_like_the_plugin(model, theme, &report);
+    EXPECT_GE(static_cast<double>(next.size.width_meters), bounds.min_width_m) << "round " << round;
+    EXPECT_NEAR(next.size.width_meters, first_width, 0.005f) << "round " << round;
+    current = next;
+  }
+  // 500 css px square at the design rate: 0.60 m for this form.
+  EXPECT_NEAR(current.size.width_meters, 0.60f, 1e-3);
+  EXPECT_NEAR(current.size.height_meters, 0.60f, 1e-3);
+}
+
+TEST(UrlPanelSizingLoop, TheSizeFromTheReportedViewportRunsAwayOnSuchARuntime)
+{
+  // What a size taken from the reported viewport does on a runtime of this kind:
+  // the reason the plugin's panels do not use it.
+  const ArTheme theme;
+  const UiModel model = form(16);
+
+  UrlPanelSizeResult current = size_url_panel_for(model, theme, UrlPanelSizing{});
+  for (int round = 1; round <= 10; ++round) {
+    UrlPanelSizing sizing;
+    qar_web_panels::use_reported_viewport(sizing, following_viewport(current));
+    current = size_url_panel_for(model, theme, sizing);
+  }
+  EXPECT_LT(static_cast<double>(current.size.width_meters), UrlPanelSizing{}.min_width_m)
+    << "the panel is narrower than the width floor";
+}
+
+TEST(UrlPanelSizing, TheDesignSizeDoesNotDependOnTheReport)
+{
+  const ArTheme theme;
+  const UiModel model = form(16);
+  const UrlPanelSizeResult reference =
+    size_url_panel_for(model, theme, reported(500.0, 500.0));
+
+  const UrlPanelSizeResult none = size_like_the_plugin(model, theme, nullptr);
+  EXPECT_FLOAT_EQ(none.size.width_meters, reference.size.width_meters);
+  EXPECT_FLOAT_EQ(none.size.height_meters, reference.size.height_meters);
+  EXPECT_EQ(none.columns, reference.columns);
+  EXPECT_DOUBLE_EQ(none.theme_scale, reference.theme_scale);
+  EXPECT_TRUE(none.from_reported_viewport);
+  EXPECT_NE(none.note.find("design viewport"), std::string::npos);
+  EXPECT_EQ(none.note.find("reported by the page"), std::string::npos);
+
+  // A report is not an input: the helper overwrites whatever the sizing held.
+  const double reports[][2] = {{239.0, 749.0}, {54.0, 713.0}, {500.0, 500.0}, {0.0, 0.0}};
+  for (const auto & r : reports) {
+    UrlPanelSizing sizing = reported(r[0], r[1], 1800.0);
+    qar_web_panels::use_design_viewport(sizing);
+    const UrlPanelSizeResult sized = size_url_panel_for(model, theme, sizing);
+    EXPECT_FLOAT_EQ(sized.size.width_meters, reference.size.width_meters) << r[0];
+    EXPECT_FLOAT_EQ(sized.size.height_meters, reference.size.height_meters) << r[0];
+    EXPECT_DOUBLE_EQ(sized.visible_fraction, 1.0) << "no content height is given";
+  }
+}
+
+TEST(UrlPanelSizing, TheDesignViewportKeepsThePinnedSizeAndTheScaleKnob)
+{
+  const ArTheme theme;
+  UrlPanelSizing pinned;
+  pinned.fixed_width_m = 0.9;
+  pinned.fixed_height_m = 1.2;
+  pinned.max_height_m = 1.3;
+  qar_web_panels::use_design_viewport(pinned);
+  const UrlPanelSizeResult p = size_url_panel(measure_page(form(4), theme), theme, pinned);
+  EXPECT_FLOAT_EQ(p.size.width_meters, 0.9f);
+  EXPECT_FLOAT_EQ(p.size.height_meters, 1.2f);
+  EXPECT_NE(p.note.find("[pinned]"), std::string::npos);
+
+  UrlPanelSizing scaled;
+  qar_web_panels::use_design_viewport(scaled);
+  const UrlPanelSizeResult one = size_url_panel(measure_page(form(4), theme), theme, scaled);
+  scaled.scale = 1.2;
+  const UrlPanelSizeResult bigger = size_url_panel(measure_page(form(4), theme), theme, scaled);
+  EXPECT_NEAR(bigger.size.width_meters, one.size.width_meters * 1.2f, 2e-3f);
+}
+
+namespace
+{
+
+using Guard = qar_web_panels::UrlPanelResizeGuard;
+using Verdict = qar_web_panels::UrlPanelResizeGuard::Verdict;
+const Guard::Clock::time_point kT0 = Guard::Clock::time_point{} + std::chrono::hours(1);
+
+}  // namespace
+
+TEST(UrlPanelResizeGuard, AllowsThreeResizesInTenSecondsAndRefusesTheFourth)
+{
+  Guard guard;
+  EXPECT_EQ(guard.check(kT0, 0.5, 0.25), Verdict::Allowed);
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(1), 0.5, 0.25), Verdict::Allowed);
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(2), 0.5, 0.25), Verdict::Allowed);
+  // The first refusal is the one to log, the next ones are quiet.
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(3), 0.5, 0.25), Verdict::TooOften);
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(4), 0.5, 0.25), Verdict::TooOftenQuiet);
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(9), 0.5, 0.25), Verdict::TooOftenQuiet);
+}
+
+TEST(UrlPanelResizeGuard, TheBudgetComesBackWhenTheOldResizesLeaveTheWindow)
+{
+  Guard guard;
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_EQ(guard.check(kT0, 0.5, 0.25), Verdict::Allowed);
+  }
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(9), 0.5, 0.25), Verdict::TooOften);
+  // Ten seconds after the three resizes the window is empty.
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(10), 0.5, 0.25), Verdict::Allowed);
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(10), 0.5, 0.25), Verdict::Allowed);
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(10), 0.5, 0.25), Verdict::Allowed);
+  // A new burst is announced again.
+  EXPECT_EQ(guard.check(kT0 + std::chrono::seconds(11), 0.5, 0.25), Verdict::TooOften);
+}
+
+TEST(UrlPanelResizeGuard, ARefusedResizeIsNotCountedAndAWidthBelowTheFloorIsRefused)
+{
+  Guard guard;
+  EXPECT_EQ(guard.check(kT0, 0.10, 0.25), Verdict::BelowFloor);
+  EXPECT_EQ(guard.check(kT0, 0.2499, 0.25), Verdict::BelowFloor);
+  // None of the refusals used up the budget.
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(guard.check(kT0, 0.25, 0.25), Verdict::Allowed) << i;
+  }
+  // A pinned small size moves the floor with it: the caller passes the floor of its sizing.
+  Guard pinned;
+  EXPECT_EQ(pinned.check(kT0, 0.10, 0.10), Verdict::Allowed);
 }

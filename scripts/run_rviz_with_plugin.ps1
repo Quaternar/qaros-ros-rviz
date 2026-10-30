@@ -11,6 +11,13 @@
     (<Prefix>\local_setup.ps1) so that pluginlib finds the panel, then runs rviz2 with
     config/qar_streaming_dev.rviz (which pre-loads the QarStreamingPanel).
 
+    OFFLINE PREVIEW: this script never sets QAR_PANEL_LIVE_STREAM, loads no QAROS library and
+    starts no Hub. The panel opens in preview mode: its Connection tab shows the "QAROS Hub"
+    group with the mode, host and port settings (they can be edited and are kept), the pairing code
+    field and the Pair button are disabled, the identity reads "preview (no QAROS)" and the state
+    reads "QarOS: preview mode - set QAR_PANEL_LIVE_STREAM to connect". To join the installed QAROS
+    Hub, use scripts\run_live_rviz_stream_real.ps1.
+
     VERIFICATION MODES (-AutoDump, -AutoCapture, -AutoStereo, -AutoMulti): each one sets
     environment variables that make the panel, a few seconds after it has loaded, write a result
     (a diagnostics snapshot, or captured images with a summary) and then quit RViz cleanly. That

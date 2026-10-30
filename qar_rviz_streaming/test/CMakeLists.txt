@@ -42,6 +42,8 @@ add_executable(qar_rviz_streaming_tests
   # and qar_ar_core only): the settings table and its precedence rule, the router of the page's
   # control events, the page model, the state that fills it, and the panel placement.
   panel_settings_tests.cpp
+  # What the Connection tab and the status strip say about the join (standard library only).
+  connection_view_tests.cpp
   ar_control_panel_router_tests.cpp
   ar_control_panel_model_tests.cpp
   ar_control_panel_state_tests.cpp
@@ -66,6 +68,7 @@ add_executable(qar_rviz_streaming_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/spatial_interaction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/grid_floor_plane_geometry.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/panel_settings.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/connection_view.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_router.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_model.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_state.cpp
@@ -299,13 +302,22 @@ endif()
 # runs the suite under the offscreen platform plugin so that no window is ever created, and it
 # compiles stable_panel_layout.cpp (Qt Widgets only) directly rather than linking the colcon-only
 # plugin. That file measures scroll areas with the library's census (qar_qt_streaming), so the
-# library is linked. Skipped when Qt5 Widgets or the library is not found.
+# library is linked. The "QAROS Hub" group of the Connection tab (hub_connection_widget.cpp, Qt
+# Widgets only) is compiled in the same way, with the pure view it shows (connection_view.cpp).
+# Skipped when Qt5 Widgets or the library is not found.
 if(TARGET Qt5::Widgets AND TARGET qar_qt_streaming::qar_qt_streaming)
   add_executable(qar_rviz_streaming_widget_tests
     widget_test_main.cpp
     stable_panel_layout_tests.cpp
+    hub_connection_widget_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/stable_panel_layout.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/hub_connection_widget.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/connection_view.cpp
+    # Listed so that AUTOMOC processes the Q_OBJECT header of the Hub group.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/qar_rviz_streaming/hub_connection_widget.hpp
   )
+  # The Hub group has a meta object (signals); the stable layout's pieces have none.
+  set_target_properties(qar_rviz_streaming_widget_tests PROPERTIES AUTOMOC ON)
 
   target_include_directories(qar_rviz_streaming_widget_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include

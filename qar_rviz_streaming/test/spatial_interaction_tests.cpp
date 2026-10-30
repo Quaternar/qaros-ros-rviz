@@ -559,7 +559,7 @@ TEST(SpatialInteraction, AnActionPointClickOnEmptySpacePublishesNothingAndSaysSo
     qar_rviz_streaming::spatial_target_from_id(qar_rviz_streaming::default_spatial_target_id()));
   controller.set_auto_confirm(true);
 
-  const QarTimePoint timestamp{0, 0};
+  const QarTimePoint timestamp{0};
   const QarVector3 hand{0.4f, 1.3f, -0.2f};
   PanelPointerSample no_hit;
   ASSERT_TRUE(

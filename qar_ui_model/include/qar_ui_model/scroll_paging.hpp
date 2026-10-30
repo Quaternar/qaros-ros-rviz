@@ -11,9 +11,9 @@
 ///
 /// The obvious answer to "the page is taller than the panel" is a scrollbar,
 /// and it is the wrong one in AR. A scrollbar is a DRAG affordance: press on
-/// the thumb, hold, move, release. The QarOS SDK 2026-09-21 release added a
-/// DRAG gesture with a full lifecycle (qar_qt_streaming docs/ARCHITECTURE.md,
-/// "Input path"), so the API can express dragging a thumb; paging is a CHOICE,
+/// the thumb, hold, move, release. The QarOS SDK has a DRAG gesture with a full
+/// lifecycle (qar_qt_streaming docs/ARCHITECTURE.md, "Input path"), so the API
+/// can express dragging a thumb; paging is a CHOICE,
 /// not a workaround: a thumb is a few millimetres of panel that an operator has
 /// to hit and hold in mid air with an unsupported arm, which is a poor target
 /// even when the API can express it. Discrete jumps that are each complete in

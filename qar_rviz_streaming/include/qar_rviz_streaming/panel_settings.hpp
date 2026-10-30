@@ -19,8 +19,7 @@
 ///
 /// A variable whose text is not acceptable is reported once in the warnings of
 /// @ref resolve_settings and ignored; the saved value or the default applies. A variable may
-/// hold values that the panel's controls do not offer (peer admission `named` and `any`); a
-/// saved configuration may not.
+/// hold values that the panel's controls do not offer; a saved configuration may not.
 ///
 /// ## What is saved
 ///
@@ -49,7 +48,7 @@ namespace qar_rviz_streaming
 {
 
 /// The value of the version key that @ref settings_to_save writes.
-constexpr int kPanelSettingsVersion = 2;
+constexpr int kPanelSettingsVersion = 3;
 /// The lowest settings version whose configuration does not ask for the default dock size; see
 /// @ref wants_default_dock_size.
 constexpr int kDefaultDockSizeSettingsVersion = 2;
@@ -62,7 +61,9 @@ namespace settings_key
 {
 constexpr const char * kResolution = "Resolution";
 constexpr const char * kFpsCap = "FPS Cap";
-constexpr const char * kPeerAdmission = "Peer Admission";
+constexpr const char * kHubMode = "Hub Mode";
+constexpr const char * kHubHost = "Hub Host";
+constexpr const char * kHubPort = "Hub Port";
 constexpr const char * kHiddenDisplaysOnConnect = "Hidden Displays On Connect";
 constexpr const char * kArControlPanel = "AR Control Panel";
 constexpr const char * kArPanelCloseMode = "AR Panel Close Mode";
@@ -78,7 +79,7 @@ enum class SettingKind : std::uint8_t
 {
   Choice = 0,  ///< One word of a list.
   Bool,        ///< `true` or `false`.
-  Int,         ///< One integer of a list.
+  Int,         ///< A whole number: one of a list, or within a range when max is above 0.
   Double,      ///< A decimal number within a range, with a fixed number of decimals.
   Text         ///< A short text of limited characters.
 };
@@ -92,7 +93,7 @@ struct SettingSpec
   const char * default_value = "";       ///< canonical text
   std::vector<std::string> choices;      ///< Choice/Int: what the controls and a saved value hold
   std::vector<std::string> env_choices;  ///< Choice: what the variable may hold; empty = choices
-  double min = 0.0;                      ///< Double: inclusive range
+  double min = 0.0;                      ///< Double, Int: inclusive range (Int: when max > 0)
   double max = 0.0;
   int decimals = 0;                      ///< Double: kept decimals
   std::size_t min_length = 0;            ///< Text: shortest accepted text, in bytes
@@ -129,6 +130,7 @@ struct SettingsLoadReport
   /// are present; 0 when nothing of ours was saved.
   int version = 0;
   std::vector<std::string> warnings;      ///< one sentence per rejected value or oddity
+  std::vector<std::string> migrated;      ///< one sentence per value changed or dropped on read
   std::vector<std::string> unknown_keys;  ///< not ours, not Class, not Name, not the version
 };
 
@@ -157,6 +159,11 @@ bool canonicalize_setting(
 /// @ref panel_setting_specs whose saved text is acceptable; a rejected value is left out and
 /// named in the warnings. A version above @ref kPanelSettingsVersion still has its known keys
 /// read, with a warning.
+///
+/// A configuration below version 3 is read as this plugin's current settings: "Peer Admission"
+/// is dropped (QAROS serves every target, so the key has no meaning) and the invite kinds that
+/// QAROS cannot start are mapped (`quest` to `headset`, `visualizer` and `zed` to `hololens`).
+/// Each change is a sentence in @ref SettingsLoadReport::migrated.
 SettingsText parse_saved_settings(const SettingsText & config, SettingsLoadReport & report);
 
 /// @brief Whether a loaded configuration wants the default dock size of the panel once.
@@ -187,6 +194,13 @@ bool setting_bool(const ResolvedSettings & settings, const char * key);
 int setting_int(const ResolvedSettings & settings, const char * key);
 double setting_double(const ResolvedSettings & settings, const char * key);
 const std::string & setting_text(const ResolvedSettings & settings, const char * key);
+
+/// @brief The environment variables that have no effect with this QAROS.
+const std::vector<std::string> & removed_environment_variables();
+
+/// @brief One sentence for each variable of @ref removed_environment_variables that @p env says
+/// is set (even to an empty text): "ignored: <name> has no effect with this QAROS".
+std::vector<std::string> removed_environment_sentences(const EnvLookup & env);
 
 /// "action_point" | "ground_plane" | "fixed_depth" <-> the target ids of spatial_interaction.hpp.
 /// @return false (and @p out_id unchanged) for any other word.

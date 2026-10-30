@@ -11,28 +11,26 @@ The panel writes every line that it logs to two places. It appends the line to i
 | the `Diagnostics` view | the lines of the panel, with `HH:mm:ss.zzz` in front, the last 2000 | the heartbeat only: `QAR_PANEL_HEARTBEAT_S` |
 | the standard error of RViz | the same lines after `[qar-panel]`, and the lines that the libraries of qar_ogre_adapter write straight to it | nothing for the panel; the adapters follow `QAR_ADAPTER_TRACE` for the per-call lines |
 | the standard output of RViz | nothing of the panel; the console copy of the QarOS library | `QAR_PANEL_LOG_CONSOLE` |
-| the QarOS log folder | the log of the library and of the processes that it starts, and the frame trace | `QAR_PANEL_LOG_DIR`, `QAR_PANEL_LOG_SEVERITY` |
+| the QarOS log folder | `qar_streaming.log`, the log of the library inside RViz, the crash reports of the process, and the frame trace | `QAR_PANEL_LOG_DIR`, `QAR_PANEL_LOG_SEVERITY` |
+| the folder logs of the QarOS log folder | the logs of the processes that QAROS starts: one folder for each session of the runtime launcher below `qar-launcher-default`, and `qaros-hub-service` for the Hub service | QAROS |
 | the folder `QAR_VIDEO_TIMING_DIR` | the timing files | the launcher parameter `-TimingCsv` |
 | the output prefix of a scripted mode | the result files of the mode | the variables `QAR_PANEL_AUTO...` and the preview script |
-| the log folder of the launcher | the results of the start checks, `rviz_live_<stamp>.checks.txt`, and, after RViz has ended, the copy of the log of the QarOS library, `rviz_live_<stamp>.qar_streaming.log`, the copies of the logs of the mixers and of the Visualizers of the run, `rviz_live_<stamp>.mixer_<id>.log` and `rviz_live_<stamp>.streaming_viz_<id>.log`, and the copies of the crash reports of the run, `rviz_live_<stamp>.<report>` | the launcher parameter `-LogDir` |
+| the log folder of the launcher | the results of the start checks, `rviz_live_<stamp>.checks.txt`, and, after RViz has ended, the copy of the log of the QarOS library, `rviz_live_<stamp>.qar_streaming.log`, the copies of the log files of the newest launcher session of the run, `rviz_live_<stamp>.launcher_<name>`, and the copies of the crash reports of the run, `rviz_live_<stamp>.<report>` | the launcher parameter `-LogDir` |
 
-The launcher makes the copies of the QarOS processes when `rviz2.exe` has ended, and it copies only the files that were written at or after the start of the run. It prints one line for each copy, with the new name and the size. A QarOS log folder that does not exist, or that holds no file of the run, gives a note and no error, and a copy that fails gives a warning. The files with the ending `.dmp` of the crash reports are not copied.
+The launcher makes the copies of the QarOS processes when `rviz2.exe` has ended, with the crash reports of the QarOS log folder, of its folder `crashes` and of the Hub service, and it copies only the files that were written at or after the start of the run. It prints one line for each copy, with the new name and the size. A QarOS log folder that does not exist, or that holds no file of the run, gives a note and no error, and a copy that fails gives a warning. The files with the ending `.dmp` of the crash reports are not copied.
 
-The QarOS log folder is `quaternar` in `TEMP` unless `QAR_PANEL_LOG_DIR` names another, and every process that the library starts writes its own files there. [Where the QarOS library writes its logs](TROUBLESHOOTING.md#where-the-qaros-library-writes-its-logs) explains the folder and [Which severity applies](TROUBLESHOOTING.md#which-severity-applies) the severity. The names of the files carry the role of the process, and the authors of qar_rviz_plugin saw these in sessions with a Visualizer: `streaming_viz_<id>_stdout.log` for a Visualizer, `mixer_<id>_stdout.log` for a mixer that the runtime starts for itself, and `qar_launcher_stdout.log` for the runtime launcher. The runtime reports its own internal peers too, which is why the admission policy exists.
+The QarOS log folder is `quaternar` in `TEMP` unless `QAR_PANEL_LOG_DIR` names another. The library inside RViz writes its log there and starts the file afresh in every session, and the processes that QAROS starts write below the folder logs of the QarOS log folder: the runtime launcher into one folder for each session below `qar-launcher-default`, and the Hub service into `qaros-hub-service`. [Where the QarOS library writes its logs](TROUBLESHOOTING.md#where-the-qaros-library-writes-its-logs) explains the folder and [Which severity applies](TROUBLESHOOTING.md#which-severity-applies) the severity. The runtime reports its own internal peers too; the session owner keeps them out of the list of targets and uses them only to tell that the Hub is gone.
 
 The result files of the capture buttons and of the scripted modes are text files of `key=value` lines, and the first line of each says what the file is. The file `_capture.txt` starts with `"# Qar RViz2 offscreen capture"`, `_stereo.txt` with `"# Qar RViz2 single-peer stereo capture"`, `_autostereo.txt` with `"# Qar RViz2 single-peer stereo AUTOSTEREO summary"`, `_automulti.txt` with `"# Qar RViz2 multi-peer batched render scheduler proof"`, and the file that `QAR_PANEL_AUTODUMP` names with `"# Qar RViz2 streaming panel - auto diagnostics dump"`.
 
-The command lists the files of the QarOS log folder that hold the standard output of a process, by name and with the ending of the name cut off:
+The command lists the folders of the logs of the processes that QAROS starts, by name:
 
 ```powershell
-Get-ChildItem -LiteralPath (Join-Path $env:TEMP 'quaternar') -Filter '*_stdout.log' | ForEach-Object { $_.Name -replace '_stdout\.log$', '' }
+Get-ChildItem -LiteralPath (Join-Path $env:TEMP 'quaternar\logs') -Directory | ForEach-Object { $_.Name }
 ```
 ```text
-mixer_1b797fb9-0178-4449-8eb3-e192bad32a3c
-mixer_323b42fc-0f3c-4459-9ab0-9a2aad9c203b
-qar_launcher
-streaming_viz_1b9facce-e064-4c2e-b1d2-5c0201963373
-streaming_viz_bf2bb600-7dce-4ded-81f1-9061a69591c4
+qar-launcher-default
+qaros-hub-service
 ```
 
 ## Channels and prefixes
@@ -42,7 +40,7 @@ Every line starts with the prefix of its writer. The first rows come through the
 | Prefix | Written by | Lines |
 |---|---|---|
 | `[qar-panel]` | the panel | everything below that has a keyword in front |
-| `"[lib:"` | the manager of qar_ogre_streaming, through the sink of the panel | the creation, activation and destruction of the 3D streams, and the lighting |
+| `"[lib:"` | the manager of qar_ogre_streaming, through the sink of the panel | the creation, activation and destruction of the 3D streams, the wait for a sender, and the lighting |
 | `"[qt_lib:"` | the manager of qar_qt_streaming, through the sink of the panel | the lifecycle of the AR panels of Qt windows, with the key of the panel |
 | `"[ros_ui:"` | qar_ros_ui, through the sink of the panel | the diagnostics of the graph discovery and of the bridges |
 | `[qar-web]` | the panel | the viewport that a web page reports |
@@ -85,6 +83,8 @@ CAPPED=%1
 | %1%2 sub=%3
 UNSERVED %1s nr=%2 stream=%3
 nr=%1
+| tasks q=%1 run=%2 slow=%3
+| gui_calls slow=%1 worst=%2
 || vdisp %1
 ```
 
@@ -107,13 +107,15 @@ Each line of the block is one part of the heartbeat. The fields, in the order of
 | `"UNSERVED"`, `nr` | a panel that holds a sender, has not submitted a frame and is neither closed in AR, hidden nor parked: the seconds, the streak of not-ready ticks and the stream identifier; the streak is three numbers separated by slashes, for the ticks that had no destination, for the status 604 and for the status 603, for example 6/0/0, where 604 says that there is no transfer to reserve a destination on and 603 that the transfer is reconnecting; a panel that has frames and waits shows `nr` alone, as one number |
 | `"lum="`, `"a="` | the last part of the field of each AR panel: the mean luminance of the frame that the panel sent last over all rows, over the top rows, which are the first 15 percent of the rows, and over the other rows, as three whole numbers separated by slashes, and then the mean alpha; the sample is every eighth pixel and is taken at most once a second; `"lum=-"` stands for a panel that has no measurement, and the alpha is left out until it has one |
 | `"AR gestures: rx="` and `picker` | the counters of the pointer, which [Spatial lines](#spatial-lines) explains |
+| `tasks` | in a QarOS session, after the counters of the pointer and a bar: the calls that wait for the thread of the session owner `q`, the call that runs now with its name and its running time `run`, and the slowest call so far with its name and time `slow`; `-` stands for none |
+| `"gui_calls"` | in a QarOS session, after a bar: the number of calls on the GUI thread that took longer than the limit `slow`, and the slowest of them with its name and time `worst`; `-` stands for none |
 | `vdisp` | after two bars, one field for each RViz Image or Camera display, in the form `<display>{<topic> pubs=<n> <verdict>}`: the verdict is `RX` when frames reach the display, `WAITING` when a publisher is visible and nothing arrived, `NOPUB` when RViz sees no publisher, `ERR` when its Topic row starts with `Error`, and `UNKNOWN` when there is no row to read; `{NOTOPIC}` stands for a display without a topic and `OFF` for a disabled one |
 
 The brightness field is where the log tells two faults apart: a panel that shows black in AR while `"lum="` is high has frames with content that the receiver does not show, and a panel whose frames are black has a problem of capture.
 
 ## Status lines
 
-The labels of the panel say the same things as the lines, and some of them are logged. The label of the connection has the states `Qar runtime: STOPPED`, `Qar runtime: CONNECTING...`, `Qar runtime: RUNNING (live)` and, in the preview, `Qar runtime: RUNNING (offline preview)`. A failed action sets `"Last error:"`, which turns red, and logs the same text after `ERROR:`; a later success clears it. Both labels are one line each in the strip at the top of the panel: a text that is longer than the strip is shortened to its width, and the whole text is the tool tip. The readout of the AR panels has this form:
+The labels of the panel say the same things as the lines, and some of them are logged. In a QarOS session the first line of the strip is the State line of the group `"QAROS Hub"`: `"QarOS: not connected"`, `"QarOS: loading the QAROS runtime ..."`, `"QarOS: waiting for approval in the QAROS Hub - click Allow in the QAROS window"`, `"QarOS: rejoining"`, `"QarOS: pairing"`, `"QarOS: joined"`, `"QarOS: connected"`, `"QarOS: Hub not reachable - waiting for it to come back"`, `"QarOS: disconnecting ..."`, and `"QarOS: "` with the sentence of the failure when a join failed. [Connecting and pausing](OPERATOR_GUIDE.md#connecting-and-pausing) explains each state; the log does not repeat these texts, it has the lines of the owner instead. In the offline preview the label of the connection has the states `Qar runtime: STOPPED` and `Qar runtime: RUNNING (offline preview)`. A failed action sets `"Last error:"`, which turns red, and logs the same text after `ERROR:`; a later success clears it. Both labels are one line each in the strip at the top of the panel: a text that is longer than the strip is shortened to its width, and the whole text is the tool tip. The readout of the AR panels has this form:
 
 ```text
 AR panels: none
@@ -211,7 +213,7 @@ fitted to
 
 A round line gives the round, the height of the dock in pixels, the pixels that the largest scroll area is missing, the number of areas that were measured and that could not be measured, and the largest area. The end of the fit gives the height and the number of rounds, and either `confirmed: no scroll bar`, or the scroll bar that is left, in pixels, and the reason.
 
-The lines with `"SETTINGS:"` report the twelve settings of the panel. The panel writes them when it loads or saves the RViz configuration, when you edit a setting, and at the connect; a line is written once, however often the situation comes back. Each line has this form:
+The lines with `"SETTINGS:"` report the fourteen settings of the panel. The panel writes them when it loads or saves the RViz configuration, when you edit a setting, and at the connect; a line is written once, however often the situation comes back. Each line has this form:
 
 ```text
 SETTINGS: loaded %1 values from the RViz config (version %2)
@@ -219,57 +221,118 @@ SETTINGS: ignored unknown keys:
 SETTINGS: saved %1 values (version %2)
 SETTINGS: %1 = %2 (the operator's own value, written by File > Save Config)
 SETTINGS: %1 '%2' is %3 - not kept for the RViz config
-SETTINGS: peer admission '%1' (%2) is what this connect uses.
 %1 = %2 comes from the environment (%3=%4); its control shows that value and is disabled
 ```
 
-The line `loaded` appears when the configuration holds values of the panel, and the line `ignored unknown keys` lists the keys that the panel does not know and ignores. The line `saved` names the number of values and the version of the settings. A line with `the operator's own value` follows an edit that changed a value, and a line with `not kept` follows a text that the setting does not accept. A setting that a variable decides is written once, with the variable and its text, and its control shows that value and is disabled. A value that is not acceptable is named with the reason: a saved value is replaced by the default, and a variable is ignored in favour of the saved value or the default. The line about the admission names the policy that the connect uses and where it comes from, which is the variable, `"from the panel settings"` or `"the default"`.
+The line `loaded` appears when the configuration holds values of the panel, and the line `ignored unknown keys` lists the keys that the panel does not know and ignores. The line `saved` names the number of values and the version of the settings. A line with `the operator's own value` follows an edit that changed a value, and a line with `not kept` follows a text that the setting does not accept. A setting that a variable decides is written once, with the variable and its text, and its control shows that value and is disabled. A value that is not acceptable is named with the reason: a saved value is replaced by the default, and a variable is ignored in favour of the saved value or the default.
 
 ## Connect, invite and session lines
 
-A connection writes these lines of the panel in this order; the first is written when you press the button, and the lines after it appear when the session is built. Each line has this form:
+A connection writes lines of three kinds. The panel writes its own lines, which start with a keyword such as `LIVE:`, `"QarOS:"` or `"Connected to QarOS:"`. The session owner, the object that runs on a thread of its own, loads the installed QAROS library and joins the Hub, writes lines that start with `"QAROS: "` in capital letters. The adapters write lines that start with `[qar-adapter]`. The owner's lines go to the standard error of RViz unchanged and are queued for the `Diagnostics` view, which shows them from the render tick, so they carry the time of the tick and not the time of the event. The first lines of a connection are these, in this order; the first is written when you press the button, and the lines after it appear as the owner reports the progress of the join. Each line has this form:
 
 ```text
-Connecting to QarOS runtime (building session; RViz stays responsive)...
-LIVE: near/far = %1 / %2 m, depth_scale = %3
 LIVE: QarOS library logging: severity=%1 (from %2), console duplicate to stdout=%3%4
+QAROS: session owner made (program %1, Hub mode setting '%2')
+Connecting to QarOS (the QAROS runtime is loaded and the Hub joined on a thread of its own; RViz stays responsive)...
+QarOS: the Hub session is open; making the render factory.
+LIVE: near/far = %1 / %2 m, depth_scale = %3
+LIVE: max_peers=%1 (the session owner serves at most that many targets)
 LIVE: app volume '%1' %2 m cube (%3) at y=%4 m, app_scale=%5, fixed panel poses: %6
 LIVE: AR panel frame top %1, bottom %2, left %3, right %4 m, fit margin %5 m (QarOS draws a stream panel's video at the full panel width under its title bar when it fits there and otherwise adds a scroll track at the right: a panel is made as tall as the video needs plus the margin, a dialog as narrow; source: %6%7)
-LIVE: auto-invite %1, admission=%2, max_peers=%3
-Connected to QarOS: session open, streaming active. No peer invited — pick a device kind and click 'Invite peer' to open a Visualizer.
-Connected to QarOS: streaming active; waiting for the invited peer(s).
+QarOS: the app volume of the session is being made on the owner's thread.
+Connected to QarOS: session open, streaming active; a stream opens for each target that is online.
 AR VISIBILITY: hide (panels are hidden and parked in AR, never closed while the session runs; experimental)
 AR VISIBILITY: close (panels are closed and made again)
 ```
 
-The line that names the logging reports the severity that the plugin decided on and where it came from, which is the variable `QAR_PANEL_LOG_SEVERITY`, `QAR_LOG_SEVERITY` or the default, and the part `%4` is a note when `QAR_LOG_SEVERITY` in the environment disagreed and was overwritten. The line about the app volume gives the edge of the cube in metres, where the edge came from, the height of the centre of the cube, the scale and the way in which the panels with a fixed place are hung, `room` or `ground`. The edge comes from `QAR_PANEL_VOLUME_SIZE`, from the default edge times the scale, which the line writes as `"m x app_scale"` and the scale, or it is the default size; with the app volume off, the line `LIVE: fixed panel poses: %1` takes its place. The line about the frame gives the four insets and the fit margin, in metres, with which every AR panel is sized, and where they came from: `QAR_PANEL_AR_FRAME`, `QAR_PANEL_AR_HEADROOM (the top inset only)` or `default`. The part `, QAR_PANEL_AR_HEADROOM ignored` says that both variables were set, in which case the frame variable decides. The two lines `Connected to QarOS:` are alternatives: the first says that nothing was invited. The last line says how a panel is switched off from now on, `hide` or `close`. A failure to connect ends the attempt with one of these lines and sets `"Last error:"`; the state label then keeps `Qar runtime: CONNECTING...`, because the label is not refreshed at that moment; each line has this form:
+The first two lines are written once, when the owner is made at the first press of `"Connect to QarOS"`; a later press finds the owner and writes `QAROS: the Hub settings changed; the session owner applies them at the next connect.` when a Hub setting differs from the one it holds. The line that names the logging reports the severity that the plugin decided on and where it came from, which is the variable `QAR_PANEL_LOG_SEVERITY`, `QAR_LOG_SEVERITY` or the default, and the part `%4` is a note when `QAR_LOG_SEVERITY` in the environment disagreed and was overwritten. The line about the app volume gives the edge of the cube in metres, where the edge came from, the height of the centre of the cube, the scale and the way in which the panels with a fixed place are hung, `room` or `ground`. The edge comes from `QAR_PANEL_VOLUME_SIZE`, from the default edge times the scale, which the line writes as `"m x app_scale"` and the scale, or it is the default size; with the app volume off, the line `LIVE: fixed panel poses: %1` takes its place. The line about the frame gives the four insets and the fit margin, in metres, with which every AR panel is sized, and where they came from: `QAR_PANEL_AR_FRAME`, `QAR_PANEL_AR_HEADROOM (the top inset only)` or `default`. The part `, QAR_PANEL_AR_HEADROOM ignored` says that both variables were set, in which case the frame variable decides. The line `LIVE: max_peers=%1` gives the largest number of targets that get a stream, 8 unless `QAR_PANEL_MAX_PEERS` says otherwise. The line `Connected to QarOS:` is written when the render factory and the app volume are ready and the streaming has started, and the last line says how a panel is switched off from now on, `hide` or `close`.
+
+The lines of the owner are what the Hub did. They start with `"QAROS: "`, and the owner writes one line for each of these events; each line has this form:
 
 ```text
-QarOS connect threw: %1
-QarOS connect failed: %1
-QarOS: connect already in progress — RViz stays live; please wait.
-QarOS: streaming paused (session kept open).
-QarOS: streaming resumed.
+QAROS: 
+runtime 
+ from 
+state 
+status 
+progress 
+hub mode 
+joined as peer 
+) in 
+target 
+ -> served
+not served (
+ -> stream stopped
+invite 
+ -> error: 
+settings kept for the next connect (state 
+identity file damaged: pair again (
+identity file not written: 
 ```
 
-The first two lines are failures. The other three belong to the buttons. `"QarOS: connect already in progress"` answers a second press on `"Connect to QarOS"` while the session is being built. `"QarOS: streaming paused (session kept open)."` is what `"Disconnect (pause)"` writes on a connected panel, and the panel does not count as connected afterwards. `"QarOS: streaming resumed."` is written only by a press on `"Connect to QarOS"` while the panel still counts as connected, that is, a press with no pause before it: it only switches the streaming on again and runs no step of the connection.
+The line `runtime` names the version, the flavour and the C API of the library that was loaded and the folder it came from. The line `state` names the state of the join, one of `idle`, `loading`, `waiting_for_approval`, `rejoining`, `needs_code`, `pairing`, `running`, `reconnecting`, `stopping` and `failed`, and a state that has a cause is followed by a line `status` with the symbol, the sentence and, in parentheses, the detail. The line `progress` carries a step that the library reported while the join was running, and the line `hub mode` says whether the owner took the Hub of this PC, `local`, or the Hub of another PC, `remote`, with the reason in parentheses. The line `joined as peer` ends the join: it gives the first eight hexadecimal digits of the identifier of the program, the way of the join, `local`, `rejoin` or `pairing`, and the seconds that the join took. The line `target` is written when a peer of the Hub appears, changes its presence or goes: it gives the first eight digits of the peer identifier, the kind of the device, its name and its presence, and whether the peer is `served`, which is to say that a stream is made for it, or `not served`, with the reason in parentheses, for example the cap of targets. The line `invite` gives the kind and the host of an invited device and either the first digits of the new peer or the error that the Hub answered. The line `settings kept for the next connect` says that a change of the Hub settings arrived while a join was running, so that it applies at the next connect, and `"identity file damaged"` says that the stored pairing could not be read, so that the next connect needs a code.
 
-A press on `"Connect to QarOS"` after a pause takes the way of a first connection on the session that is still open. It builds no session, so the lines `"Connecting to QarOS runtime"` and `LIVE:` of the list above are not written again. It hands the session to the manager and switches the streaming on, which the manager reports with the line `"streaming activated"` after its prefix `"[lib:"`. It subscribes to the gestures of the app volume again, and it writes one of the two lines `"Connected to QarOS:"` above. After a pause, therefore, a line `"Connected to QarOS:"` after the line `"QarOS: streaming paused (session kept open)."` shows that the streaming runs again, and the line `"QarOS: streaming resumed."` does not appear.
+A QAROS call of the owner's thread that takes half a second or longer and a task that takes one second or more are logged with their name and their duration, the first twenty of each name and then every fiftieth, and a task that the owner drops at its end is logged with the reason; each line has this form:
+
+```text
+QAROS: call 
+ took 
+ ms
+task '
+' took 
+' dropped (
+teardown: 
+ in 
+```
+
+The lines `teardown:` are written when the session ends, one for each step in the order in which the owner takes the session apart: the onboarding attempt, the invites, the subscription to the peers, the session, the runtime and the library, each with the milliseconds that it took. A call on the GUI thread of RViz that takes longer than the limit, 20 ms unless `QAR_GUI_CALL_WARN_MS` says otherwise, is logged by the guard of the plugin; its line has this form:
+
+```text
+[qar-gui-call] %s WARNING %s took %.0f ms on the GUI thread (limit %.0f ms)
+```
+
+A join that fails ends with a state `failed` or `needs_code`, and the panel then sets `"Last error:"` to the sentence of the owner, after the prefix `"QarOS: "`, and logs it after `ERROR:`; the State line shows the same sentence and `"Connect to QarOS"` is on again. A failure after the join, when the render factory or the app volume could not be made, ends the attempt with one of these lines, gives the session back to the owner and sets `"Last error:"`; the lines of the buttons are on the same list. Each line has this form:
+
+```text
+QarOS connect failed: %1
+QarOS: connect already in progress - RViz stays live; please wait.
+QarOS: already connected.
+QarOS: streaming paused (session kept open).
+QarOS: streaming resumed.
+QarOS: the connect was stopped while the session was being set up.
+```
+
+The first line is the failure. `"QarOS: connect already in progress"` answers a press on `"Connect to QarOS"` while a join is under way, and `"QarOS: already connected."` a press while the panel is connected and streaming. `"QarOS: streaming paused (session kept open)."` is what `"Disconnect (pause)"` writes on a connected panel, and the panel does not count as connected afterwards. `"QarOS: the connect was stopped while the session was being set up."` is what `"Disconnect (pause)"` writes while the app volume is still being made: the render factory lets go and the session goes back to the owner. A press on `"Connect to QarOS"` after a pause writes `"QarOS: streaming resumed."` and then does what the end of a first connection does on the session that is still open: it builds no session, so the lines of the list above up to the app volume are not written again, but it switches the streaming on, which the manager reports with the line `"streaming activated"` after its prefix `"[lib:"`, subscribes to the gestures of the app volume again, and writes the lines `"Connected to QarOS:"` and `"AR VISIBILITY:"` again.
+
+The owner reports the end of a pairing, of a forget and of a cancel to the panel, which writes these lines; each line has this form:
+
+```text
+QarOS: pairing code sent to the Hub at %1:%2.
+QarOS: forgetting the pairing with the Hub (the session is released first).
+QarOS: the pairing with the Hub was forgotten; the next connect needs a code.
+QarOS: cancelling the join.
+```
+
+The pairing code itself is never logged. When the session ends, on `"Forget pairing"`, because the owner left the running state on its own, or when RViz closes the panel, the panel releases what it built on the session, and the lines say what was done; each line has this form:
+
+```text
+QarOS: releasing everything built on the session (%1).
+QarOS: %1 session task(s) queued; the owner runs them before it releases the session (%2 ms on this thread). AR panels are hidden in the Hub; start them again with 'Stream panel to AR' after the next connect.
+```
+
+The first line gives the reason: `the pairing is forgotten` or `the QAROS session ended`. The second line gives the number of calls that wait for the thread of the owner, which hides each QarOS panel and lets go of its sender before it releases the session, and the milliseconds that the release took on the GUI thread; no QarOS panel is closed.
 
 The options that change the connect write one line each when they are not at their defaults, and a value that cannot be used writes an error; each line has this form:
 
 ```text
-LIVE: inviting devices at connect: %1
-LIVE: peer admission = NEW — peers present in the first few seconds are the runtime's own; anything joining later is treated as a real consumer and gets a stream.
 LIVE: GL submit mode = supply-own (expected BLACK against the real SDK)
-LIVE: app volume DISABLED — streams get app_volume_id=NULL (mixer-off path only)
+LIVE: app volume DISABLED - streams get app_volume_id=NULL (mixer-off path only)
 LIVE: WARNING: %1
 bad QAR_PANEL_DEPTH_SCALE '%1' (use a number or 'norm')
 unknown QAR_PANEL_GL_SUBMIT '%1' (use render-into|supply-own)
-unknown QAR_PANEL_PEER_ADMISSION '%1' (use invited|new|named|any)
 ```
 
-The admission lines for `any` and `named` follow the same pattern with `"ANY"` and `"NAMED"`. A value of `QAR_PANEL_AR_FRAME`, `QAR_PANEL_AR_HEADROOM` or `QAR_PANEL_FIXED_POSES` that cannot be used is named in a line after the prefix `LIVE: WARNING:`, with the text that was refused and what is used instead, and the lines end in the following parts; each line has this form:
+A value of `QAR_PANEL_AR_FRAME`, `QAR_PANEL_AR_HEADROOM` or `QAR_PANEL_FIXED_POSES` that cannot be used is named in a line after the prefix `LIVE: WARNING:`, with the text that was refused and what is used instead, as is a value of `QAR_PANEL_APPROVAL_TIMEOUT_S` that is not a number of seconds. The lines end in the following parts; each line has this form:
 
 ```text
 QAR_PANEL_AR_FRAME='
@@ -277,36 +340,60 @@ QAR_PANEL_AR_FRAME='
 QAR_PANEL_AR_HEADROOM='
 ' is not a number of metres from 0 to 
 ' is not room or ground; using room.
+QAR_PANEL_APPROVAL_TIMEOUT_S='
+' is not a number of seconds (0 to 600) - the Hub's default of 120 s applies
 ```
 
-An invitation and the streams that follow it write these lines; each line has this form:
+Targets need no invitation: every target of the Hub that is online gets a stream as soon as the Hub reports it. A device is invited by the group `"Invite a device"` or by `QAR_PANEL_INVITE_PEERS`, in the mode This PC only, and the invitation and the streams that follow it write these lines; each line has this form:
 
 ```text
-LIVE: invited %1%2 as peer %3 (%4 invited in total). Its stream opens when the device connects.
-NOTE: each Visualizer invite carries a fresh GUID by default (QAR_PANEL_VISUALIZER_GUID=auto), so every invite opens its own Visualizer.
-Invite peer: a HoloLens needs its device hostname — type it in the field next to the device selector.
+LIVE: inviting devices at connect: %1
+LIVE: QAR_PANEL_INVITE_PEERS was handled when this session first connected; it is not handled again on a resume.
+LIVE: QAR_PANEL_INVITE_PEERS is ignored: device invites are served only to an app that joined the Hub on its own PC.
+LIVE: QAR_PANEL_INVITE_PEERS entry '%1' skipped: the kind is hololens or headset.
+LIVE: QAR_PANEL_INVITE_PEERS entry '%1' skipped: it needs a host (kind:host).
+LIVE: invite %1 '%2' refused: %3
+LIVE: inviting %1 '%2'; the Hub's answer follows.
+LIVE: invited %1 as peer %2. Its stream opens when the device connects.
+Invite peer: type the host name or address of the device in the field next to the device selector.
+Invite %1 failed: %2
 LIVE: sender creation in flight (async) — RViz stays responsive; the stream opens as soon as the peer completes negotiation.
 LIVE: opened stream for peer %1
 LIVE: closed stream for peer %1
 ```
 
-The first line gives the first ten hexadecimal digits of the peer identifier that the runtime assigned to the invitation. The line about the sender is written once, because the creation of a sender is asynchronous and reports "not yet" on most early ticks. The adapter prints the bootstrap and the peers on the same stream, and the lines below are the ones that decide most cases. They are always printed; `QAR_ADAPTER_TRACE` adds a pair of lines around each main call of the bootstrap; each line has this form:
+The line `"LIVE: inviting devices at connect"` lists the entries of `QAR_PANEL_INVITE_PEERS`, which the panel handles once for a session, and the entries that fail are skipped one by one. The line `"LIVE: inviting %1"` is written when the button `"Invite peer"` sends an invitation, and the line `"LIVE: invited"` when the Hub has answered; it gives the first ten hexadecimal digits of the peer identifier that the Hub assigned to the device. A refusal or an error of the Hub is the text of `"Last error:"`, after `"Invite %1 failed:"`, and is logged after `ERROR:`. The line about the sender is written once, because the creation of a sender is asynchronous and reports "not yet" on most early ticks. The ten digits of the lines `opened stream` and `closed stream` are those of the target that the stream belongs to.
+
+The manager of the 3D streams, which writes with the prefix `"[lib:"`, asks the sender factory for a sender every time a stream is created, and the factory answers "not yet" until the receiver has completed the negotiation. A caller that asks again for every tick would fill the log, so the manager writes the first answer of a wait as one line, an error, and counts the answers that follow. The wait ends with one line that gives the number of answers and the milliseconds: an information when the sender came, a warning when the stream was destroyed or the factory was exchanged first. A wait that is open when the manager is destroyed ends without a line. Each line has this form, with the peer after it in the form `(peer %1)`:
+
+```text
+[lib:%1:%2] %3
+sender factory returned null for peer
+(repeats are counted; one line follows when the wait ends)
+sender factory returned the sender for peer after 
+sender wait for peer ended without a sender (
+null result in 
+null results in 
+stream destroyed
+sender factory replaced
+```
+
+The adapter prints the bootstrap and the peers on the same stream, and the lines below are the ones that decide most cases. The lines about the logging come from the session owner when it initialises the library, and the other lines from the adapter of the render streams. They are always printed; `QAR_ADAPTER_TRACE` adds a pair of lines around each main call of the bootstrap; each line has this form:
 
 ```text
 [qar-adapter] library logging: severity=%s console=%s folder=%s%s
 [qar-adapter] zenoh logging: off (QAR_ZENOH_LOG not set)
 [qar-adapter] *** %s
 [qar-adapter] *** SEH FAULT in %s: code=0x%08lX addr=%p module=%s
-[qar-adapter] app volume '%s' created id=%s size=%.2fx%.2fx%.2f m centre_y=%.2f m app_scale=%.3f
-[qar-adapter] *** invite '%s' failed: %s
-[qar-adapter] peer baseline frozen: %zu pre-existing peer(s); any peer appearing from now on is treated as a consumer and admitted
+[qar-adapter] app volume '%s' id=%s placement read back: volume pose=(%.2f, %.2f, %.2f) app_scale=%.3f (asked: centre_y=%.2f m, size=%.2fx%.2fx%.2f m, app_scale=%.3f)
+[qar-adapter] app volume '%s' id=%s: the placement could not be read back
 [qar-adapter] *** peer %s refused: already streaming to %zu peers (max_peers=%u)
 [qar-adapter] create_sender: peer %s still creating after %.1f s — the receiver has not completed transfer negotiation (the render tick keeps running).
 [qar-adapter] create_sender: async creation FAILED for peer %s
 [qar-adapter] created GL context for QAR HGLRC=%p (shares Ogre's %p) [sender #%zu]
 ```
 
-A line that starts with `***` is a failure; the text after it names the call and the status that QarOS returned.
+The line about the app volume says whether the placement that the Hub holds for the volume was read back after the volume was made: a volume that existed already keeps the placement the operator gave it, and the line shows it next to what the plugin asked for. A line that starts with `***` is a failure; the text after it names the call and the status that QarOS returned.
 
 The adapter also traces the start of each 3D stream. Its lines have the time of day in front and name the peer by the first eight digits of its identifier and the thread that did the step, and they come in this order: the request for the sender, the sender handed over by the runtime with the seconds that the creation took, the first frame that the sender shows with the numbers of its four textures, and the first time the graphics thread of the runtime makes the context of the sender current, with the handle of that context and of its device context. The textures are the colour of the left and of the right eye, then their depth, as `c<left>/<right> d<left>/<right>`, and the size of the first one. A viewer that stops asking for frames for two seconds or more and then asks again leaves a stall. The first frame after it writes one line with the length of the stall, the mean colour of that frame, which is read back from the GPU once, and the position of the head in the space of the app; a colour of `"(unavailable)"` says that it could not be read back. Each line has this form:
 
@@ -344,12 +431,27 @@ AR PANEL: streaming '%1' as a QarOS GUI panel. The QarOS panel itself is created
 AR PANEL: '%1' is in the RViz dock '%2'; closing that dock %3.
 AR PANEL: '%1' raised by %2 m so that its lower edge lies %3 m above the RViz ground (room y %4).
 AR PANEL: '%1' start cancelled (%2) while its dock was being fitted.
-[qar-panel-adapter] %s panel '%s' created: id=%s stream=%s buffer=%ux%u px
+[qar-panel-adapter] %s panel '%s' %s: id=%s stream=%s buffer=%ux%u px
 [qar-panel-adapter] %s panel '%s' subscribed for AR click+hover: id='%s' content=%ux%u px
 [qar-panel-adapter] %s panel '%s' streams but takes no AR input: %s
 ```
 
-The close mode line is written once, when the first panel is streamed. `%1` is `destroy`, `notice` or `park`. `%2` says where the mode comes from, which is `QAR_PANEL_CLOSE_MODE`, `"from the panel settings"` or `"the default"`, and for `park` the words `"AR Visibility is hide:"` stand in front of it, because the mode is decided by that setting. `%3` is what a window that closes does: `has its AR panel closed and its video sender destroyed`, `leaves its AR panel up as a closed-window notice and keeps its video sender until the session ends`, or `is hidden and parked in AR: nothing is closed while the session runs, its QarOS panel and video sender are kept until it ends, and opening the window again shows the panel again`. When the choice changes while the panel runs, the line `close mode is now` gives the new mode, and says that panels that are parked or show a notice stay as they are. The line about the dock says what closing that dock does with its AR panel in the mode in force: it closes the panel, turns it into a notice, or hides and parks it. The line `"raised"` is written when the ground rule lifted a panel, and gives the raise in metres, the margin of 0.10 m above the RViz ground, and the height of the ground in room space; the name in front is the key of the panel, `dialog` for a dialog, or `control:` and the key of the instance for the AR control panel. The line `"start cancelled"` is written when a start that waits for its dock to be fitted ends before the stream is made, and names the reason: the session is not live, the dock is not visible, or the cause of a stop. The last line of the block above is the failure of the input subscription: the panel still streams, but a tap does nothing. A close in the mode `destroy` writes the line of the panel, the line of the manager of Qt with the outcome of each step, and the three steps of the adapter with a time of their own, `hh:mm:ss.mmm`; each line has this form:
+The close mode line is written once, when the first panel is streamed. `%1` is `destroy`, `notice` or `park`. `%2` says where the mode comes from, which is `QAR_PANEL_CLOSE_MODE`, `"from the panel settings"` or `"the default"`, and for `park` the words `"AR Visibility is hide:"` stand in front of it, because the mode is decided by that setting. `%3` is what a window that closes does: `has its AR panel closed and its video sender destroyed`, `leaves its AR panel up as a closed-window notice and keeps its video sender until the session ends`, or `is hidden and parked in AR: nothing is closed while the session runs, its QarOS panel and video sender are kept until it ends, and opening the window again shows the panel again`. When the choice changes while the panel runs, the line `close mode is now` gives the new mode, and says that panels that are parked or show a notice stay as they are. The line about the dock says what closing that dock does with its AR panel in the mode in force: it closes the panel, turns it into a notice, or hides and parks it. The line `"raised"` is written when the ground rule lifted a panel, and gives the raise in metres, the margin of 0.10 m above the RViz ground, and the height of the ground in room space; the name in front is the key of the panel, `dialog` for a dialog, or `control:` and the key of the instance for the AR control panel. The line `"start cancelled"` is written when a start that waits for its dock to be fitted ends before the stream is made, and names the reason: the session is not live, the dock is not visible, or the cause of a stop. The last line of the block above is the failure of the input subscription: the panel still streams, but a tap does nothing. The adapter looks for a panel of that name before it makes one. A panel of an earlier session that it finds is `reattached`: the stream of the new sender is put on it, and its size is changed when it differs, and it is shown again; the line of the attach says `created` or `reattached`, the name, the identifier, the state that QarOS reported for the panel before the adapter touched it, and whether the stream and the size were exchanged. When the name is taken by a panel of a web page or by a closed panel, the adapter tries the name with a number after it and says so, and when no free name is left it refuses the panel with the reason, so that the panel fails with the same text. Each line has this form:
+
+```text
+[qar-panel-adapter] 
+ panel '
+reattached
+ name=
+ id=
+ state_was=
+ stream_swapped=
+ size_changed=
+[qar-panel-adapter] %s panel '%s' name=%s is taken by %s panel, trying %s%s
+[qar-panel-adapter] %s panel '%s' refused: %s
+```
+
+A close in the mode `destroy` writes the line of the panel, the line of the manager of Qt with the outcome of each step, and the three steps of the adapter with a time of their own, `hh:mm:ss.mmm`; each line has this form:
 
 ```text
 AR PANEL: close requested for '%1' (%2): its AR panel is closed and its video sender destroyed — the [qt_lib] 'closed' line has each step. Starting it again makes a new AR panel.
@@ -358,11 +460,13 @@ closing: id=%s stream=%s (operator already closed it in AR: %s)
 step 1/3: AR input + panel-update subscriptions cancelled
 step 2/3: qar_gui_panels_close_panel ran, ok
 step 2/3: qar_gui_panels_close_panel SKIPPED -- the operator already closed this panel in AR
+detaching: id=%s stream=%s (the GUI panel is kept)
+step 2/3: GUI panel kept for the next session
 step 3/3: destroying the video sender
 [qar-panel-adapter] %s panel '%s' retired: id=%s stream=%s took=%lldms -- GUI panel %s, video sender %s
 ```
 
-The adapter prints `"close FAILED (see step 2/3 above)"` in the retired line when the close call failed, and then the video sender is destroyed anyway. The manager of Qt writes the close with the key of the panel after the text, in the form `[qt_lib:%1:%2] %3` followed by `(panel '%1')`. Its sentence names the stream, the frames that it served, the reason and the teardown, and ends with a sentence that says that the stream entry is gone; the fragments are these; each line has this form:
+The adapter prints `"close FAILED (see step 2/3 above)"` in the retired line when the close call failed, and then the video sender is destroyed anyway. When the session ends, the panel is not closed: the line `"detaching"` stands in the place of `"closing"`, step 2/3 says that the panel is kept for the next session, and the retired line says `kept` for the panel, because every QarOS panel was hidden before and the next session finds it again by its name. A panel is closed only when its sender cannot detach. The manager of Qt writes the close with the key of the panel after the text, in the form `[qt_lib:%1:%2] %3` followed by `(panel '%1')`. Its sentence names the stream, the frames that it served, the reason and the teardown, and ends with a sentence that says that the stream entry is gone; the fragments are these; each line has this form:
 
 ```text
 added panel stream
@@ -443,7 +547,7 @@ The first two lines are the outcomes that QarOS accepted. The third is written w
 
 ### Lines of the panel adapter
 
-The adapter of the panels writes straight to the standard error, with the time of day in front and the key of the panel. It writes a line after each change of the state of a panel that QarOS accepted: `VISIBLE`, `MINIMIZED`, `HIDDEN` or `CLOSED`, of which the plugin uses the first and the third. It also writes a line each time the runtime republishes a panel with another state, another stream as its content, or another size to six decimals: the record of the runtime, numbered from 1 for each panel, with the state, the identifier of the stream that the content of the panel is, the identifier of the stream that the sender was built with, `match` or `MISMATCH`, and the size in metres. A `MISMATCH` says that the runtime shows a stream other than the one the adapter built the sender with, and it is also written when the runtime named no stream. At most 256 records wait for the render thread, and a record that finds the queue full is counted as dropped. Two lines are written once for a stream: the first frame that the sender shows, with the number of the thread, and the turn of its transfer to reconnecting after frames were shown, with the stream and the number of frames. The adapter of the URL panels of the AR tools writes the change of state with the identifier of the panel and, when the call failed, `FAILED` and the error. The parts of the lines are these; each line has this form:
+The adapter of the panels writes straight to the standard error, with the time of day in front and the key of the panel. It writes a line after each change of the state of a panel that QarOS accepted: `VISIBLE`, `MINIMIZED`, `HIDDEN` or `CLOSED`, of which the plugin uses the first and the third. It also writes a line each time the runtime republishes a panel with another state, another stream as its content, or another size to six decimals: the record of the runtime, numbered from 1 for each panel, with the state, the identifier of the stream that the content of the panel is, the identifier of the stream that the sender was built with, `match` or `MISMATCH`, and the size in metres. A `MISMATCH` says that the runtime shows a stream other than the one the adapter built the sender with, and it is also written when the runtime named no stream. At most 256 records wait for the render thread, and a record that finds the queue full is counted as dropped. Three lines are written once for a stream: the first frame that the sender shows, with the number of the thread, the turn of its transfer to reconnecting after frames were shown, with the stream and the number of frames, and the pause of the stream by the receiver. The adapter of the URL panels of the AR tools writes the change of state with the identifier of the panel and, when the call failed, `FAILED` and the error. The parts of the lines are these; each line has this form:
 
 ```text
 [qar-panel-adapter] %s panel '%s' state -> %s
@@ -457,12 +561,24 @@ MISMATCH
 ) size=
 ' stream
 : transfer RECONNECTING after
+: paused by the receiver
 ' first show_frame tid=
 [qar-url-panel-adapter]
 ' state ->
  (id
  FAILED (id
 ```
+
+A panel that QarOS reports in the opposite state shortly after an adapter set the state it wants is asked again, by both adapters, and the adapter says so. A panel of an earlier session that was left hidden can be reported as hidden again a few milliseconds after the adapter showed it. After a change that the adapter made itself (the panel was made or found again, or it set a state), a report that shows the panel hidden while visible is wanted, or the reverse, is contested for 5 seconds: at most three times within 10 seconds, and an ask is held for 1 second, because a contrary report inside the hold may be the echo of the state that was there before. A report that confirms the wanted state and every state that the adapter sets itself start the count anew, and when the hold has ended with no newer report, the adapter asks again. Only the pair hidden and visible is contested, so a state that the operator sets later in AR is never fought. Each line has this form, with `qar-panel-adapter` or `qar-url-panel-adapter` in the first brackets:
+
+```text
+[%s] %s panel '%s' QarOS reported %s while %s is wanted - asked again (%u/%u)
+[%s] %s panel '%s' WARNING: QarOS keeps reporting %s while %s is wanted - gave up after %u asks
+[%s] %s panel '%s' does not watch its state: %s
+[%s] %s panel '%s' *** qar_gui_panels_set_state failed: code=%lld
+```
+
+The warning is written only for a report that arrives after three asks that nothing confirmed. The line `does not watch its state` says that the subscription to the updates of the panel could not be made, in which case the panel works without the guard.
 
 ### Lines of the library of Qt
 
@@ -489,7 +605,7 @@ The library of Qt writes the lines about each panel that it streams, and the pan
 , not made wider than the widget asks
 ```
 
-A panel that a size change replaces is not closed in the mode `park`: the library hides its old QarOS panel and keeps it until the session ends, and makes a new one. The line is an information; it is a warning when QarOS refused the hide, in which case the old panel stays visible next to the new one, and when the change takes the last of the 32 slots that the session may keep, the line says that the next size changes close their old QarOS panel, and that in the mode `park` such a close may crash the desktop Visualizer. At the limit the change closes the old panel and the line is a warning of that. When the session ends, the kept panels are closed, and one line gives their number.
+A panel that a size change replaces is not closed in the mode `park`: the library hides its old QarOS panel and keeps it until the session ends, and makes a new one. The line is an information; it is a warning when QarOS refused the hide, in which case the old panel stays visible next to the new one, and when the change takes the last of the 32 slots that the session may keep, the line says that the next size changes close their old QarOS panel, and that in the mode `park` such a close may crash the desktop Visualizer. At the limit the change closes the old panel and the line is a warning of that. When the session ends, each panel is hidden where QarOS can and left in place for the next session, and nothing is closed except a panel whose sender cannot detach. One line for each key gives the number of QarOS panels that were left hidden, with the number of those that were closed because their sender cannot detach, and a warning names the panels that could not be hidden; they stay visible in AR until QarOS removes them. The lines have the words `"ended the session for"` and `"left hidden in place, not closed"`.
 
 A dialog is fitted on the desktop before it gets its panel, so that the QarOS panel is made once, at the final size. The line of the end of the fit gives the size, the number of rounds and a note: `"no scroll bar"`, the scroll bar that is left with its reason, `"clamped to the screen"` or `"not confirmed"`. A dialog that goes away while it is fitted gets no panel, and a dialog that the cap refuses is a warning.
 
@@ -548,7 +664,7 @@ AR TOOL: retired %1; its QarOS panel could not be hidden (%2), so it stays visib
 AR TOOL: copied %1
 ```
 
-The line that says exposed names the template that laid the tool out, and the line after it, `AR TOOL: %1 — %2.`, carries the size note: the size of the panel in metres and the number of columns, which the plugin recomputes when a page reports its viewport and the size moved by more than 5 mm. A tool that is served and not in AR yet waits, and the line is written once. With hiding on, which is the default, `"Re-open in AR"` and the switches of the AR control panel show and hide the QarOS panel of a tool, and `"Remove tool"` hides it and keeps it until the session ends. The lines `"will be shown again"` and `"will be hidden"` say what the next tick will do, and the lines of the [AR visibility](#ar-visibility-lines) say what it did. A removed tool says what became of its panel: it had none, it is parked and hidden in AR, or QarOS refused the hide, in which case the panel stays visible and is kept; a tool that is exposed again takes over the parked panel and the line says that no new QarOS panel is made. Without hiding, `"Re-open in AR"` closes the panel and makes a new one on the next tick, and `"Remove tool"` closes it. The page reports its viewport and the panel refuses a control that it does not understand with these lines; each line has this form:
+The line that says exposed names the template that laid the tool out, and the line after it, `AR TOOL: %1 — %2.`, carries the size note: the size of the panel in metres and the number of columns, which the plugin recomputes when a page reports its viewport and writes when the size moved by more than 5 mm; the size comes from a fixed design viewport of 500 by 500 CSS pixels and not from the viewport that the page reports, so the note reads `"css px (design viewport)"`. A tool that is served and not in AR yet waits, and the line is written once. With hiding on, which is the default, `"Re-open in AR"` and the switches of the AR control panel show and hide the QarOS panel of a tool, and `"Remove tool"` hides it and keeps it until the session ends. The lines `"will be shown again"` and `"will be hidden"` say what the next tick will do, and the lines of the [AR visibility](#ar-visibility-lines) say what it did. A removed tool says what became of its panel: it had none, it is parked and hidden in AR, or QarOS refused the hide, in which case the panel stays visible and is kept; a tool that is exposed again takes over the parked panel and the line says that no new QarOS panel is made. Without hiding, `"Re-open in AR"` closes the panel and makes a new one on the next tick, and `"Remove tool"` closes it. The page reports its viewport and the panel refuses a control that it does not understand with these lines; each line has this form:
 
 ```text
 [qar-web] %1
@@ -557,9 +673,11 @@ AR CONTROL: refused '%1' on %2 — %3
 AR CONTROL: publish to %1 %2
 AR TOOL: %1 has no live subscription — %2
 AR TOOL: could not expose %1 — %2
+%1: a width of %2 m is below the %3 m floor - size held at %4
+%1 resized %2 times in %3 s - size held at %4
 ```
 
-The line that starts with `[qar-web]` reports the viewport that the page was laid out into: its CSS size, the pixel ratio, the size of its content and of its root, and the reason for the report.
+The line that starts with `[qar-web]` reports the viewport that the page was laid out into: its CSS size, the pixel ratio, the size of its content and of its root, and the reason for the report. A resize guard keeps a size that changes without end from reaching QarOS: after three resizes within ten seconds the panel keeps its size and the first refusal is written once, and a width below the floor is refused in the same way. The lines name the tool as `"AR TOOL: '"` and an instance of the AR control panel as `"AR CONTROL PANEL: instance '"` in front of the text.
 
 When RViz ends, the panel releases the entities that it made on the node of RViz, which are those of the AR tools, the publisher of the picks, the bridges, the graph discovery and the geolocation subscription, and then its callback group. If it had made a group, it writes one of these lines; each line has this form:
 
@@ -603,7 +721,7 @@ SPATIAL: mode = %1%2
 
 The line `"page viewers"` gives the number of browsers that show the page. When the page reports a viewport with another CSS size, the line gives the same description as the `[qar-web]` line. A command from the page is answered by a line with the control and a short text. A refused command gives the reason, which the router names when the control is unknown, has no action, declares another action than the one it carries, or sends a value of the wrong kind, and which the panel names when there is no panel or tool in the slot, when QarOS is not connected, or when no pick waits for its confirmation. An accepted command gives `"picking off"`, `"Point armed"` or `"Nav goal armed"` for the pick mode, `"published to"` and the topic for a confirmed pick, `"nothing to cancel"` or `"pick dropped"` for a cancel, and, for a panel or a tool, `"already on"` or `"already off"` when nothing is left to do, or `"showing"`, `"starting"`, `"hiding"` or `"stopping"` with the title. A pick mode that the page sets writes the line `SPATIAL: mode = %1` with the origin ` (from the AR control panel)` after it.
 
-The panels themselves are made and changed by the render tick. The line `instance` gives the key of the instance, who it is for, which is a peer or `everybody`, the position in room space, the yaw in degrees and how the pose was found: from the head and the gaze of the viewer, with the flip, and in front of the first peer for a shared panel; or `no head pose: fixed spot`; a panel that the ground rule lifted adds the raise and the height of the ground. When the app volume has not reported its placement, one line says that the head pose is taken as it is. A creation that fails is written once for each reason and tried again every 5 seconds. The size of the panels follows the page: a line gives the size in metres and the note of the sizing, and a resize that QarOS refuses names the instance. A panel of a peer whose stream closed is hidden, and shown again when the peer is back.
+The panels themselves are made and changed by the render tick. The line `instance` gives the key of the instance, who it is for, which is a peer or `everybody`, the position in room space, the yaw in degrees and how the pose was found: from the head and the gaze of the viewer, with the flip, and in front of the first peer for a shared panel; or `no head pose: fixed spot`; a panel that the ground rule lifted adds the raise and the height of the ground. When the app volume has not reported its placement, one line says that the head pose is taken as it is. A creation that fails is written once for each reason and tried again every 5 seconds. The size of the panels comes from the page for the fixed design viewport and not from the viewport that the browser reports: a line gives the size in metres and the note of the sizing when the size moved, a resize that QarOS refuses names the instance, and the resize guard holds the size of an instance in the same way as that of a tool. A panel of a peer whose stream closed is hidden, and shown again when the peer is back.
 
 The button `"Show AR control panel"` writes a line for each press. The first press asks QarOS to show the panels again on the next tick. A second press within 10 seconds, after a panel could not be shown, asks once more when hiding is the way of the switch, and makes the panels that QarOS would not show again when it is not, with a line for each instance that is re-created. The lines `could not show instance` and `QarOS accepted set_state(VISIBLE)` give the outcome of the request, and the button `"Copy page URL"` writes the address that it copied.
 
@@ -742,7 +860,7 @@ The line `"RENDER:"` names the render system that RViz renders the streamed scen
 
 ## QarOS library logs
 
-The QarOS library, the runtime launcher, the mixers and the Visualizer write their own files into the QarOS log folder. What they write depends on `QAR_LOG_SEVERITY`, which the library reads in preference to its init structure, and the plugin sets it from its own decision, so that the severity in the line that begins `LIVE: QarOS library logging:` is the severity that applies. At `trace` the library writes hundreds of thousands of lines in a short run, [How much a trace log writes](TROUBLESHOOTING.md#how-much-a-trace-log-writes) explains why a quiet run is the default of the launcher. The log of the zenoh transport is the only place that names the reason for a session that does not come up; the adapter switches it on when `QAR_ZENOH_LOG` is set and the severity allows it, and it always writes one line that says whether it did; each line has this form:
+The QarOS library and the processes that QAROS starts write their own files, the library into the QarOS log folder and the processes below its folder logs. What they write depends on `QAR_LOG_SEVERITY`, which the library reads in preference to its init structure, and the plugin sets it from its own decision, so that the severity in the line that begins `LIVE: QarOS library logging:` is the severity that applies. At `trace` the library writes hundreds of thousands of lines in a short run, [How much a trace log writes](TROUBLESHOOTING.md#how-much-a-trace-log-writes) explains why a quiet run is the default of the launcher. The log of the zenoh transport is the only place that names the reason for a session that does not come up; the adapter switches it on when `QAR_ZENOH_LOG` is set and the severity allows it, and it always writes one line that says whether it did; each line has this form:
 
 ```text
 [qar-adapter] zenoh logging: OFF - QAR_ZENOH_LOG='%s' is ignored because the library log severity is %s; use severity debug or trace to get it

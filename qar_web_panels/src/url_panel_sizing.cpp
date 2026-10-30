@@ -125,10 +125,11 @@ size_url_panel(
     height = sizing.fixed_height_m;
     pinned = true;
   } else if (reported) {
-    // The page measured the viewport it was actually given, so there is nothing
-    // left to estimate: the panel IS that viewport, converted at the one rate
-    // that makes the body text subtend the right angle. Aspect follows for
-    // free, which is what stops the runtime stretching the page non-uniformly.
+    // The viewport is given (the design viewport, or one a page measured), so
+    // there is nothing left to estimate: the panel IS that viewport, converted at
+    // the one rate that makes the body text subtend the right angle. Aspect
+    // follows for free, which is what stops the runtime stretching the page
+    // non-uniformly.
     width = sizing.viewport_css_width * base * scale;
     height = sizing.viewport_css_height * base * scale;
   } else {
@@ -153,18 +154,17 @@ size_url_panel(
   //    is not acceptable is doing that SILENTLY, so @ref UrlPanelSizeResult
   //    reports the fraction that fits and the note says so.
   //
-  // From a REPORTED viewport the assumption is gone — the runtime's viewport is
-  // fixed and does not follow the panel — and the rule inverts: see the branch
+  // From a GIVEN viewport the assumption is gone (the size is computed from the
+  // viewport, never the other way round) and the rule inverts: see the branch
   // below.
   const double natural_width = width;
   const double natural_height = height;
   if (out.from_reported_viewport) {
-    // UNIFORM, and this is the inversion: the reasoning above only holds
-    // while the viewport follows the panel. It does not. The
-    // page is laid out into a viewport of the runtime's choosing and then
-    // mapped onto our surface, so a per-axis clamp does not reflow anything —
-    // it just breaks the aspect we came here to fix, and the operator sees the
-    // squeeze again. One factor, both axes, aspect preserved exactly.
+    // UNIFORM, and this is the inversion: the reasoning above holds only for an
+    // estimate. With a given viewport the page is laid out into that viewport
+    // and then mapped onto our surface, so a per-axis clamp does not reflow
+    // anything: it just breaks the aspect we came here to fix, and the operator
+    // sees the squeeze. One factor, both axes, aspect preserved exactly.
     double factor = 1.0;
     if (width * factor < sizing.min_width_m) {
       factor = sizing.min_width_m / width;
@@ -212,7 +212,9 @@ size_url_panel(
 
   if (out.from_reported_viewport) {
     out.note = "viewport " + pixels(sizing.viewport_css_width) + "x" +
-      pixels(sizing.viewport_css_height) + " css px (reported by the page) -> panel ";
+      pixels(sizing.viewport_css_height) +
+      (sizing.viewport_is_design ? " css px (design viewport) -> panel "
+                                 : " css px (reported by the page) -> panel ");
   } else {
     out.note = "page " + pixels(metrics.width_px) + "x" + pixels(metrics.height_px) +
       " css px (" + std::to_string(metrics.widget_count) + " widgets) -> panel ";
@@ -246,11 +248,45 @@ size_url_panel(
 }
 
 void
+use_design_viewport(UrlPanelSizing & sizing, double content_css_height)
+{
+  sizing.viewport_css_width = kDesignViewportCss;
+  sizing.viewport_css_height = kDesignViewportCss;
+  sizing.viewport_is_design = true;
+  sizing.content_css_height = content_css_height;
+}
+
+void
 use_reported_viewport(UrlPanelSizing & sizing, const qar_ui_model::ViewportBody & viewport)
 {
   sizing.viewport_css_width = viewport.css_width;
   sizing.viewport_css_height = viewport.css_height;
+  sizing.viewport_is_design = false;
   sizing.content_css_height = viewport.content_height;
+}
+
+UrlPanelResizeGuard::Verdict
+UrlPanelResizeGuard::check(Clock::time_point now, double width_m, double min_width_m)
+{
+  if (!(width_m >= min_width_m)) {
+    return Verdict::BelowFloor;
+  }
+  // Forget the resizes that left the window, oldest first.
+  std::size_t kept = 0;
+  for (std::size_t i = 0; i < count_; ++i) {
+    if (now - stamps_[i] < kWindow) {
+      stamps_[kept++] = stamps_[i];
+    }
+  }
+  count_ = kept;
+  if (count_ >= kMaxResizes) {
+    const bool first = !announced_;
+    announced_ = true;
+    return first ? Verdict::TooOften : Verdict::TooOftenQuiet;
+  }
+  stamps_[count_++] = now;
+  announced_ = false;
+  return Verdict::Allowed;
 }
 
 double

@@ -44,11 +44,11 @@ namespace qar_rviz_streaming
 /// straight line** — against the app volume's scene and reports the intersection
 /// as the gesture's `action_point`. It is the authoritative answer and the one
 /// the AR user saw themselves select, so it leads the list and is
-/// @ref default_spatial_target_id. The minimum drop returned a near-field point
-/// instead of the scene intersection, so this default needs the drop after the
-/// minimum drop or a newer one.
+/// @ref default_spatial_target_id. This default relies on a runtime that reports
+/// the scene intersection (not a near-field point) as the action point; the
+/// installed one does.
 ///
-/// The SDK header of that drop also names the failure mode: the action point is
+/// The installed header also names the failure mode: the action point is
 /// "the intersection the gesture acts on, **or the start point when nothing was
 /// intersected**". A point on the hand is therefore the no-hit case: it equals
 /// the start point exactly, and it is flagged per gesture

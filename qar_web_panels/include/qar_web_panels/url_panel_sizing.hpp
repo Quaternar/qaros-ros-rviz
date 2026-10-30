@@ -24,51 +24,57 @@
 /// measurement is in the AR theme's own pixels (22 px body text, 64 px touch
 /// targets) it fixes the physical size at the same time.
 ///
-/// ## The viewport does NOT follow the panel, so the page is asked
+/// ## The panel is sized from a DESIGN viewport, never from a reported one
 ///
-/// The browser viewport is not the panel's metres times some pixel density:
-/// declaring a portrait panel does not give the page a portrait viewport. A
-/// page sized to a portrait panel comes out HORIZONTALLY SQUEEZED, and the
-/// squeeze goes away only when the size multiplier drives both axes into their
-/// bounds (1.40 x 1.30 m), which makes the panel almost square. A page that
-/// looks right in a square panel and squeezed in a portrait one is being
-/// rendered into a viewport of its own shape and then stretched non-uniformly
-/// onto whatever surface we declared.
+/// The browser viewport is not the panel's metres times some pixel density, and
+/// how it relates to the panel is the runtime's decision. One kind of runtime
+/// gives the page a fixed viewport whatever the panel is; another derives the
+/// viewport from the panel's size (a frame is taken off, the rest is the page).
+/// A size computed from the viewport the page reports is stable only under the
+/// first kind. Under the second, every resize changes the next report and every
+/// report changes the next resize: the panel shrinks step by step into a strip a
+/// few centimetres wide.
 ///
-/// There is no header field that says what that shape is, so the page is asked
-/// instead: `qar-ui/1` has a `viewport` frame (`ui_protocol.hpp`), the page
-/// measures `window.innerWidth`/`innerHeight` and reports them, and
-/// @ref UrlPanelSizing::viewport_css_width / height carry the answer back here
+/// So the size of a URL panel is never a function of a viewport that the panel
+/// itself produces. It comes from a fixed DESIGN viewport,
+/// @ref kDesignViewportCss CSS px on both axes (@ref use_design_viewport), unless
+/// the operator pins a size (`QAR_PANEL_WEB_SIZE`). The same page model and the
+/// same knobs give the same size on every runtime and for every report, which is
+/// also what makes the creation size the final size: no resize follows the first
+/// report of the page.
+///
+/// A page still reports its viewport (`qar-ui/1` has a `viewport` frame in
+/// `ui_protocol.hpp`: `window.innerWidth`/`innerHeight` and the document
+/// height). The report is a diagnostic. @ref use_reported_viewport remains for a
+/// caller that knows its runtime keeps the viewport fixed and wants the panel to
+/// be exactly that viewport; the panels of the plugin do not use it
 /// (docs/SDK_COMPATIBILITY.md, "The QarOS in-AR browser", records the
 /// measurements).
 ///
-/// **What we do with it: match the panel's physical aspect to the reported
-/// viewport, exactly.** The alternative — re-rendering the page to a shape we
-/// choose — is not available: we do not own the viewport, the runtime does, and
-/// the page is already fluid and lays itself out into whatever it is handed.
-/// Fighting that would mean guessing. Matching it is also the sharper
-/// answer, because once the viewport is known the panel is not an
-/// estimate at all: it is `viewport_css x meters_per_css_px` on both axes, so
-/// the body text subtends exactly the angle the readability derivation asks
-/// for, and nothing is stretched.
+/// **What the size does with a viewport (design or reported): match the panel's
+/// physical aspect to it, exactly.** Once the viewport is known the panel is not
+/// an estimate at all: it is `viewport_css x meters_per_css_px` on both axes, so
+/// the body text subtends exactly the angle the readability derivation asks for,
+/// and nothing is stretched.
 ///
-/// One consequence: with the viewport INDEPENDENT of the panel, narrowing the
-/// panel does not reflow the page, so the bounds are applied as a UNIFORM shrink
-/// that preserves the aspect. Per-axis clamping is what the estimate needs and
-/// what a reported viewport must never get — clamping one axis of a known-good
-/// aspect is precisely how the squeeze is reintroduced.
+/// One consequence: the bounds are applied as a UNIFORM shrink that preserves
+/// the aspect. Per-axis clamping is what the estimate needs and what a known
+/// viewport must never get: clamping one axis of a known-good aspect is
+/// precisely how a squeeze is introduced.
 ///
-/// What a reported viewport does NOT fix is content below the fold: the
-/// viewport is a fixed number of CSS pixels, so a page taller than it is simply
-/// not rasterised past the fold, and no panel size reaches the rest. That is
-/// what the page's click pager (`qar_ui_model/scroll_paging.hpp`) is for, and
-/// what @ref UrlPanelSizeResult::visible_fraction reports.
+/// What a fixed viewport does NOT fix is content below the fold: the viewport is
+/// a fixed number of CSS pixels, so a page taller than it is not rasterised past
+/// the fold, and no panel size reaches the rest. That is what the page's click
+/// pager (`qar_ui_model/scroll_paging.hpp`) is for, and what
+/// @ref UrlPanelSizeResult::visible_fraction reports when a content height is
+/// given.
 ///
 /// ## Matching the aspect is necessary and not sufficient: the FIT
 ///
-/// The viewport is **500 x 500 CSS px at devicePixelRatio 2.0**, fixed, while a
-/// typical generated page wants **756 CSS px** of width. Matching the aspect of
-/// a square viewport gives a square panel — and a 500 px square one, 0.33 m on
+/// The design viewport is **500 x 500 CSS px** (the accepted size of the AR
+/// control page: a 0.55 x 0.55 m panel), while a typical generated page wants
+/// **756 CSS px** of width. Matching the aspect of a square viewport gives a
+/// square panel — and a 500 px square one, 0.33 m on
 /// a side, holds a layout squeezed into two thirds of the width it was drawn
 /// for. Text overlaps, buttons touch, and the panel is too small to read: both
 /// faults, one cause.
@@ -152,6 +158,8 @@
 /// `effective_pixel_ratio`, for diagnostics only (qar_ogre_adapter
 /// docs/QAROS_INTEGRATION_NOTES.md, "Panel pixel coordinates and content_scale").
 
+#include <array>
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <string>
@@ -220,25 +228,73 @@ struct UrlPanelSizing
   /// cases — passing an already-scaled theme AND this would apply `k` twice.
   double theme_scale = 1.0;
 
-  /// The CSS viewport the page reported being laid out into (`viewport` frame,
-  /// `window.innerWidth` / `innerHeight`). Both > 0 makes this the AUTHORITY
-  /// for the panel's size and aspect and replaces the estimate: see the file
-  /// comment. 0 means no page has measured itself yet — a panel opening for
-  /// the first time, or a runtime that does not send the frame — and the
+  /// The CSS viewport the size is derived from: the design viewport
+  /// (@ref use_design_viewport) or a viewport a page reported
+  /// (@ref use_reported_viewport; `window.innerWidth` / `innerHeight`). Both > 0
+  /// makes this the AUTHORITY for the panel's size and aspect and replaces the
+  /// estimate: see the file comment. 0 means no viewport is given and the
   /// measured estimate is used.
   double viewport_css_width = 0.0;
   double viewport_css_height = 0.0;
 
-  /// `document.documentElement.scrollHeight` from the same report: how much
-  /// page there is. Only feeds @ref UrlPanelSizeResult::visible_fraction — it
+  /// The viewport above is the design viewport, not a report. Only the wording
+  /// of @ref UrlPanelSizeResult::note depends on it.
+  bool viewport_is_design = false;
+
+  /// `document.documentElement.scrollHeight` from a page's report: how much
+  /// page there is. Only feeds @ref UrlPanelSizeResult::visible_fraction: it
   /// must not change the panel's size, because growing the panel cannot bring
-  /// content below a fixed viewport's fold into view.
+  /// content below a fixed viewport's fold into view. 0 means unknown, which
+  /// reads as "the whole page is visible".
   double content_css_height = 0.0;
 };
 
-/// @brief Copy a page's reported viewport into @p sizing.
+/// @brief The viewport, in CSS px on both axes, that a URL panel is designed
+/// for. The AR control page at this viewport gets the accepted 0.55 x 0.55 m.
+constexpr double kDesignViewportCss = 500.0;
+
+/// @brief Use the design viewport (@ref kDesignViewportCss square) as the
+/// viewport of @p sizing, whatever any page reported. The size that comes out
+/// of it does not depend on a viewport that the panel itself produces.
+/// @param content_css_height the page height of a report, 0 when none; it only
+/// feeds @ref UrlPanelSizeResult::visible_fraction.
+void use_design_viewport(UrlPanelSizing & sizing, double content_css_height = 0.0);
+
+/// @brief Copy a page's reported viewport into @p sizing. Right only for a
+/// runtime whose viewport does not follow the panel; see the file comment.
 void use_reported_viewport(
   UrlPanelSizing & sizing, const qar_ui_model::ViewportBody & viewport);
+
+/// @brief A budget of resizes for one URL panel, the guard against a feedback
+/// loop between a panel's size and anything that is computed from it.
+///
+/// At most @ref kMaxResizes resizes are allowed within @ref kWindow, and a
+/// width below the floor is never allowed. A refused resize leaves the panel as
+/// it is. One instance per panel.
+class UrlPanelResizeGuard
+{
+public:
+  using Clock = std::chrono::steady_clock;
+
+  static constexpr std::size_t kMaxResizes = 3;
+  static constexpr std::chrono::seconds kWindow{10};
+
+  enum class Verdict
+  {
+    Allowed,
+    BelowFloor,    ///< the width is below the floor
+    TooOften,      ///< over budget; the first refusal since the last allowed resize
+    TooOftenQuiet  ///< over budget again: the caller has already said so
+  };
+
+  /// @brief Asks for one resize to @p width_m; an allowed one is counted.
+  Verdict check(Clock::time_point now, double width_m, double min_width_m);
+
+private:
+  std::array<Clock::time_point, kMaxResizes> stamps_{};
+  std::size_t count_ = 0;
+  bool announced_ = false;
+};
 
 /// @brief What @ref size_url_panel decided, and why.
 struct UrlPanelSizeResult
@@ -255,7 +311,7 @@ struct UrlPanelSizeResult
   ///
   /// Which fold it refers to depends on where the size came from. From the
   /// ESTIMATE it is the panel's own bottom edge (the height clamp). From a
-  /// REPORTED viewport it is the browser's fold — `css_height /
+  /// VIEWPORT it is the browser's fold — `css_height /
   /// content_height` — which is the honest one, because a fixed viewport does
   /// not rasterise what is past it however large the panel is made.
   double visible_fraction = 1.0;
@@ -266,7 +322,8 @@ struct UrlPanelSizeResult
   /// The measurement this came from; empty widget_count for a pinned size.
   qar_ui_model::PageMetrics metrics;
 
-  /// The size came from a viewport the page reported, not from the estimate.
+  /// The size came from a viewport (the design viewport or a reported one), not
+  /// from the page estimate.
   bool from_reported_viewport = false;
 
   /// The theme scale the page is drawn at (@ref UrlPanelSizing::theme_scale).
@@ -278,7 +335,7 @@ struct UrlPanelSizeResult
   /// single-column page a narrow viewport gets.
   std::size_t columns = 1;
 
-  /// width / height of the panel produced. With a reported viewport this
+  /// width / height of the panel produced. With a viewport this
   /// equals the viewport's aspect to within millimetre rounding, which is the
   /// whole point — a test asserts it.
   double aspect = 1.0;

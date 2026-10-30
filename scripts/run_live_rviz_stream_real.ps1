@@ -3,18 +3,24 @@
 
 <#
 .SYNOPSIS
-    Streams the LIVE RViz scene to the QarOS Visualizer (qar-streaming-viz.exe) through the
-    qar-streaming-c SDK. LAUNCHES GUI WINDOWS (rviz2 and the QarOS Visualizer); without
-    -Confirm it only prints the resolved configuration and starts nothing.
+    Streams the LIVE RViz scene to the targets of the installed QAROS Hub (a headset, or a QAROS
+    Visualizer window) with the RViz2 plugin. LAUNCHES A GUI WINDOW (rviz2); without -Confirm it
+    only reads the machine, prints the resolved configuration and what you will have to do, and
+    starts nothing.
 
 .DESCRIPTION
-    The consumer is the QarOS Visualizer and the producer is RViz2 loading the
-    QarStreamingPanel in QAR_PANEL_LIVE_STREAM mode (the plugin built by build_plugin.ps1).
-    The panel's QarCApiSenderFactory runs the QarOS session flow: library_init ->
-    runtime_create (runtime_binaries_folder_path = the SDK's bin folder) -> create_session ->
-    serialize -> session_join -> peer_subscribe_updates -> invite_peer (visualizer connection
-    string). The invited Visualizer then surfaces as a peer and gets a real OpenGL render
-    stream.
+    The producer is RViz2 loading the QarStreamingPanel in QAR_PANEL_LIVE_STREAM mode (the plugin
+    built by build_plugin.ps1). The panel joins the QAROS Hub when you press Connect in its
+    Connection tab. The plugin loads the installed QAROS library itself (qar_library_load(NULL):
+    the installation that the registry names, or the folder of QAROS_RUNTIME_DIR) and joins one of
+    two Hubs:
+      - local: the Hub of this PC. QAROS asks once, in its own window, whether rviz2 may join
+        (click Allow). If no Hub is running, the plugin starts QAROS when you press Connect.
+      - remote: the Hub of another PC. You type its host, its onboarding port and the pairing code
+        that its Visualizer shows; the pairing is stored for the next start.
+    -HubMode auto (the default) takes remote when a pairing with another Hub is stored, else local
+    when QAROS is installed on this PC. The script starts neither the Hub nor a Visualizer: open a
+    Visualizer window from QAROS yourself, and the panel streams to every target that joins.
 
     !!! WITHOUT -Confirm NOTHING IS STARTED, CHANGED OR STOPPED: no window, no registry write,
         no process stop, no log rotation, no Fast-DDS shared-memory clean-up. The script prints
@@ -26,10 +32,9 @@
         or publish_test_pointcloud.py, also when you started them in another window) and
         cleans up Fast-DDS shared memory of dead processes.
 
-    PATH: the SDK's runtime DLLs (qar_streaming.dll, qar-streaming-c.dll, zenohc*.dll, the
-    GStreamer stack, glib, etc.) live in <SdkRoot>\bin. The plugin does not need it on
-    PATH: the adapter loads qar-streaming-c.dll by full path with flags that skip PATH; the
-    runtime gets its launcher from QAR_RUNTIME_BINARIES_DIR. The script prepends it anyway.
+    PATH: nothing is added to it. The plugin loads the installed QAROS library by its full path with
+    flags that take the library's own dependencies from its folder, so the QAROS folder is not
+    needed on PATH, and a folder of another QarOS version on PATH could not join this Hub anyway.
 
     LOGGING IS QUIET BY DEFAULT: a low-I/O run. QarOS logs at `info` (QAR_LOG_SEVERITY for the
     runtime/launcher/mixer, QAR_PANEL_LOG_SEVERITY for our in-process library;
@@ -60,15 +65,16 @@
     saves the log as it is). A file that is older than the run is not copied, and a failed copy
     is only a warning. The dry run prints the name of the copy.
 
-    The processes that QarOS starts write their own logs to the same folder: the mixers to
-    mixer_<id>_stdout.log and the Visualizers to streaming_viz_<id>_stdout.log, and a process that
-    crashes leaves a *.crash.txt report (in the folder itself or in its subfolder crashes). Those
-    files are not started afresh for the next run either, so at the same moment the launcher copies
-    every one of them that was written at or after the start of the run to
-    <LogDir>\rviz_live_<stamp>.mixer_<id>.log, <LogDir>\rviz_live_<stamp>.streaming_viz_<id>.log
-    and <LogDir>\rviz_live_<stamp>.<name of the crash report>, and prints one line per copy. The
-    .dmp files are not copied. A missing folder or file is only a note, and a failed copy only a
-    warning. The dry run prints the plan of these copies.
+    The processes that QAROS starts write their logs to %TEMP%\quaternar\logs: the launcher to
+    qar-launcher-default\<session id>\ (one folder per session) and the Hub service to
+    qaros-hub-service\, whose crash reports are in qaros-hub-service\crashes (QAROS empties that
+    folder when the Hub restarts). A process of this plugin's run that crashes leaves a *.crash.txt
+    report in %TEMP%\quaternar\crashes. These files are not started afresh for the next run, so at
+    the same moment the launcher copies the *.log files of the newest launcher session folder that
+    were written at or after the start of the run to <LogDir>\rviz_live_<stamp>.launcher_<name>,
+    and every crash report of the three folders to <LogDir>\rviz_live_<stamp>.<name of the crash
+    report>, and prints one line per copy. The .dmp files are not copied. A missing folder or file
+    is only a note, and a failed copy only a warning. The dry run prints the plan of these copies.
 
     The script also WARNS (it never blocks) about machine-level causes of stalls that
     hit every stream at once: a %TEMP% drive with under 10% or under 15 GB free, other
@@ -91,8 +97,12 @@
     scripts\fix_missing_tinyxml_dll.ps1 that builds it; the dry run prints the same text as a
     warning.
 
-.PARAMETER SdkRoot       QarOS SDK install root (the folder with bin\qar-streaming-c.dll).
-                         Default: the environment variable QAR_SDK_ROOT. Required.
+.PARAMETER SdkRoot       Folder of the installed QAROS (the folder with bin\qar-streaming-c.dll).
+                         Default: the InstallFolder that the QAROS installer records in
+                         HKLM\SOFTWARE\Quaternar\QAROS, else the environment variable QAR_SDK_ROOT.
+                         Used for the checks and the plan only: the plugin loads the installed QAROS
+                         itself. Optional: without an installation only a Hub of another PC can be
+                         joined.
 .PARAMETER Prefix        Install prefix that holds the plugin (the folder with
                          local_setup.ps1). Default: the environment variable QAR_PREFIX.
                          Required. Without -Confirm a missing overlay is only reported.
@@ -102,26 +112,25 @@
                          ROS2_INSTALL_ROOT. Required.
 .PARAMETER Scene         RViz config. Default: scene3_grid_marker.rviz from
                          <Prefix>\share\qar_rviz_streaming\config\test_scenes.
-.PARAMETER Visualizers   How many QarOS Visualizers to invite AUTOMATICALLY at connect
-                         (0-8). Default 0: connecting opens the session and invites
-                         nothing; the operator spawns Visualizers on demand with the
-                         panel's "Invite peer" button, and a real-device session often
-                         wants none at all. Set 1-8 to invite automatically.
-.PARAMETER InvitePeers   Real devices to invite as soon as the session comes up, as
-                         `kind[:hostname]` entries. Kinds: visualizer, hololens, quest,
-                         zed - only hololens takes (and requires) a hostname, because
-                         it is the only device type the SDK can address by name.
+.PARAMETER InvitePeers   Devices to invite as soon as the panel has joined the Hub of this PC, as
+                         `kind:hostname` entries. Kinds: hololens, headset. Both need a hostname.
                          Example:
-                           -InvitePeers hololens:HOLOLENS-A2B3,hololens:HOLOLENS-C4D5
-                         An invited device lands in the allow-list and is admitted by
-                         exact peer id, so -RealPeers is not needed for it. A device
-                         that fails to invite is logged and skipped, never fatal.
-.PARAMETER RealPeers     Set up for a demo with REAL onboarded peers (HoloLens,
-                         METALENSE 2, Quest, Android, or a Visualizer on another
-                         machine). Sets QAR_PANEL_PEER_ADMISSION=new, without which
-                         those peers are silently refused: they join via QAROS
-                         onboarding, never via qar_session_invite_peer, so the default
-                         invited-only allow-list does not contain them.
+                           -InvitePeers hololens:HOLOLENS-A2B3,headset:HEADSET-C4D5
+                         Only the Hub of this PC (local mode) invites devices; a Hub of another PC
+                         refuses, and the panel greys the invites out. A device that fails to
+                         invite is logged and skipped, never fatal. Exported as
+                         QAR_PANEL_INVITE_PEERS.
+.PARAMETER HubMode       Which Hub the panel joins: auto (a stored pairing with another Hub, else the
+                         installed QAROS of this PC), local (this PC) or remote (another PC).
+                         Exported as QAR_PANEL_HUB_MODE, which wins over the panel setting "Hub
+                         Connection". Without the parameter the variable is left as it is.
+.PARAMETER HubHost       Host name or address of the Hub of another PC, prefilled in the panel
+                         (QAR_PANEL_HUB_HOST). The pairing code is never a parameter: type it in
+                         the panel.
+.PARAMETER HubPort       Onboarding port of that Hub, prefilled in the panel (QAR_PANEL_HUB_PORT).
+                         The Visualizer of that PC shows it with the pairing code.
+.PARAMETER RuntimeDir    Folder that holds another QAROS runtime for the library lookup. Exported as
+                         QAROS_RUNTIME_DIR. Not set unless you pass it.
 .PARAMETER TraceLogs     Collect FULL logs (what a bug report needs): QAR_LOG_SEVERITY=trace,
                          zenoh at debug (RUST_LOG + QAR_ZENOH_LOG) and the adapter
                          breadcrumb trace (QAR_ADAPTER_TRACE, in rviz_live_*.err.log).
@@ -199,10 +208,13 @@ param(
     [Alias('Ros2DistroRoot', 'Ros2InstallRoot')]
     [string]$Ros2Root = "",
     [string]$Scene = "",
-    [ValidateRange(0, 8)]
-    [int]$Visualizers = 0,
     [string[]]$InvitePeers = @(),
-    [switch]$RealPeers,
+    [ValidateSet('auto', 'local', 'remote')]
+    [string]$HubMode = "",
+    [string]$HubHost = "",
+    [ValidateRange(0, 65535)]
+    [int]$HubPort = 0,
+    [string]$RuntimeDir = "",
     [switch]$TraceLogs,
     [switch]$KeepLogEnv,
     [ValidateSet('warn', 'info', 'debug')]
@@ -241,8 +253,37 @@ function Restore-CallerEnvironment {
 }
 try {
 . (Join-Path $PSScriptRoot "qar_locations.ps1")
-$SdkRoot = Resolve-QarLocation -Value $SdkRoot -Parameter 'SdkRoot' -EnvVar 'QAR_SDK_ROOT' `
-    -What 'QarOS SDK' -Marker 'bin\qar-streaming-c.dll' -Section 'The QarOS SDK'
+# The installed QAROS is recorded in the registry by its installer (machine scope). -SdkRoot wins,
+# then the registry, then QAR_SDK_ROOT. The folder is used for the checks and the plan only: the
+# plugin loads the installed QAROS library itself. No installation is not an error here, because a
+# Hub of another PC can be joined without one.
+$qarosKey = 'HKLM:\SOFTWARE\Quaternar\QAROS'
+function Get-QarosInstall {
+    try {
+        $k = Get-ItemProperty -LiteralPath $qarosKey -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($k.InstallFolder)) { return $null }
+        return [pscustomobject]@{
+            InstallFolder = [string]$k.InstallFolder; Version = [string]$k.Version
+            Flavor = [string]$k.Flavor; CApi = [string]$k.CApi; Scope = [string]$k.Scope
+        }
+    } catch { return $null }
+}
+$qarosInstall = Get-QarosInstall
+$sdkRootSource = if (-not [string]::IsNullOrWhiteSpace($SdkRoot)) { '-SdkRoot' } else { $null }
+if (-not $sdkRootSource -and $qarosInstall) {
+    $SdkRoot = $qarosInstall.InstallFolder
+    $sdkRootSource = 'registry'
+} elseif (-not $sdkRootSource -and $env:QAR_SDK_ROOT) {
+    $sdkRootSource = 'QAR_SDK_ROOT'
+}
+$sdkProblem = $null
+try {
+    $SdkRoot = Resolve-QarLocation -Value $SdkRoot -Parameter 'SdkRoot' -EnvVar 'QAR_SDK_ROOT' `
+        -What 'QAROS install folder' -Marker 'bin\qar-streaming-c.dll' -Section 'The QarOS SDK' -Optional
+} catch {
+    $sdkProblem = $_.Exception.Message
+    $SdkRoot = $null
+}
 $Prefix = Resolve-QarLocation -Value $Prefix -Parameter 'Prefix' -EnvVar 'QAR_PREFIX' `
     -What 'Install prefix' -Section 'Directory layout and environment variables'
 $QtRoot = Resolve-QarLocation -Value $QtRoot -Parameter 'QtRoot' -EnvVar 'QAR_QT_ROOT' `
@@ -256,9 +297,9 @@ $checksFile = Join-Path $LogDir "rviz_live_$stamp.checks.txt"
 # The copy of the QarOS library log of this run (see Save-QarStreamingLog), with the same stamp.
 $qarLogCopy = Join-Path $LogDir "rviz_live_$stamp.qar_streaming.log"
 
-$sdkBin = Join-Path $SdkRoot "bin"
-$vizExe = Join-Path $sdkBin "qar-streaming-viz.exe"
-$launcherExe = Join-Path $sdkBin "qar-runtime-launcher.exe"
+$sdkBin = if ($SdkRoot) { Join-Path $SdkRoot "bin" } else { $null }
+# The folders of the processes that QAROS starts write their logs to (see Save-QarRunLogs).
+$qarosLogRoot = Join-Path $env:TEMP "quaternar\logs"
 
 # --- C++ runtime beside rviz2.exe: the QarOS library needs 14.40 or newer ---------
 # RViz loads the msvcp140.dll that lies next to rviz2.exe, and the QarOS library then runs on
@@ -351,14 +392,34 @@ if ($rvizExe -and $Confirm) {
     Write-Warning "rviz2.exe not found on PATH - cannot set the NVIDIA GPU preference."
 }
 
-# --- SDK folder on PATH + runtime env -----------------------------------------
-# <SdkRoot>\bin carries qar_streaming.dll, qar-streaming-c.dll, zenohc.dll, the GStreamer/glib
-# stack, etc. The adapter loads qar-streaming-c.dll by full path with the flags
-# LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, so its imports come from
-# this folder; PATH is never searched. The prepend stays for DLLs the SDK may load itself.
-$env:PATH = "$sdkBin;$env:PATH"
-# Tell the QAR runtime which folder to spawn app binaries (the Visualizer) from.
-$env:QAR_RUNTIME_BINARIES_DIR = $sdkBin
+# --- QAROS: nothing is put on PATH -----------------------------------------------
+# The plugin loads the installed QAROS library itself (qar_library_load(NULL): the installation that
+# the registry names, or the folder of QAROS_RUNTIME_DIR when it is set) with flags that take the
+# library's own dependencies from its folder. PATH is not touched; a folder of an older QarOS drop
+# on PATH could not join this Hub anyway.
+$runtimeDirFull = $null
+if (-not [string]::IsNullOrWhiteSpace($RuntimeDir)) {
+    $runtimeDirFull = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($RuntimeDir.Trim().Trim('"'))
+    if (-not (Test-Path -LiteralPath $runtimeDirFull -PathType Container)) {
+        throw "-RuntimeDir folder does not exist: $runtimeDirFull"
+    }
+    $env:QAROS_RUNTIME_DIR = $runtimeDirFull
+}
+# The Hub the panel joins. The parameters are exported only when they are given; the panel setting
+# "Hub" of the QAROS Hub group decides otherwise, and a variable wins over that setting.
+if ($HubMode) { $env:QAR_PANEL_HUB_MODE = $HubMode }
+if ($HubHost) { $env:QAR_PANEL_HUB_HOST = $HubHost }
+if ($HubPort -gt 0) { $env:QAR_PANEL_HUB_PORT = "$HubPort" }
+# Variables that this QAROS does not read: the panel logs each one once.
+foreach ($removedVar in 'QAR_RUNTIME_BINARIES_DIR', 'QAR_PANEL_VISUALIZERS', 'QAR_PANEL_VISUALIZER_GUID',
+        'QAR_PANEL_LAUNCHER_CONFIG', 'QAR_PANEL_PEER_ADMISSION', 'QAR_PANEL_PEER_SETTLE_MS',
+        'QAR_PANEL_PEER_NAME_FILTER') {
+    if ([Environment]::GetEnvironmentVariable($removedVar)) {
+        Write-Warning "$removedVar is set in this shell and has no effect with this QAROS."
+    }
+}
+# The panel is a live-stream producer.
+$env:QAR_PANEL_LIVE_STREAM = "1"
 # The panel is a live-stream producer.
 $env:QAR_PANEL_LIVE_STREAM = "1"
 # --- Logging: QUIET by default, the full TRACE set only with -TraceLogs --------
@@ -561,37 +622,56 @@ if (-not $env:QAR_DEPTH_ENCODING) { $env:QAR_DEPTH_ENCODING = "ndc" }
 #   QAR_SCENE_LIGHT_RANGE      attenuation range; 0 = no distance falloff
 if (-not $env:QAR_SCENE_LIGHT) { $env:QAR_SCENE_LIGHT = "both" }
 
-# Multi-peer. One QarOS Visualizer == one physical client head (a pair of eye
-# cameras), so N simultaneous users means N Visualizers, each with its own stereo
-# stream. Each invite spawns another Visualizer window on this machine.
-#   QAR_PANEL_VISUALIZERS       how many to AUTO-invite at connect (default 0 = none).
-#                               Visualizers are normally opened on demand with the
-#                               panel's "Invite peer" button instead.
-#   QAR_PANEL_MAX_PEERS         ceiling on concurrent streams (default 8).
-#   QAR_PANEL_PEER_ADMISSION    invited (default) | new | named | any
-#     The peer subscription surfaces the runtime's INTERNAL app peers too (one invited
-#     Visualizer shows up as several distinct ids), and building a sender for one of
-#     those mismatches app ids, so the Visualizer's own frames get rejected.
-#       invited : only ids we invited ourselves. Safe, and correct for the local
-#                 Visualizer - but it REFUSES real onboarded peers, which never go
-#                 through qar_session_invite_peer. Use -RealPeers for those.
-#       new     : invited peers, plus anything that appears after the first few
-#                 seconds (QAR_PANEL_PEER_SETTLE_MS, default 5000). The runtime's own
-#                 peers are all up by then; a human onboarding a headset is not.
-#                 This is the policy for a real HoloLens/Quest/remote-visualizer demo.
-#       named   : + display-name match (QAR_PANEL_PEER_NAME_FILTER). Unusable in
-#                 practice: names are auto-generated AND change between updates.
-#       any     : everything except ourselves. Diagnostic only.
-#   QAR_PANEL_INVITE_PEERS      real devices invited at connect, e.g.
-#     "hololens:HOLOLENS-A2B3,quest". Preferred over waiting for a device to onboard
-#     itself: the invite returns the peer id, so the device is admitted by EXACT id
-#     under any policy and needs no timing heuristic.
-if (-not $env:QAR_PANEL_VISUALIZERS)    { $env:QAR_PANEL_VISUALIZERS    = "$Visualizers" }
+# Targets. The panel streams to every TARGET of the Hub (a headset, or a Visualizer window that you
+# open in QAROS), up to QAR_PANEL_MAX_PEERS streams (default 8). Nothing here starts a Visualizer.
+#   QAR_PANEL_INVITE_PEERS  devices invited right after the panel has joined, e.g.
+#     "hololens:HOLOLENS-A2B3,headset:HEADSET-C4D5". Only the Hub of this PC (local mode) invites
+#     devices; the Hub of another PC refuses.
+$InvitePeers = @($InvitePeers | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+foreach ($entry in $InvitePeers) {
+    $inviteKind, $inviteHost = $entry -split ':', 2
+    if (@('hololens', 'headset') -notcontains $inviteKind.ToLowerInvariant() -or [string]::IsNullOrWhiteSpace($inviteHost)) {
+        throw "-InvitePeers entry '$entry' is not kind:hostname with a kind of hololens or headset."
+    }
+}
 if ($InvitePeers.Count -gt 0 -and -not $env:QAR_PANEL_INVITE_PEERS) {
     $env:QAR_PANEL_INVITE_PEERS = ($InvitePeers -join ',')
 }
-if ($RealPeers -and -not $env:QAR_PANEL_PEER_ADMISSION) {
-    $env:QAR_PANEL_PEER_ADMISSION = "new"
+
+# Which Hub the panel will join (the same rule as the panel's own "auto": a stored pairing with
+# another Hub first, then an installed QAROS, else a Hub of another PC). The identity file only
+# exists after a pairing with another PC's Hub; only its host and port are read, never its id.
+$identityBase = if ($env:QAR_PANEL_IDENTITY_DIR) { $env:QAR_PANEL_IDENTITY_DIR } else { Join-Path $env:LOCALAPPDATA 'Quaternar\QarOS-ROS' }
+$identityLeaf = 'rviz2-plugin'
+if ($env:QAR_PANEL_INSTANCE) { $identityLeaf += '.' + ($env:QAR_PANEL_INSTANCE -replace '[^A-Za-z0-9_-]', '-') }
+$identityFile = Join-Path (Join-Path $identityBase $identityLeaf) 'identity.txt'
+$identityPresent = Test-Path -LiteralPath $identityFile -PathType Leaf
+$identityHub = $null
+if ($identityPresent) {
+    $idHost = $null
+    $idPort = $null
+    foreach ($idLine in @(Get-Content -LiteralPath $identityFile -ErrorAction SilentlyContinue)) {
+        if ($idLine -match '^hub_host=(.+)$') { $idHost = $Matches[1].Trim() }
+        elseif ($idLine -match '^hub_port=(\d+)$') { $idPort = $Matches[1] }
+    }
+    $identityHub = if ($idHost -and $idPort) { "${idHost}:$idPort" } else { '(file unreadable)' }
+}
+$hubModeAsked = 'auto'
+$hubModeAskedBy = 'default'
+if ($HubMode) { $hubModeAsked = $HubMode; $hubModeAskedBy = '-HubMode' }
+elseif ($env:QAR_PANEL_HUB_MODE -match '^(auto|local|remote)$') { $hubModeAsked = $Matches[1]; $hubModeAskedBy = 'environment' }
+if ($hubModeAsked -ne 'auto') {
+    $hubModeResolved = $hubModeAsked
+    $hubModeWhy = "asked for by $hubModeAskedBy"
+} elseif ($identityPresent) {
+    $hubModeResolved = 'remote'
+    $hubModeWhy = 'auto: a pairing with the Hub of another PC is stored'
+} elseif ($qarosInstall) {
+    $hubModeResolved = 'local'
+    $hubModeWhy = 'auto: QAROS is installed on this PC'
+} else {
+    $hubModeResolved = 'remote'
+    $hubModeWhy = 'auto: QAROS is not installed on this PC'
 }
 
 # Start position for the desktop Visualizer.
@@ -633,22 +713,22 @@ if (-not $pyExe) {
 [Environment]::SetEnvironmentVariable('QAR_PANEL_TEST_MARKERS_SCRIPT',
     $(if ($markersMissing) { $null } else { $markersScript }))
 
-Write-Host "=== RViz -> QarOS Visualizer live stream ===" -ForegroundColor Magenta
+Write-Host "=== RViz -> QAROS Hub live stream ===" -ForegroundColor Magenta
 Write-Host "  scene            : $Scene$(if (Test-Path $Scene) { '' } else { '  (NOT FOUND)' })"
-Write-Host "  QarOS SDK bin    : $sdkBin"
-Write-Host "  Visualizer exe   : $vizExe"
-Write-Host "  runtime-launcher : $launcherExe"
-Write-Host "  QAR_RUNTIME_BINARIES_DIR = $env:QAR_RUNTIME_BINARIES_DIR"
+$sdkShown = if ($SdkRoot) { "$SdkRoot (from $sdkRootSource)" } else { '(none found: only the Hub of another PC can be joined)' }
+Write-Host "  QAROS install    : $sdkShown"
+if ($sdkProblem) { Write-Host "  QAROS install note: $sdkProblem" -ForegroundColor Yellow }
+$runtimeDirShown = if ($runtimeDirFull) { $runtimeDirFull } else { '(not set: the plugin uses the installed QAROS)' }
+Write-Host "  QAROS_RUNTIME_DIR        = $runtimeDirShown"
 Write-Host "  QAR_PANEL_LIVE_STREAM    = 1"
 Write-Host "  FASTRTPS_DEFAULT_PROFILES_FILE = $ddsProfileNote"
 Write-Host "  QAR_SCENE_LIGHT          = $env:QAR_SCENE_LIGHT (headlight: $(if ($env:QAR_SCENE_LIGHT_HEADLIGHT -eq 'keep') {'kept'} else {'suppressed while streaming'}))"
-$admissionNote = if ($env:QAR_PANEL_PEER_ADMISSION) { $env:QAR_PANEL_PEER_ADMISSION } `
-    else { 'panel setting' }
-$visualizerCount = $env:QAR_PANEL_VISUALIZERS
-$autoInvite = "(Connect invites $visualizerCount Visualizer(s) by itself; " +
-    "0 = you invite them with Invite peer)"
-Write-Host "  QAR_PANEL_VISUALIZERS    = $visualizerCount (admission: $admissionNote) $autoInvite"
-Write-Host "  QAR_PANEL_INVITE_PEERS   = $(if ($env:QAR_PANEL_INVITE_PEERS) { $env:QAR_PANEL_INVITE_PEERS } else { '(none - invite from the panel, or pass -InvitePeers)' })"
+$hubVarShown = if ($env:QAR_PANEL_HUB_MODE) { $env:QAR_PANEL_HUB_MODE } else { '(not set: the panel setting "Hub" of the QAROS Hub group decides, Automatic by default)' }
+Write-Host "  QAR_PANEL_HUB_MODE       = $hubVarShown"
+$hubHostShown = if ($env:QAR_PANEL_HUB_HOST) { $env:QAR_PANEL_HUB_HOST } else { '(not set)' }
+$hubPortShown = if ($env:QAR_PANEL_HUB_PORT) { $env:QAR_PANEL_HUB_PORT } else { '(not set)' }
+Write-Host "  QAR_PANEL_HUB_HOST / _PORT = $hubHostShown / $hubPortShown"
+Write-Host "  QAR_PANEL_INVITE_PEERS   = $(if ($env:QAR_PANEL_INVITE_PEERS) { $env:QAR_PANEL_INVITE_PEERS } else { '(none - pass -InvitePeers to invite devices)' })"
 Write-Host "  QAR_PANEL_FIXED_POSES    = $env:QAR_PANEL_FIXED_POSES ($fixedPosesSource)"
 Write-Host "  QAR_PANEL_VOLUME_Y       = $env:QAR_PANEL_VOLUME_Y ($volumeYSource)"
 if ($markersMissing) {
@@ -698,8 +778,6 @@ if ($timingDir) {
     Write-Host "  QAR_VIDEO_TIMING_DIR     = $env:QAR_VIDEO_TIMING_DIR   (from your shell; -TimingCsv would use a fresh folder)" -ForegroundColor Yellow
 }
 
-if (-not (Test-Path $vizExe))       { Write-Warning "Visualizer exe not found at $vizExe" }
-if (-not (Test-Path $launcherExe))  { Write-Warning "runtime-launcher exe not found at $launcherExe" }
 
 # --- Startup environment checks: WARN only, never block -----------------------------
 # A stall that hits every stream at once is rarely QarOS's own: a nearly full system
@@ -789,12 +867,17 @@ function Show-StartupEnvironmentWarnings {
         $warned++
         Add-StartCheck 'GPU compute users: not checked - WARNING: nvidia-smi: no answer in 10 s'
     } else {
-        $apps = @($compute.Lines)
+        # The processes of the installed QAROS are the ones that stream: they are not "other" users.
+        $qarosOwn = @($compute.Lines | Where-Object {
+            $SdkRoot -and $_.IndexOf($SdkRoot, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 })
+        $apps = @($compute.Lines | Where-Object { $qarosOwn -notcontains $_ })
+        if ($qarosOwn.Count -gt 0) {
+            Add-StartCheck "GPU compute users of the installed QAROS: $($qarosOwn.Count) (not counted as other users)"
+        }
         if ($apps.Count -gt 0) {
             $usersFormat = "{0} other process(es) are using the NVIDIA GPU for compute " +
-                "(pid, name, GPU memory):`n    {1}`n  They compete with the Visualizer and the " +
-                "mixer for the GPU and can stall every stream together. Stop them before " +
-                "judging stalls or latency."
+                "(pid, name, GPU memory):`n    {1}`n  They compete with QAROS for the GPU and " +
+                "can stall every stream together. Stop them before judging stalls or latency."
             Write-Warning ($usersFormat -f $apps.Count, ($apps -join "`n    "))
             $warned++
             Add-StartCheck "GPU compute users: $($apps.Count) other process(es) - WARNING:"
@@ -956,11 +1039,11 @@ function Save-QarStreamingLog {
     }
 }
 
-# The processes that QarOS starts write their logs to the QAR log directory too, and the files are
-# not started afresh for each run: <dir>\mixer_<id>_stdout.log (the mixers),
-# <dir>\streaming_viz_<id>_stdout.log (the Visualizers) and the *.crash.txt reports of a crashed
-# process, in <dir> itself or in <dir>\crashes. Copies every file of $SourceDir that matches
-# $Filter and was last written at or after $RunStart to $LogDir, as rviz_live_<stamp>. followed by
+# The processes that QAROS starts write their logs below %TEMP%\quaternar\logs, and the files are
+# not started afresh for each run: the launcher's <session id>\*.log, the crash reports of the Hub
+# service and the *.crash.txt reports of a crashed process in <QAR log dir>\crashes. Copies every
+# file of $SourceDir that matches $Filter and was last written at or after $RunStart to $LogDir,
+# as rviz_live_<stamp>. followed by
 # $NameFormat applied to the capture `id` of $NameRegex, and prints one line per copy. A missing
 # folder, or no file of this run, is a note; a failed copy is a warning; nothing here is fatal.
 # The .dmp files are never matched. @return the number of files copied.
@@ -1004,24 +1087,106 @@ function Save-QarRunFiles {
     return $copied
 }
 
-# All the copies of Save-QarRunFiles for the run that ends now. QarOS may still be closing the
+# The newest session folder of the launcher: <logs>\qar-launcher-default\<session id>. Null when
+# there is none.
+function Get-QarLauncherSessionDir {
+    param([Parameter(Mandatory)][string]$QarosLogRoot)
+    $launcherLogs = Join-Path $QarosLogRoot 'qar-launcher-default'
+    if (-not (Test-Path -LiteralPath $launcherLogs -PathType Container)) { return $null }
+    return Get-ChildItem -LiteralPath $launcherLogs -Directory -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+}
+
+# All the copies of Save-QarRunFiles for the run that ends now. QAROS may still be closing the
 # logs of its processes when rviz2 has exited, so the copies wait two seconds.
 function Save-QarRunLogs {
-    param([Parameter(Mandatory)][string]$QarLogDir, [Parameter(Mandatory)][datetime]$RunStart)
+    param(
+        [Parameter(Mandatory)][string]$QarLogDir,
+        [Parameter(Mandatory)][string]$QarosLogRoot,
+        [Parameter(Mandatory)][datetime]$RunStart
+    )
     Start-Sleep -Seconds 2
-    [void](Save-QarRunFiles -SourceDir $QarLogDir -Filter 'mixer_*_stdout.log' `
-        -NameRegex '^mixer_(?<id>.+)_stdout\.log$' -NameFormat 'mixer_{0}.log' `
-        -Kind 'QAR mixer log' -RunStart $RunStart)
-    [void](Save-QarRunFiles -SourceDir $QarLogDir -Filter 'streaming_viz_*_stdout.log' `
-        -NameRegex '^streaming_viz_(?<id>.+)_stdout\.log$' -NameFormat 'streaming_viz_{0}.log' `
-        -Kind 'QAR Visualizer log' -RunStart $RunStart)
-    foreach ($crashDir in @($QarLogDir, (Join-Path $QarLogDir 'crashes'))) {
+    $session = Get-QarLauncherSessionDir -QarosLogRoot $QarosLogRoot
+    if ($session) {
+        [void](Save-QarRunFiles -SourceDir $session.FullName -Filter '*.log' `
+            -NameRegex '^(?<id>.+\.log)$' -NameFormat 'launcher_{0}' `
+            -Kind 'QAROS launcher log' -RunStart $RunStart)
+    } else {
+        Write-Host "  QAROS launcher log copy: no session folder in $QarosLogRoot\qar-launcher-default; nothing to save"
+    }
+    foreach ($crashDir in @($QarLogDir, (Join-Path $QarLogDir 'crashes'),
+            (Join-Path $QarosLogRoot 'qaros-hub-service\crashes'))) {
         [void](Save-QarRunFiles -SourceDir $crashDir -Filter '*.crash.txt' `
             -NameRegex '^(?<id>.+\.crash\.txt)$' -NameFormat '{0}' `
-            -Kind 'QAR crash report' -RunStart $RunStart)
+            -Kind 'QAROS crash report' -RunStart $RunStart)
     }
 }
 
+# What the machine says about QAROS, read only: the registry, the process list and the endpoint
+# file of the Hub. Nothing is started, stopped or written, and the trust key in the endpoint file is
+# never printed.
+function Get-QarosProcessText([string]$Name) {
+    $found = @(Get-Process -Name $Name -ErrorAction SilentlyContinue)
+    if ($found.Count -eq 0) { return 'not running' }
+    $since = ''
+    try { $since = ", since $($found[0].StartTime.ToString('HH:mm:ss'))" } catch { }
+    return "running (pid $(($found | ForEach-Object { $_.Id }) -join ', ')$since)"
+}
+
+function Show-QarosState {
+    Write-Host "  --- QAROS on this PC (read only) ---"
+    if ($qarosInstall) {
+        Write-Host ("  installed QAROS          : {0} {1} (C API {2}, scope {3}) at {4}" -f $qarosInstall.Version,
+            $qarosInstall.Flavor, $qarosInstall.CApi, $qarosInstall.Scope, $qarosInstall.InstallFolder)
+    } else {
+        Write-Host "  installed QAROS          : none ($qarosKey has no InstallFolder): only the Hub of another PC can be joined" -ForegroundColor Yellow
+    }
+    foreach ($name in 'qaros-hub-service', 'qar-runtime-launcher', 'qar-streaming-viz') {
+        Write-Host ("  {0,-24} : {1}" -f $name, (Get-QarosProcessText $name))
+    }
+    $hubRunning = @(Get-Process -Name 'qaros-hub-service' -ErrorAction SilentlyContinue).Count -gt 0
+    $endpointFile = Join-Path $env:LOCALAPPDATA 'Quaternar\Qaros\hub-endpoint.json'
+    if (Test-Path -LiteralPath $endpointFile -PathType Leaf) {
+        try {
+            $endpoint = Get-Content -LiteralPath $endpointFile -Raw -ErrorAction Stop | ConvertFrom-Json
+            Write-Host ("  Hub endpoint file        : host {0}, onboarding port {1}, router port {2}" -f
+                $endpoint.onboardingHost, $endpoint.onboardingPort, $endpoint.routerPort)
+            Write-Host "                             $endpointFile (the trust key in it is never shown)"
+            if (-not $hubRunning) {
+                Write-Host "                             no Hub service runs, so these values can be left over from an earlier start"
+            }
+        } catch {
+            Write-Host "  Hub endpoint file        : $endpointFile could not be read ($($_.Exception.Message))" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  Hub endpoint file        : not found ($endpointFile): no Hub has started on this PC"
+    }
+    Write-Host "  Hub mode (resolved)      : $hubModeResolved ($hubModeWhy; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)"
+    $identityShown = if ($identityPresent) {
+        "present, paired with the Hub at $identityHub ($identityFile)"
+    } else {
+        "not present ($identityFile): no pairing with the Hub of another PC is stored"
+    }
+    Write-Host "  identity file            : $identityShown"
+    Write-Host "  --- what you will have to do ---"
+    if ($hubModeResolved -eq 'local') {
+        Write-Host "  Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow."
+        if (-not $hubRunning) {
+            Write-Host "  No Hub service runs now: the plugin will start QAROS when you press Connect."
+        }
+        Write-Host "  Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins."
+    } else {
+        $remoteHub = if ($identityPresent) { $identityHub } elseif ($env:QAR_PANEL_HUB_HOST) { "$($env:QAR_PANEL_HUB_HOST):$($env:QAR_PANEL_HUB_PORT)" } else { 'the Hub of the other PC' }
+        Write-Host "  Press Connect in the Connection tab of the 'Qar Streaming' panel, then type the host, the onboarding port and the pairing code that $remoteHub shows"
+        Write-Host "  (Connection panel of its Visualizer: Hubs > Pair another Hub > Let another hub join us). The code lives about 10 seconds and works once;"
+        Write-Host "  the pairing is stored, so the next start joins without a code."
+        if ($InvitePeers.Count -gt 0) {
+            Write-Host "  -InvitePeers is set, but only the Hub of this PC (local mode) invites devices: a Hub of another PC refuses." -ForegroundColor Yellow
+        }
+    }
+}
+
+Show-QarosState
 Show-StartupEnvironmentWarnings -Folders @($env:TEMP, $qarLogDir, $LogDir)
 Write-Host "  start checks record      : $checksFile (written with -Confirm)"
 Invoke-QarLogRotation -LogDir $qarLogDir -Apply:$Confirm
@@ -1032,12 +1197,13 @@ if ($qarLogSeverityGiven) {
 $qarLogSource = Join-Path $qarLogDir 'qar_streaming.log'
 Write-Host ("  QAR library log copy     : $qarLogCopy (copy of $qarLogSource made when " +
     "rviz2 exits; with -Confirm the launcher waits for rviz2)")
-Write-Host ("  QAR process logs copy    : when rviz2 exits, the files of $qarLogDir written " +
-    "during the run are copied to ${LogDir}: mixer_<id>_stdout.log as " +
-    "rviz_live_$stamp.mixer_<id>.log, streaming_viz_<id>_stdout.log as " +
-    "rviz_live_$stamp.streaming_viz_<id>.log")
-Write-Host ("  QAR crash reports copy   : *.crash.txt of $qarLogDir and of $qarLogDir\crashes " +
-    "written during the run, as rviz_live_$stamp.<report> (no .dmp files)")
+$launcherSession = Get-QarLauncherSessionDir -QarosLogRoot $qarosLogRoot
+$launcherSessionShown = if ($launcherSession) { "newest session folder now: $($launcherSession.Name)" } else { "no session folder yet" }
+Write-Host ("  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of " +
+    "$qarosLogRoot\qar-launcher-default ($launcherSessionShown) written during the run are copied to " +
+    "${LogDir}: rviz_live_$stamp.launcher_<name>")
+Write-Host ("  QAROS crash reports copy : *.crash.txt of $qarosLogRoot\qaros-hub-service\crashes, " +
+    "$qarLogDir and $qarLogDir\crashes written during the run, as rviz_live_$stamp.<report> (no .dmp files)")
 $vcRuntimeShown = if ($vcRuntimeVersion) { "$vcRuntimeVersion ($(if ($vcRuntimeOld) { 'TOO OLD' } else { 'ok' }), needs $vcRuntimeMinimum or newer)" } else { "(version not readable)" }
 if ($vcRuntimeWarning) { Write-Host "  VC++ runtime (rviz2 dir) : $vcRuntimeShown" -ForegroundColor Yellow } else { Write-Host "  VC++ runtime (rviz2 dir) : $vcRuntimeShown" }
 if ($vcRuntimeWarning) { Write-Warning $vcRuntimeWarning }   # an unreadable file; a dry run also gets here with an old runtime (-Confirm stopped above)
@@ -1056,22 +1222,18 @@ if (-not $Confirm) {
 # ---------------------------------------------------------------------------
 # LAUNCH (only with -Confirm).
 #
-# Launch rviz2 ONLY. The QAR library starts and configures qar-runtime-launcher.exe itself
-# (from launcher_config_json + the runtime binaries folder) and then spawns
-# qar-streaming-viz.exe in response to invite_peer. Starting the launcher by hand competes
-# with it and breaks peer/consumer id coordination.
+# Launch rviz2 ONLY. The plugin joins the installed QAROS Hub itself when you press Connect in the
+# panel, and starts QAROS if no Hub runs and the mode is local. This script starts neither the Hub,
+# nor a launcher, nor a Visualizer, and stops none of them.
 # ---------------------------------------------------------------------------
 
 # --- Live scene content --------------------------------------------------------
 # scene3_grid_marker.rviz subscribes to the test markers; without a publisher RViz
 # shows nothing but the grid, and the stream would carry an empty scene on BOTH ends.
 # -TestMarkers starts the publisher below; the panel's "Test markers" button starts it later.
-# Reap publishers leaked by earlier runs FIRST. This is not tidiness - it is load-
-# bearing. Every publisher is a ROS 2 node, and on domain 0 DDS assigns each participant the next
-# UDP port pair from 7410 upwards (from 7410 + 250 x domain number on any other domain). Leaked
-# publishers accumulate, the ladder climbs, and once it reaches 7446, which only domain 0 can, it
-# collides with zenoh's multicast scouting port: QAR then fails with the opaque "MsgInternalError
-# Msg: -4 [ZenohMessaging.cpp:340]" and no session can be created at all. A publisher is a Python
+# Reap publishers leaked by earlier runs FIRST. Every publisher is a ROS 2 node, and on domain 0 DDS
+# assigns each participant the next UDP port pair from 7410 upwards (from 7410 + 250 x domain
+# number on any other domain): leaked publishers accumulate and the ladder of ports climbs. A publisher is a Python
 # process whose command line names one of the four test publisher scripts of this folder as a
 # whole file name, whatever folder it was started from: one that you started yourself in another
 # window is ended as well. A Python process that has only the text publish_test_ somewhere in its
@@ -1113,16 +1275,6 @@ if ($TestMarkers) {
     }
 }
 
-# Guard: zenoh scouting needs UDP 7446. If anything holds it, QAR fails to create a
-# session with an error that names neither the port nor the culprit - say so up front.
-$busy7446 = Get-NetUDPEndpoint -LocalPort 7446 -ErrorAction SilentlyContinue
-if ($busy7446) {
-    foreach ($b in $busy7446) {
-        $owner = (Get-Process -Id $b.OwningProcess -ErrorAction SilentlyContinue).ProcessName
-        Write-Warning ("UDP 7446 (zenoh scouting) is held by pid $($b.OwningProcess) ($owner). " +
-            "QAR session creation will fail with 'MsgInternalError Msg: -4'.")
-    }
-}
 
 Write-Host "=== launching rviz2 (live-stream producer) ===" -ForegroundColor Magenta
 # Capture stdout/stderr to files: the adapter trace + any SEH/crash breadcrumb must
@@ -1141,8 +1293,12 @@ $rviz = Start-Process -FilePath "rviz2.exe" -ArgumentList @("-d", ('"' + $Scene 
 $rvizStarted = $true
 Write-Host "rviz2 PID=$($rviz.Id)."
 Write-Host ""
-Write-Host "In the RViz 'Qar Streaming' panel click 'Connect to QarOS' - the QAR runtime"
-Write-Host "then starts its launcher and the Visualizer window appears on its own."
+Write-Host "In the RViz 'Qar Streaming' panel open the Connection tab and press Connect."
+if ($hubModeResolved -eq 'local') {
+    Write-Host "Local Hub: click Allow in the QAROS window if it asks. Open a Visualizer window from QAROS, or put on a headset."
+} else {
+    Write-Host "Remote Hub: type the host, the onboarding port and the pairing code that Hub shows."
+}
 Write-Host ""
 Write-Host "  RViz stdout : $outLog" -ForegroundColor Cyan
 Write-Host "  RViz stderr : $errLog   <- [qar-panel] HB + AR VIDEO lines$(if ($env:QAR_ADAPTER_TRACE) { ', adapter trace' })" -ForegroundColor Cyan
@@ -1157,8 +1313,8 @@ if ($timingDir) {
 # Wait for rviz2, so that the library log of the run can be saved the moment it ends (below, in
 # `finally`, which also runs when Ctrl+C stops the wait).
 Write-Host ""
-Write-Host ("Waiting for rviz2 to exit; the QarOS library log is then saved as " +
-    "$qarLogCopy, with the mixer and Visualizer logs and the crash reports of the run " +
+Write-Host ("Waiting for rviz2 to exit; the QAROS library log is then saved as " +
+    "$qarLogCopy, with the launcher logs and the crash reports of the run " +
     "(Ctrl+C stops the wait and saves them as they are).") -ForegroundColor Cyan
 $rviz.WaitForExit()
 } finally {
@@ -1168,7 +1324,7 @@ $rviz.WaitForExit()
     if ($rvizStarted) {
         [void](Save-QarStreamingLog -Source (Join-Path $qarLogDir 'qar_streaming.log') `
             -Destination $qarLogCopy -RunStart $runStarted)
-        Save-QarRunLogs -QarLogDir $qarLogDir -RunStart $runStarted
+        Save-QarRunLogs -QarLogDir $qarLogDir -QarosLogRoot $qarosLogRoot -RunStart $runStarted
     }
     # Put the calling shell's environment back (see $envSnapshot). rviz2 and the marker
     # publisher were started with their own copy of the environment above; the dry run and

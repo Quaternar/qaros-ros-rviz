@@ -58,7 +58,7 @@ get_filename_component(QAR_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 include("${QAR_REPO_ROOT}/cmake/QarBuildSupport.cmake")
 
 qar_find_upstream(qar_ogre_adapter VERSION 0.1.0
-  COMPONENTS qar_ar_core qar_ogre_streaming render panels url gestures)
+  COMPONENTS qar_ar_core qar_ogre_streaming session render panels url gestures)
 qar_find_upstream(qar_qt_streaming VERSION 0.1.0)
 add_subdirectory("${QAR_REPO_ROOT}/qar_ui_model" "${CMAKE_BINARY_DIR}/qar_ui_model")
 add_subdirectory("${QAR_REPO_ROOT}/qar_ros_ui" "${CMAKE_BINARY_DIR}/qar_ros_ui")
@@ -125,6 +125,7 @@ src/spatial_interaction.cpp
   # panel (standard library, qar_ui_model and qar_ar_core only). They are also compiled into
   # qar_rviz_streaming_tests (qar_rviz_streaming/test).
   src/panel_settings.cpp
+  src/connection_view.cpp
   src/ar_control_panel_router.cpp
   src/ar_control_panel_model.cpp
   src/ar_control_panel_state.cpp
@@ -134,8 +135,12 @@ src/spatial_interaction.cpp
   # The tabbed layout of the panel: scroll pages, the elided status lines and the constant size
   # hints (Qt Widgets only, no RViz). Also compiled into qar_rviz_streaming_widget_tests.
   src/stable_panel_layout.cpp
+  # The "QAROS Hub" group of the Connection tab (Qt Widgets only, no RViz). Also compiled into
+  # qar_rviz_streaming_widget_tests.
+  src/hub_connection_widget.cpp
   # Listed so AUTOMOC processes the Q_OBJECT headers.
   include/qar_rviz_streaming/qar_streaming_panel.hpp
+  include/qar_rviz_streaming/hub_connection_widget.hpp
   include/qar_rviz_streaming/add_topic_dialog.hpp
 )
 
@@ -175,7 +180,8 @@ target_link_libraries(qar_rviz_streaming
   qar_rviz_plugin::qar_ui_model                # schema + widget tree + protocol
   qar_rviz_plugin::qar_ros_ui                    # graph, introspection, bridges
   qar_rviz_plugin::qar_web_panels            # HTTP/WebSocket panel delivery
-  qar_ogre_adapter::render                  # QarOS session + 3D stereo streams
+  qar_ogre_adapter::session                 # the owner of the QarOS session (Hub join, targets)
+  qar_ogre_adapter::render                  # 3D stereo streams on that session
   qar_ogre_adapter::panels                  # Qt widget panels out, panel input in
   qar_ogre_adapter::url                     # browser-backed (web tool) panels
   qar_ogre_adapter::gestures                # app-volume (spatial) gestures
