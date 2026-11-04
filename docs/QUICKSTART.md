@@ -41,17 +41,16 @@ done.
 Set-Location "$env:QAR_ROOT\src\qar_rviz_plugin"
 ```
 
-3. Create the Python environment, which holds the installer of Qt and colcon, and fill it from the pinned list of the repository.
+3. Create the Python environment, which holds the installer of Qt and colcon, and fill it from the two pinned lists of the repository, `requirements.txt` and `requirements-ros.txt`.
 
 ```powershell
 & "$env:ProgramFiles\Python310\python.exe" -m venv $env:QAR_VENV
 ```
 
 ```powershell
-& "$env:QAR_VENV\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements.txt
+& "$env:QAR_VENV\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements.txt -r requirements-ros.txt
 ```
 ```text
-...
 Successfully installed PyYAML-6.0.3 Pygments-2.20.0 aqtinstall-3.3.0 backports.zstd-1.6.0 beautifulsoup4-4.15.0 brotli-1.2.0 bs4-0.0.2 catkin-pkg-1.1.0 certifi-2026.6.17 charset-normalizer-3.4.9 colcon-cmake-0.2.30 colcon-common-extensions-0.3.0 colcon-core-0.21.0 colcon-defaults-0.2.9 colcon-devtools-0.3.0 colcon-library-path-0.2.1 colcon-metadata-0.2.5 colcon-notification-0.3.1 colcon-output-0.2.14 colcon-package-information-0.4.1 colcon-package-selection-0.2.10 colcon-parallel-executor-0.4.0 colcon-pkg-config-0.1.0 colcon-powershell-0.5.0 colcon-python-setup-py-0.2.9 colcon-recursive-crawl-0.2.3 colcon-ros-0.5.0 colcon-test-result-0.3.8 colorama-0.4.6 coloredlogs-15.0.1 coverage-7.15.0 defusedxml-0.7.1 distlib-0.4.3 docutils-0.23 empy-4.2.1 exceptiongroup-1.3.1 humanfriendly-10.0 humanize-4.16.0 idna-3.18 inflate64-1.0.4 iniconfig-2.3.0 lark-1.3.1 multivolumefile-0.2.3 netifaces-0.11.0 numpy-2.2.6 opencv-python-5.0.0.93 packaging-26.2 patch-ng-1.19.1 pluggy-1.6.0 psutil-7.2.2 py7zr-1.1.3 pybcj-1.0.7 pycryptodomex-3.23.0 pyparsing-3.3.2 pyppmd-1.3.1 pyreadline3-3.5.6 pytest-9.1.1 pytest-cov-7.1.0 pytest-repeat-0.9.4 pytest-rerunfailures-16.4 python-dateutil-2.9.0.post0 pywin32-312 requests-2.34.2 semantic-version-2.10.0 six-1.17.0 soupsieve-2.8.4 texttable-1.7.0 tomli-2.4.1 typing_extensions-4.16.0 urllib3-2.7.0 vcstool-0.3.0
 ```
 
@@ -231,8 +230,8 @@ Preset CMake variables:
 ...
 -- qar_qar_adapter: QarOS SDK backend, DYNAMIC loading of C:\Program Files\Quaternar\QAROS/bin/qar-streaming-c.dll (no import lib linked)
 ...
--- Configuring done (10.4s)
--- Generating done (0.2s)
+-- Configuring done (12.8s)
+-- Generating done (0.3s)
 -- Build files have been written to: C:/qar/src/qar_ogre_adapter/build/vs2019-x64
 ```
 
@@ -251,6 +250,11 @@ cmake --build --preset vs2019-x64
   qar_ogre_standalone_streaming_sample.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\ogre_standalone_streaming_sample\RelWithDebInfo\qar_ogre_standalone_streaming_sample.exe
 ...
   qar_ogre_live_stream_example.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\qaros_live_stream\RelWithDebInfo\qar_ogre_live_stream_example.exe
+...
+  qar_ogre_adapter_doc_snippets.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\docs\snippets\RelWithDebInfo\qar_ogre_adapter_doc_snippets.exe
+...
+  qar_qar_adapter_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\test\RelWithDebInfo\qar_qar_adapter_tests.exe
+  qar_ogre_streaming_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\test\RelWithDebInfo\qar_ogre_streaming_tests.exe
 ```
 
 ```powershell
@@ -260,13 +264,8 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/lib/qar_ar_core.lib
 -- Installing: C:\qar\install/lib/qar_ogre_streaming.lib
 -- Installing: C:\qar\install/lib/qar_qar_adapter_capi.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_session.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_render.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_panels.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_url.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_gestures.lib
--- Installing: C:\qar\install/include
 ...
+-- Installing: C:\qar\install/include/qar_qar_adapter/target_rule.hpp
 -- Installing: C:\qar\install/include/qar_streaming.h
 -- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE.qar_streaming_header
 -- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE
@@ -276,7 +275,7 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterConfigVersion.cmake
 ```
 
-7. Do the same for `qar_qt_streaming`, which finds `qar_ogre_adapter` in `QAR_PREFIX`.
+7. Do the same for `qar_qt_streaming`, which needs only Qt and the headers of the QarOS C++ SDK and does not depend on `qar_ogre_adapter`.
 
 ```powershell
 git clone https://github.com/Quaternar/qaros-qt "$env:QAR_ROOT\src\qar_qt_streaming"
@@ -297,18 +296,14 @@ cmake --preset vs2019-x64
 Preset CMake variables:
 
   QAR_BUILD_TESTS="ON"
-  QAR_PREFIX="C:\qar\install"
   QAR_QT_ROOT="C:\qar\deps\Qt\5.15.2\msvc2019_64"
-
+  QAR_SDK_ROOT="C:\Program Files\Quaternar\QAROS"
 ...
--- The CXX compiler identification is MSVC 19.29.30151.0
+-- Qt 5.15.2: C:/qar/deps/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5
+-- QarOS SDK headers: third_party/
 ...
--- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
-...
--- qar_ogre_adapter 0.1.0: C:/qar/install/share/qar_ogre_adapter/cmake
-...
--- Configuring done (10.9s)
--- Generating done (0.2s)
+-- Configuring done (12.5s)
+-- Generating done (0.3s)
 -- Build files have been written to: C:/qar/src/qar_qt_streaming/build/vs2019-x64
 ```
 
@@ -316,6 +311,13 @@ Preset CMake variables:
 cmake --build --preset vs2019-x64
 ```
 ```text
+  qar_qt_streaming_seam.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\RelWithDebInfo\qar_qt_streaming_seam.lib
+...
+  qar_qt_streaming_qaros.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\RelWithDebInfo\qar_qt_streaming_qaros.lib
+...
+  qar_qt_streaming_seam_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\test\RelWithDebInfo\qar_qt_streaming_seam_tests.exe
+  qar_qt_streaming_qaros_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\test\RelWithDebInfo\qar_qt_streaming_qaros_tests.exe
+...
   qar_qt_streaming.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\RelWithDebInfo\qar_qt_streaming.lib
 ...
   qar_qt_panel_example.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\examples\qt_panel_example\RelWithDebInfo\qar_qt_panel_example.exe
@@ -329,10 +331,14 @@ cmake --build --preset vs2019-x64
 cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFIX
 ```
 ```text
+-- Installing: C:\qar\install/lib/qar_qt_streaming_seam.lib
 -- Installing: C:\qar\install/lib/qar_qt_streaming.lib
--- Up-to-date: C:\qar\install/include
+-- Installing: C:\qar\install/lib/qar_qt_streaming_qaros.lib
+-- Installing: C:\qar\install/include
 -- Installing: C:\qar\install/include/qar_qt_streaming
+-- Installing: C:\qar\install/include/qar_qt_streaming/seam
 ...
+-- Installing: C:\qar\install/share/qar_qt_streaming/sdk/LICENSE
 -- Installing: C:\qar\install/share/qar_qt_streaming/LICENSE
 -- Installing: C:\qar\install/share/qar_qt_streaming/cmake/qar_qt_streamingTargets.cmake
 -- Installing: C:\qar\install/share/qar_qt_streaming/cmake/qar_qt_streamingTargets-relwithdebinfo.cmake

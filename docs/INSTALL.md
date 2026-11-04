@@ -6,7 +6,9 @@ This document installs everything that you need to build, test and run qar_rviz_
 
 You need QAROS installed to open a page as a URL panel in QAROS, which the examples do when they join the QAROS Hub; they load the installed QAROS library when they run.
 
-qar_rviz_plugin is the one repository of the stack that needs the whole chain. The plugin is a panel that RViz loads, so it is built against the RViz2, `rclcpp` and Ogre of the ROS 2 Humble distribution, and the distribution needs all nine repairs of [Repairs to the ROS 2 Windows distribution](#repairs-to-the-ros-2-windows-distribution). It links the libraries of the two upstream repositories, which it finds as installed CMake packages below `QAR_PREFIX`, and the three web libraries of this repository, which it builds itself, and it uses Qt 5.15.2 with the modules Core, Gui and Widgets, and Network and WebSockets through the web panel library. The plugin is an ament package, which ROS 2 builds with `colcon`, so the build also needs the Python environment of this document and `ninja`.
+qar_rviz_plugin is the one repository of the stack that needs the whole chain. The plugin is a panel that RViz loads, so it is built against the RViz2, `rclcpp` and Ogre of the ROS 2 Humble distribution, and the distribution needs all nine repairs of [Repairs to the ROS 2 Windows distribution](#repairs-to-the-ros-2-windows-distribution). It links the libraries of the two upstream repositories, which it finds as installed CMake packages below `QAR_PREFIX`, and the module `qar_capi_panels` and the three web libraries of this repository, which it builds itself, and it uses Qt 5.15.2 with the modules Core, Gui and Widgets, and Network and WebSockets through the web panel library. The plugin is an ament package, which ROS 2 builds with `colcon`, so the build also needs the Python environment of this document and `ninja`.
+
+The two upstream repositories do not depend on each other and do not need this one. This repository is the one that carries the repairs of the ROS 2 distribution, the list `requirements-ros.txt` of the Python packages of the ROS 2 build, and, next to `qar_ogre_adapter`, the scripts `fetch_dependencies.ps1` and `qar_locations.ps1`.
 
 QAROS is not needed to build or test. You need it to run: the plugin loads the installed QAROS library by its full path when you press `"Connect to QarOS"`, and the launcher `scripts\run_live_rviz_stream_real.ps1` puts nothing on `PATH`. The installation that the registry names is used; `QAR_SDK_ROOT` names the same folder for the configure checks and for the launcher, which reads the registry first.
 
@@ -90,7 +92,7 @@ All install commands use `winget`, the Windows package manager that ships with W
 
 ### Why Visual Studio 2019 and the v142 toolset
 
-The ROS 2 Humble distribution of this documentation and the Qt 5.15.2 kit `msvc2019_64` are compiled with the Visual Studio 2019 toolset (v142). C++ classes cross DLL boundaries in this stack, between our code and Ogre, RViz and Qt, and the compiled layout of those classes and the C++ runtime they use must match the toolset that built the binaries. The stack therefore pins the toolset that built them instead of trying a newer one: the presets select the generator `Visual Studio 16 2019`, and the scripts find only a Visual Studio 16.x installation that has the C++ x64 tools. Visual Studio 2022 or 2026 may be installed next to it; they are ignored. Always build `RelWithDebInfo` or `Release`: the ROS 2 and Qt binaries are release builds, and a debug C runtime in the same process crashes on load.
+The ROS 2 Humble distribution of this documentation and the Qt 5.15.2 kit `msvc2019_64` are compiled with the Visual Studio 2019 toolset (v142). C++ classes cross DLL boundaries in this stack, between our code and Ogre, RViz and Qt, and the compiled layout of those classes and the C++ runtime they use must match the toolset that built the binaries. The stack therefore pins the toolset that built them instead of trying a newer one: the presets select the generator Visual Studio 16 2019, and the scripts find only a Visual Studio 16.x installation that has the C++ x64 tools. Visual Studio 2022 or 2026 may be installed next to it; they are ignored. Always build `RelWithDebInfo` or `Release`: the ROS 2 and Qt binaries are release builds, and a debug C runtime in the same process crashes on load.
 
 ### Visual Studio 2019 Build Tools
 
@@ -363,7 +365,7 @@ How a program joins the QAROS Hub is described by QuaternAR: [Onboarding and ses
 
 ### Clone this repository
 
-The next steps use the scripts and the `requirements.txt` of this repository, so clone it first. The command takes the default branch of the repository. This documentation describes version 0.1.0 of the three repositories of this stack; the version of a clone is the number after the word VERSION in the project command of the file `CMakeLists.txt` in its root.
+The next steps use the scripts and the `requirements.txt` of this repository, so clone it first.
 
 ```powershell
 git clone https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
@@ -381,7 +383,8 @@ Set-Location "$env:QAR_ROOT\src\qar_rviz_plugin"
 
 ### Create the virtual environment
 
-The virtual environment holds the Python tools of the build in one folder that you can delete. It is created from the Python 3.10 interpreter of the toolchain section and filled from the pinned list `requirements.txt` of the repository. The list contains, among other packages, `aqtinstall`, which installs Qt, and `colcon-common-extensions`, which builds ROS 2 packages; every repository ships the same list.
+The virtual environment holds the Python tools of the build in one folder that you can delete. It is created from the Python 3.10 interpreter of the toolchain section and filled from the pinned list `requirements.txt` of the repository.
+The list contains, among other packages, `aqtinstall`, which installs Qt, and `backports.zstd`, which unpacks the OpenSSL package of a repair script. The second list, `requirements-ros.txt`, holds `colcon-common-extensions`, which builds ROS 2 packages, and the Python packages of the ROS 2 build and of the scripts of the plugin; both lists go into the same environment.
 The plugin build needs the environment in addition: the Python helpers of the ROS 2 build system need `catkin_pkg`, `lark` and `empy`, which the system Python lacks, so `scripts\build_plugin.ps1` takes the interpreter from `QAR_VENV`.
 
 ```powershell
@@ -389,10 +392,9 @@ The plugin build needs the environment in addition: the Python helpers of the RO
 ```
 
 ```powershell
-& "$env:QAR_VENV\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements.txt
+& "$env:QAR_VENV\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements.txt -r requirements-ros.txt
 ```
 ```text
-...
 Successfully installed PyYAML-6.0.3 Pygments-2.20.0 aqtinstall-3.3.0 backports.zstd-1.6.0 beautifulsoup4-4.15.0 brotli-1.2.0 bs4-0.0.2 catkin-pkg-1.1.0 certifi-2026.6.17 charset-normalizer-3.4.9 colcon-cmake-0.2.30 colcon-common-extensions-0.3.0 colcon-core-0.21.0 colcon-defaults-0.2.9 colcon-devtools-0.3.0 colcon-library-path-0.2.1 colcon-metadata-0.2.5 colcon-notification-0.3.1 colcon-output-0.2.14 colcon-package-information-0.4.1 colcon-package-selection-0.2.10 colcon-parallel-executor-0.4.0 colcon-pkg-config-0.1.0 colcon-powershell-0.5.0 colcon-python-setup-py-0.2.9 colcon-recursive-crawl-0.2.3 colcon-ros-0.5.0 colcon-test-result-0.3.8 colorama-0.4.6 coloredlogs-15.0.1 coverage-7.15.0 defusedxml-0.7.1 distlib-0.4.3 docutils-0.23 empy-4.2.1 exceptiongroup-1.3.1 humanfriendly-10.0 humanize-4.16.0 idna-3.18 inflate64-1.0.4 iniconfig-2.3.0 lark-1.3.1 multivolumefile-0.2.3 netifaces-0.11.0 numpy-2.2.6 opencv-python-5.0.0.93 packaging-26.2 patch-ng-1.19.1 pluggy-1.6.0 psutil-7.2.2 py7zr-1.1.3 pybcj-1.0.7 pycryptodomex-3.23.0 pyparsing-3.3.2 pyppmd-1.3.1 pyreadline3-3.5.6 pytest-9.1.1 pytest-cov-7.1.0 pytest-repeat-0.9.4 pytest-rerunfailures-16.4 python-dateutil-2.9.0.post0 pywin32-312 requests-2.34.2 semantic-version-2.10.0 six-1.17.0 soupsieve-2.8.4 texttable-1.7.0 tomli-2.4.1 typing_extensions-4.16.0 urllib3-2.7.0 vcstool-0.3.0
 ```
 
@@ -450,7 +452,7 @@ The distribution has gaps that matter for what you build; the next section repai
 
 ## Repairs to the ROS 2 Windows distribution
 
-The official ROS 2 Humble binary release for Windows is built on a CI machine and has gaps that show up as soon as you run its programs or build against it: some runtime DLLs are missing, some CMake configuration files are missing, the Qt DLL names differ from a normal Qt, the exported CMake targets name paths of the CI machine, and the C++ runtime that it ships next to `rviz2.exe` is older than the QarOS library accepts. This stack repairs the distribution in place with scripts that ship in every repository.
+The official ROS 2 Humble binary release for Windows is built on a CI machine and has gaps that show up as soon as you run its programs or build against it: some runtime DLLs are missing, some CMake configuration files are missing, the Qt DLL names differ from a normal Qt, the exported CMake targets name paths of the CI machine, and the C++ runtime that it ships next to `rviz2.exe` is older than the QarOS library accepts. This stack repairs the distribution in place with scripts that ship in this repository.
 
 All repair scripts are safe to run again: each one checks what is already there and skips it. They edit the distribution folder `ROS2_INSTALL_ROOT`, and `scripts\fix_stale_pixi_paths.ps1` also creates one folder on `C:`; none needs administrator rights. Run them in the order of the table, once, after you have fetched the distribution.
 
@@ -468,7 +470,7 @@ qar_rviz_plugin needs all nine repairs: RViz must start, be able to run the QarO
 | `scripts\fix_old_vc_runtime.ps1` | Replaces the C++ runtime files next to `rviz2.exe` (`msvcp140.dll`, `vcruntime140.dll` and their companions, version 14.29) with the same files of a runtime of version 14.40 or newer, and keeps a `.vcrt.orig` copy of each. | `"Connect to QarOS"` ends RViz, and the log of RViz holds a line about a `SEH FAULT` in `qar_library_init` that names the `MSVCP140.dll` of the distribution. | The current Microsoft Visual C++ Redistributable for x64 on the machine, or `-SdkRoot` with a QarOS SDK folder whose `bin` holds a newer runtime; RViz closed |
 | `scripts\fix_missing_tinyxml_dll.ps1` | Builds `tinyxml.dll` (TinyXML 2.6.2) from its source archive, after it has checked the SHA-256 of the archive, and installs the file next to `rviz2.exe`; `urdfdom_model.dll` and three more libraries of the distribution import it, and the release does not ship it. | RViz ends with the exit code 0xC0000409 as soon as a robot description reaches the Robot model display, and `check_urdf.exe` of the distribution fails with the Windows status 0xC0000135. | Visual Studio 2019 tools, CMake, `tar`, the output of the vendor DLL script, and network access to Debian, Ubuntu or SourceForge, or `-SourceArchive` with a local copy of the archive |
 
-The repairs of OpenSSL and Eigen need no conda installation: each one downloads a pinned file. `scripts\fix_missing_openssl_dll.ps1` downloads the package `openssl-1.1.1w-hcfcfb64_0.conda` of the conda-forge channel from `conda.anaconda.org` and unpacks the two DLLs from it with the Python of the virtual environment (`QAR_VENV`) and its module `backports.zstd`, which `requirements.txt` installs; if that Python is not there or cannot read the package, the script tries the `tar` of Windows, which must support Zstandard. `scripts\fix_missing_eigen.ps1` takes the archive `eigen-3.4.0.tar.bz2` from the first of three download locations (Debian, Ubuntu and GitLab) that answers with a file of the pinned SHA-256, unpacks the folders `Eigen` and `unsupported` and the file `signature_of_eigen3_matrix_library` with `tar`, and copies them into the distribution. Both scripts keep the download in the folder `downloads` of `QAR_DEPS_ROOT`, compare its SHA-256 with the value that they pin, delete a download with another hash and never unpack it. On a machine that cannot reach the download locations, pass a local copy of the file with `-SourceArchive`; it must have the same SHA-256. The parameter `-SourceDir` of the OpenSSL script (a folder that holds both DLLs) and the parameter `-EigenSourceInclude` of the Eigen script (the `include/eigen3` folder of an Eigen 3.4.0 installation) name files that you already have, and they win over the download.
+The repairs of OpenSSL and Eigen need no conda installation: each one downloads a pinned file. `scripts\fix_missing_openssl_dll.ps1` does nothing when both DLLs are already in the `bin` folder of the distribution, and it accepts a pair of any OpenSSL 1.1.1 patch level that you give with `-SourceDir`; only the package that it downloads itself, `openssl-1.1.1w-hcfcfb64_0.conda`, has a fixed patch level. Without such a pair it downloads the package `openssl-1.1.1w-hcfcfb64_0.conda` of the conda-forge channel from `conda.anaconda.org` and unpacks the two DLLs from it with the Python of the virtual environment (`QAR_VENV`) and its module `backports.zstd`, which `requirements.txt` installs; if that Python is not there or cannot read the package, the script tries the `tar` of Windows, which must support Zstandard. `scripts\fix_missing_eigen.ps1` takes the archive `eigen-3.4.0.tar.bz2` from the first of three download locations (Debian, Ubuntu and GitLab) that answers with a file of the pinned SHA-256, unpacks the folders `Eigen` and `unsupported` and the file `signature_of_eigen3_matrix_library` with `tar`, and copies them into the distribution. Both scripts keep the download in the folder `downloads` of `QAR_DEPS_ROOT`, compare its SHA-256 with the value that they pin, delete a download with another hash and never unpack it. On a machine that cannot reach the download locations, pass a local copy of the file with `-SourceArchive`; it must have the same SHA-256. The parameter `-SourceDir` of the OpenSSL script (a folder that holds both DLLs) and the parameter `-EigenSourceInclude` of the Eigen script (the `include/eigen3` folder of an Eigen 3.4.0 installation) name files that you already have, and they win over the download.
 
 The numpy headers of `scripts\fix_stale_pixi_paths.ps1` are optional. The script creates their folder in any case and fills it from `-NumpySourceInclude`, or else from the numpy package of the virtual environment (`QAR_VENV`), which `requirements.txt` pins; if it finds neither, it prints a warning and goes on. No C++ or CMake file of this stack mentions numpy, so the folder only has to exist.
 
@@ -656,9 +658,11 @@ usage: ros2 [-h] [--use-python-default-buffering]
 
 ## Upstream repositories
 
-### qar_ogre_adapter 0.1.0
+Build and install the two repositories one after the other into the prefix `QAR_PREFIX`, in either order, because they do not depend on each other; the plugin needs both, and it finds the components `qar_ar_core`, `qar_ogre_streaming`, `capi`, `session`, `render`, `url` and `gestures` of `qar_ogre_adapter` and the components `seam` and `qar_qt_streaming` of `qar_qt_streaming`. It does not use the component `qaros` of `qar_qt_streaming`: the module `qar_capi_panels` of this repository is the backend of the panels, so the plugin works on the session of the session owner.
 
-qar_ogre_adapter is the QarOS integration layer. It renders an Ogre scene for each eye into OpenGL textures and streams them to QarOS, and it holds the adapter for the QarOS C API (session, peers, panels, URL panels and gestures) that the other repositories build on. It also carries the C header of the QarOS SDK that every repository of this stack compiles against.
+### qar_ogre_adapter 0.2.0
+
+qar_ogre_adapter is the QarOS integration layer. It renders an Ogre scene for each eye into OpenGL textures and streams them to QarOS, and it holds the adapter for the QarOS C API (session, peers, URL panels and gestures) that the plugin repository builds on. It also carries the C header of the QarOS SDK that the plugin repository compiles against.
 
 Clone it next to the other repositories.
 
@@ -676,7 +680,7 @@ Go to the folder of the clone; the commands below run there:
 Set-Location "$env:QAR_ROOT\src\qar_ogre_adapter"
 ```
 
-Configure with the preset of the repository. The preset selects the generator `Visual Studio 16 2019` for x64, the build folder `build\vs2019-x64` inside the clone and the configuration `RelWithDebInfo`, and it reads the location variables of the layout. Configuring downloads GoogleTest 1.14.0 as an archive from `github.com` and checks its SHA256, so this step needs network access; without it, pass `-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST` with the path of an extracted GoogleTest 1.14.0 folder.
+Configure with the preset of the repository. The preset selects the generator Visual Studio 16 2019 for x64, the build folder `build\vs2019-x64` inside the clone and the configuration `RelWithDebInfo`, and it reads the location variables of the layout. Configuring downloads GoogleTest 1.14.0 as an archive from `github.com` and checks its SHA256, so this step needs network access; without it, pass `-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST` with the path of an extracted GoogleTest 1.14.0 folder.
 
 ```powershell
 cmake --preset vs2019-x64
@@ -696,8 +700,8 @@ Preset CMake variables:
 ...
 -- qar_qar_adapter: QarOS SDK backend, DYNAMIC loading of C:\Program Files\Quaternar\QAROS/bin/qar-streaming-c.dll (no import lib linked)
 ...
--- Configuring done (10.4s)
--- Generating done (0.2s)
+-- Configuring done (12.8s)
+-- Generating done (0.3s)
 -- Build files have been written to: C:/qar/src/qar_ogre_adapter/build/vs2019-x64
 ```
 
@@ -718,6 +722,11 @@ cmake --build --preset vs2019-x64
   qar_ogre_standalone_streaming_sample.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\ogre_standalone_streaming_sample\RelWithDebInfo\qar_ogre_standalone_streaming_sample.exe
 ...
   qar_ogre_live_stream_example.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\qaros_live_stream\RelWithDebInfo\qar_ogre_live_stream_example.exe
+...
+  qar_ogre_adapter_doc_snippets.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\docs\snippets\RelWithDebInfo\qar_ogre_adapter_doc_snippets.exe
+...
+  qar_qar_adapter_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\test\RelWithDebInfo\qar_qar_adapter_tests.exe
+  qar_ogre_streaming_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\test\RelWithDebInfo\qar_ogre_streaming_tests.exe
 ```
 
 Install it into the prefix. The install puts the libraries of the three modules `qar_ar_core`, `qar_ogre_streaming` and `qar_qar_adapter` and the vendored QarOS C header below `$env:QAR_PREFIX`, together with the CMake package that the other repositories of this stack find there.
@@ -729,13 +738,8 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/lib/qar_ar_core.lib
 -- Installing: C:\qar\install/lib/qar_ogre_streaming.lib
 -- Installing: C:\qar\install/lib/qar_qar_adapter_capi.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_session.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_render.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_panels.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_url.lib
--- Installing: C:\qar\install/lib/qar_qar_adapter_gestures.lib
--- Installing: C:\qar\install/include
 ...
+-- Installing: C:\qar\install/include/qar_qar_adapter/target_rule.hpp
 -- Installing: C:\qar\install/include/qar_streaming.h
 -- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE.qar_streaming_header
 -- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE
@@ -745,9 +749,9 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterConfigVersion.cmake
 ```
 
-### qar_qt_streaming 0.1.0
+### qar_qt_streaming 0.2.0
 
-qar_qt_streaming turns Qt widgets into QarOS AR GUI panels: it captures a widget off screen, streams it as a panel and feeds AR touch input back to the widget.
+qar_qt_streaming turns Qt widgets into QarOS AR GUI panels: it captures a widget off screen, streams it as a panel and feeds AR touch input back to the widget. It needs Qt and the headers of the QarOS C++ SDK, and nothing of the other repositories of this stack.
 
 Clone it next to the other repositories.
 
@@ -765,7 +769,7 @@ Go to the folder of the clone; the commands below run there:
 Set-Location "$env:QAR_ROOT\src\qar_qt_streaming"
 ```
 
-Configure with the preset of the repository. The preset selects the generator `Visual Studio 16 2019` for x64, the build folder `build\vs2019-x64` inside the clone and the configuration `RelWithDebInfo`, and it reads the location variables of the layout. Configuring downloads GoogleTest 1.14.0 as an archive from `github.com` and checks its SHA256, so this step needs network access; without it, pass `-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST` with the path of an extracted GoogleTest 1.14.0 folder.
+Configure with the preset of the repository. The preset selects the generator Visual Studio 16 2019 for x64, the build folder `build\vs2019-x64` inside the clone and the configuration `RelWithDebInfo`, and it reads the location variables of the layout. Configuring downloads GoogleTest 1.14.0 as an archive from `github.com` and checks its SHA256, so this step needs network access; without it, pass `-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST` with the path of an extracted GoogleTest 1.14.0 folder.
 
 ```powershell
 cmake --preset vs2019-x64
@@ -774,18 +778,14 @@ cmake --preset vs2019-x64
 Preset CMake variables:
 
   QAR_BUILD_TESTS="ON"
-  QAR_PREFIX="C:\qar\install"
   QAR_QT_ROOT="C:\qar\deps\Qt\5.15.2\msvc2019_64"
-
+  QAR_SDK_ROOT="C:\Program Files\Quaternar\QAROS"
 ...
--- The CXX compiler identification is MSVC 19.29.30151.0
+-- Qt 5.15.2: C:/qar/deps/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5
+-- QarOS SDK headers: third_party/
 ...
--- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
-...
--- qar_ogre_adapter 0.1.0: C:/qar/install/share/qar_ogre_adapter/cmake
-...
--- Configuring done (10.9s)
--- Generating done (0.2s)
+-- Configuring done (12.5s)
+-- Generating done (0.3s)
 -- Build files have been written to: C:/qar/src/qar_qt_streaming/build/vs2019-x64
 ```
 
@@ -795,6 +795,13 @@ Build it. The build writes into the build folder of the repository only.
 cmake --build --preset vs2019-x64
 ```
 ```text
+  qar_qt_streaming_seam.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\RelWithDebInfo\qar_qt_streaming_seam.lib
+...
+  qar_qt_streaming_qaros.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\RelWithDebInfo\qar_qt_streaming_qaros.lib
+...
+  qar_qt_streaming_seam_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\test\RelWithDebInfo\qar_qt_streaming_seam_tests.exe
+  qar_qt_streaming_qaros_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\test\RelWithDebInfo\qar_qt_streaming_qaros_tests.exe
+...
   qar_qt_streaming.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\RelWithDebInfo\qar_qt_streaming.lib
 ...
   qar_qt_panel_example.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\examples\qt_panel_example\RelWithDebInfo\qar_qt_panel_example.exe
@@ -804,16 +811,20 @@ cmake --build --preset vs2019-x64
   qar_qt_streaming_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\test\RelWithDebInfo\qar_qt_streaming_tests.exe
 ```
 
-Install it into the prefix. The install puts the library `qar_qt_streaming` below `$env:QAR_PREFIX`, together with the CMake package that the other repositories of this stack find there.
+Install it into the prefix. The install puts the libraries `qar_qt_streaming_seam`, `qar_qt_streaming` and `qar_qt_streaming_qaros` below `$env:QAR_PREFIX`, together with their headers, the QarOS headers of `third_party` when the build used them, and the CMake package that your own project finds there.
 
 ```powershell
 cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFIX
 ```
 ```text
+-- Installing: C:\qar\install/lib/qar_qt_streaming_seam.lib
 -- Installing: C:\qar\install/lib/qar_qt_streaming.lib
--- Up-to-date: C:\qar\install/include
+-- Installing: C:\qar\install/lib/qar_qt_streaming_qaros.lib
+-- Installing: C:\qar\install/include
 -- Installing: C:\qar\install/include/qar_qt_streaming
+-- Installing: C:\qar\install/include/qar_qt_streaming/seam
 ...
+-- Installing: C:\qar\install/share/qar_qt_streaming/sdk/LICENSE
 -- Installing: C:\qar\install/share/qar_qt_streaming/LICENSE
 -- Installing: C:\qar\install/share/qar_qt_streaming/cmake/qar_qt_streamingTargets.cmake
 -- Installing: C:\qar\install/share/qar_qt_streaming/cmake/qar_qt_streamingTargets-relwithdebinfo.cmake
@@ -823,7 +834,7 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 
 ## Build and install qar_rviz_plugin
 
-This repository holds two builds that use the same sources. A CMake project at its root compiles the three web libraries, the two examples and the parts of the plugin that need neither RViz nor QarOS, the pure units, together with their tests; it is the project of the preset `vs2019-x64`, like the upstream repositories. The plugin itself, the shared library that RViz loads, is built by `colcon` through the script `scripts\build_plugin.ps1`, because it needs the ament build system of ROS 2. The first build is quick and tells you that the upstream packages and the units work; the second is the one that produces the plugin.
+This repository holds two builds that use the same sources. A CMake project at its root compiles the three web libraries, the module `qar_capi_panels`, the two examples and the parts of the plugin that need neither RViz nor QarOS, the pure units, together with their tests; it is the project of the preset `vs2019-x64`, like the upstream repositories. The plugin itself, the shared library that RViz loads, is built by `colcon` through the script `scripts\build_plugin.ps1`, because it needs the ament build system of ROS 2. The first build is quick and tells you that the upstream packages and the units work; the second is the one that produces the plugin.
 
 ### Configure, build and test the units
 
@@ -846,15 +857,13 @@ Preset CMake variables:
   QAR_QT_ROOT="C:\qar\deps\Qt\5.15.2\msvc2019_64"
   QAR_ROS2_INSTALL_ROOT="C:\qar\deps\ros2_humble\ros2-windows"
 ...
--- The CXX compiler identification is MSVC 19.29.30151.0
-...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
 ...
--- qar_ogre_adapter 0.1.0: C:/qar/install/share/qar_ogre_adapter/cmake
--- qar_qt_streaming 0.1.0: C:/qar/install/share/qar_qt_streaming/cmake
+-- qar_ogre_adapter 0.2.0: C:/qar/install/share/qar_ogre_adapter/cmake
+-- qar_qt_streaming 0.2.0: C:/qar/install/share/qar_qt_streaming/cmake
 ...
--- Configuring done (12.8s)
--- Generating done (0.5s)
+-- Configuring done (6.2s)
+-- Generating done (0.4s)
 -- Build files have been written to: C:/qar/src/qar_rviz_plugin/build/vs2019-x64
 ```
 
@@ -862,6 +871,8 @@ Preset CMake variables:
 cmake --build --preset vs2019-x64
 ```
 ```text
+...
+  qar_capi_panels_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_capi_panels\test\RelWithDebInfo\qar_capi_panels_tests.exe
 ...
   qar_rviz_streaming_widget_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_widget_tests.exe
 ...
@@ -877,7 +888,7 @@ cmake --build --preset vs2019-x64
 ...
 ```
 
-The build produces eight test executables, and the tests need no QAROS and open no window. [Testing](TESTING.md) explains what they cover. Run them now:
+The build produces nine test executables, and the tests need no QAROS and open no window. [Testing](TESTING.md) explains what they cover. Run them now:
 
 ```powershell
 ctest --preset vs2019-x64
@@ -885,18 +896,18 @@ ctest --preset vs2019-x64
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
         Start   1: check_layering_qar_ui_model
-  1/889 Test   #1: check_layering_qar_ui_model ..................................................................   Passed    0.15 sec
+  1/937 Test   #1: check_layering_qar_ui_model ..................................................................   Passed    0.16 sec
         Start   2: check_layering_qar_web_panels
-  2/889 Test   #2: check_layering_qar_web_panels ................................................................   Passed    0.07 sec
+  2/937 Test   #2: check_layering_qar_web_panels ................................................................   Passed    0.09 sec
         Start   3: check_layering_qar_ros_ui
-  3/889 Test   #3: check_layering_qar_ros_ui ....................................................................   Passed    0.10 sec
-        Start   4: check_layering_qar_rviz_streaming
-  4/889 Test   #4: check_layering_qar_rviz_streaming ............................................................   Passed    0.39 sec
+  3/937 Test   #3: check_layering_qar_ros_ui ....................................................................   Passed    0.12 sec
+        Start   4: check_layering_qar_capi_panels
+  4/937 Test   #4: check_layering_qar_capi_panels ...............................................................   Passed    0.12 sec
 ...
 
-100% tests passed, 0 tests failed out of 889
+100% tests passed, 0 tests failed out of 937
 
-Total Test time (real) =  82.42 sec
+Total Test time (real) = 108.66 sec
 ```
 
 The test project never compiles the file that holds the panel, `qar_streaming_panel.cpp`, because that file needs RViz. Only the `colcon` build below compiles it, so a green `ctest` run is no proof that the plugin builds.
@@ -1015,7 +1026,7 @@ The installation changes your machine in a few places. This section lists every 
 | Change | Made by | Where it lives | How to undo it |
 |---|---|---|---|
 | The toolchain: Visual Studio 2019 Build Tools, CMake, Git, PowerShell 7, Python 3.10, Ninja and the Microsoft Visual C++ Redistributable | the installers of [Toolchain](#toolchain) | the Windows installation and `C:\Program Files` | Uninstall each program in Windows Settings, or with `winget uninstall` and the package id used to install it; keep the Visual C++ Redistributable if another program may use it. |
-| Seven environment variables of your user | the block of [Directory layout and environment variables](#directory-layout-and-environment-variables) | the user environment of Windows | The second block below removes them. |
+| The environment variables of the layout, set for your user | the block of [Directory layout and environment variables](#directory-layout-and-environment-variables) | the environment of your Windows account | The second block below removes them. |
 | The layout folders: the dependencies, the virtual environment, the clones, the install prefix | the steps of this document | `C:\qar` | Delete the folder; the second block below does it. The repaired ROS 2 distribution, the Qt kit, the downloads and the build folders of the distribution repairs are all inside it. |
 | The QarOS SDK | [The QarOS SDK](#the-qaros-sdk) | the installed QAROS, whose folder `QAR_SDK_ROOT` names when you set it | No block below removes it; the paragraph below the table says how to remove it. |
 | The tree that the exported targets of the distribution name | `scripts\fix_stale_pixi_paths.ps1` | `C:\pixi_ws` | Delete the folder `C:\pixi_ws`. |
@@ -1061,7 +1072,7 @@ Remove-Item -LiteralPath $full -Recurse -Force -WhatIf
 >
 > This block changes nothing and prints your own folders, so no output is shown here.
 
-The second block deletes the folder that `QAR_ROOT` names and then the seven variables, and nothing else. It leaves the QarOS SDK, the other items of the table and the programs of the toolchain alone. If you gave `QAR_DEPS_ROOT`, `ROS2_INSTALL_ROOT`, `QAR_QT_ROOT`, `QAR_VENV` or `QAR_PREFIX` a value outside the folder of `QAR_ROOT`, delete those folders yourself: the first block prints them. Run the second block when the first one shows the folder that you want to remove:
+The second block deletes the folder that `QAR_ROOT` names and then the variables of the layout, and nothing else. It leaves the QarOS SDK, the other items of the table and the programs of the toolchain alone. If you gave `QAR_DEPS_ROOT`, `ROS2_INSTALL_ROOT`, `QAR_QT_ROOT`, `QAR_VENV` or `QAR_PREFIX` a value outside the folder of `QAR_ROOT`, delete those folders yourself: the first block prints them. Run the second block when the first one shows the folder that you want to remove:
 
 ```powershell
 $folder = $env:QAR_ROOT
@@ -1081,7 +1092,7 @@ foreach ($name in 'QAR_ROOT', 'QAR_DEPS_ROOT', 'ROS2_INSTALL_ROOT', 'QAR_QT_ROOT
 }
 ```
 
-> Success: the command prints nothing and ends without an error. Afterwards the folder `C:\qar` is gone and the seven variables are deleted from the environment of your Windows user: a new PowerShell 7 window shows them as empty, while a window that was already open keeps the values it had. The QarOS SDK is still there.
+> Success: the command prints nothing and ends without an error. Afterwards the folder `C:\qar` is gone and the variables of the layout are deleted from the environment of your Windows user: a new PowerShell 7 window shows them as empty, while a window that was already open keeps the values it had. The QarOS SDK is still there.
 >
 > This command changes your machine, so no output is shown here.
 

@@ -12,6 +12,7 @@ target_link_libraries(qar_rviz_plugin_doc_snippets PRIVATE
   qar_rviz_plugin::qar_ui_model
   qar_rviz_plugin::qar_web_panels
   qar_rviz_plugin::qar_ros_ui
+  qar_rviz_plugin::qar_capi_panels
 )
 # [qar-snippet-end:link]
 qar_apply_warning_flags(qar_rviz_plugin_doc_snippets)

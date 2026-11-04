@@ -2,7 +2,43 @@
 
 All notable changes to this repository are listed in this file, newest version first. The format follows Keep a Changelog, and the versions follow Semantic Versioning. While the major version is 0, the minor version marks changes that may not be backward compatible, and the CMake packages of this stack accept a request only for the same minor version.
 
-Each version lists what it adds, the compatibility it was verified with (the QAROS version, the ROS 2 distribution, Qt, the toolchain and the versions of the repositories it builds on), and its known limitations. The version of a repository is the version of its CMake package, 0.1.0 for this release.
+Each version lists what it adds, the compatibility it was verified with (the QAROS version, the ROS 2 distribution, Qt, the toolchain and the versions of the repositories it builds on), and its known limitations. The version of a repository is the version of its CMake package, 0.2.0 for this release.
+
+## 0.2.0
+
+### Added
+
+- the module `qar_capi_panels` (the static library `qar_rviz_plugin::qar_capi_panels`): the QarOS C API behind the panel interfaces of `qar_qt_streaming::seam`, with the panel sender and its factory, the input source of the panels and the conversions between the values of `seam` and the C types of QarOS; it has its own test executable, `qar_capi_panels_tests`, with 47 tests that run on a fake of the function tables of QarOS, and its own entry in the layering guard;
+- the list `requirements-ros.txt` of the Python packages of the ROS 2 build and of the scripts of the plugin, which is installed after `requirements.txt` into the same virtual environment.
+
+### Changed
+
+- the plugin builds against qar_ogre_adapter 0.2.0, with the components `qar_ar_core`, `qar_ogre_streaming`, `capi`, `session`, `render`, `url` and `gestures`, and qar_qt_streaming 0.2.0, with the components `seam` and `qar_qt_streaming`; qar_ogre_adapter and qar_qt_streaming do not depend on each other, and the plugin does not use the component `qaros` of qar_qt_streaming; the CMake project and the ament package have the version 0.2.0;
+- the panels of Qt widgets use the interfaces and values of `seam` of qar_qt_streaming where they used the types of qar_ogre_adapter; what the plugin does with them is the same;
+- `requirements.txt` holds the packages of the build tools, and the packages of the ROS 2 build, `colcon` among them, are in `requirements-ros.txt`;
+- the texts about the pairing code of the Hub of another PC name no Hub card and no lifetime of the code: the tooltip of the field `"Code:"`, the sentence for a wrong code, the help text of the option `--code` of the two examples and a message of the launcher.
+
+### Compatibility
+
+| Item | Version |
+|---|---|
+| QAROS | the QAROS C API with onboarding (QAROS 0.9), verified against the installed 0.9.0-dev.3008+65dc9aeb; no other version was checked |
+| Qt | 5.15.2, the kit `win64_msvc2019_64`, with the modules Core, Gui, Widgets, Network and WebSockets, and Test for the tests |
+| Compiler | Microsoft C++ toolset v142 of Visual Studio 2019 |
+| CMake | 3.22 or newer is required; verified with 3.29.5 as bundled with Visual Studio 2022 version 17.11; CMake 4 not tested |
+| ROS 2 distribution | Humble, release `release-humble-20260220`; the plugin is an ament package that depends on `rviz_common`, `rviz_default_plugins` and `rclcpp` |
+| C++ runtime | 14.40 or newer next to `rviz2.exe`, from the Microsoft Visual C++ Redistributable for x64 (the distribution ships 14.29, which the QarOS library does not run on; `fix_old_vc_runtime.ps1` replaces it) |
+| colcon | colcon-core 0.21.0 and colcon-common-extensions 0.3.0, installed in the virtual environment from the pinned list `requirements-ros.txt` |
+| Python | 3.10.11, for the virtual environment of the build and for the layering guard, which needs only the Python standard library |
+| GoogleTest | 1.14.0, downloaded when you configure, for the tests only |
+| Other repositories | `qar_ogre_adapter` and `qar_qt_streaming`, each 0.2.0 |
+
+
+### Known limitations
+
+[SDK compatibility](docs/SDK_COMPATIBILITY.md#known-sdk-limitations) lists what the QarOS SDK does not document or does not do. The limits of 0.1.0 apply to this version as well, except where a statement below replaces one:
+
+- The module `qar_capi_panels` is tested against a fake of the C API and not against the runtime. A live check of the plugin with the installed QAROS covered the panel tabs, the AR control panel, switching the AR panels five times in a row, the Add dialog, taps and drags on the streamed RViz dock panels (expanding a tree item, dragging a slider, scrolling), and the pick of a point on `/clicked_point`, and it left no crash report; no session with a headset, no pairing with another PC and no run of the end of a session with a stopped Hub have been made.
 
 ## 0.1.0
 
@@ -57,7 +93,7 @@ The first version of the repository. It adds the features that the [README](READ
 
 - The code that calls the QarOS C API, the session owner, the render sender, the panel sender, the input sources and the URL adapter, is tested against a fake of the C API and not against the runtime, and only live sessions exercise the runtime.
 - The logs of two earlier live sessions, held with a runtime earlier than the verified version, show the hover and click events with the ray of the runtime and 21 published picks, 12 of the 17 templates of the AR tools with the page of each loaded in the browser of QarOS, and a velocity command published from AR. In those sessions the authors of qar_rviz_plugin gave no verdict on how near a pick lands to the aimed point or on how the pages look. Live checks of the authors with the installed QAROS covered the join to the Hub of this PC and the scene in a Visualizer, and no session with a headset has run this release. Real multi-user devices and geographic anchoring against a live GPS source have not been checked in a live session, the authors reported no result of a service call or of an action goal from AR, and the templates `diagnostics`, `imu`, `robot-service` and `navigation-goal` appear in no log. [What the live sessions showed](docs/VERIFICATION.md#what-the-live-sessions-showed) lists the evidence.
-- The drag of a slider and the use of two hands on Qt panels are covered by unit tests and by no live session, and the tap count and the long press by neither a unit test nor a live session.
+- The use of two hands on Qt panels is covered by unit tests and by no live session, and the tap count and the long press by neither a unit test nor a live session; the drag of a slider is covered by unit tests and by the live check of the RViz dock panels.
 - The two examples `qar_web_panel_example` and `qar_ros_topic_panel_example` were not run against a Visualizer.
 - A call of the plugin that the GUI thread of RViz2 makes itself and that takes longer than 20 ms is logged by a guard; the calls into QAROS that can wait for the Hub run on the thread of the session owner.
 - The vendor states that destroying a video sender while a session runs is safe in the current binaries, and crash dumps from before that statement exist; the close mode `notice` is the fallback.
