@@ -93,7 +93,8 @@
 #include "qar_qar_adapter/geo_anchor.hpp"
 #include "qar_qar_adapter/gui_call_guard.hpp"
 #include "qar_qar_adapter/identity_store.hpp"
-#include "qar_qar_adapter/qar_capi_panel_sender_adapter.hpp"
+#include "qar_capi_panels/qar_capi_panel_sender_adapter.hpp"
+#include "qar_capi_panels/seam_c.hpp"
 #include "qar_qar_adapter/qar_capi_render_sender_adapter.hpp"
 #include "qar_qar_adapter/qar_capi_spatial_gesture_source.hpp"
 #include "qar_qar_adapter/qar_session_owner.hpp"
@@ -127,6 +128,7 @@
 // The hidden Displays panel: the off-screen window state (reusable, Qt only) and the
 // RViz side that makes the panel (needs rviz_common, so it lives in this package).
 #include "qar_qt_streaming/offscreen_panel.hpp"
+#include "qar_qt_streaming/seam/timing_log.hpp"
 #include "qar_rviz_streaming/hidden_rviz_panel.hpp"
 
 #include "qar_rviz_streaming/rviz_display_context_adapter.hpp"
@@ -135,6 +137,10 @@
 
 namespace qar_rviz_streaming
 {
+namespace seam = qar_qt_streaming::seam;
+using qar_capi_panels::to_c;
+using qar_capi_panels::to_seam;
+
 namespace
 {
 
@@ -539,7 +545,7 @@ bool environmentSwitch(const char * name, bool fallback, QString & note)
 /// Where a streamed panel stands as an AR panel. A notice (a retired panel) shows no window and
 /// counts as off, whatever else is true of it; so does a parked panel (its window was closed on
 /// the desktop; it is hidden in AR, and starting it again shows it).
-PanelArState arStateOf(const qar_ar_core::PanelStreamDiagnostics * panel)
+PanelArState arStateOf(const seam::PanelStreamDiagnostics * panel)
 {
   if (panel == nullptr || panel->tombstoned || panel->parked) {
     return PanelArState::Off;
@@ -554,10 +560,10 @@ PanelArState arStateOf(const qar_ar_core::PanelStreamDiagnostics * panel)
 }
 
 /// The diagnostics of the panel @p key in @p snapshot, or null.
-const qar_ar_core::PanelStreamDiagnostics * findPanelDiagnostics(
-  const qar_ar_core::PanelDiagnosticsSnapshot & snapshot, const std::string & key)
+const seam::PanelStreamDiagnostics * findPanelDiagnostics(
+  const seam::PanelDiagnosticsSnapshot & snapshot, const std::string & key)
 {
-  for (const qar_ar_core::PanelStreamDiagnostics & panel : snapshot.panels) {
+  for (const seam::PanelStreamDiagnostics & panel : snapshot.panels) {
     if (panel.key == key) {
       return &panel;
     }
@@ -691,6 +697,10 @@ QarStreamingPanel::~QarStreamingPanel()
   // still queued. The thread must not outlive this plugin's code (RViz may unload the
   // library), so this is a join, not a detach. A later panel simply restarts it.
   gui_gap_timing_.reset();
+  // qar_qt_streaming keeps a timing log of its own (the video_*.csv files of its streams) with a
+  // writer thread of its own. Its streams went with the session consumers above; the log is
+  // stopped the same way, before the one of qar_ar_core.
+  qar_qt_streaming::seam::TimingLog::instance().shutdown();
   qar_ar_core::TimingLog::instance().shutdown();
 }
 
@@ -2661,13 +2671,13 @@ void QarStreamingPanel::on_message(
 // PanelDiagnosticsSink
 // ---------------------------------------------------------------------------
 void QarStreamingPanel::on_message(
-  qar_ar_core::DiagnosticSeverity severity,
+  seam::DiagnosticSeverity severity,
   const std::string & category,
   const std::string & message,
   const std::string & panel_key)
 {
   QString line = QString("[qt_lib:%1:%2] %3")
-    .arg(QString::fromLatin1(qar_ar_core::to_string(severity)))
+    .arg(QString::fromLatin1(seam::to_string(severity)))
     .arg(QString::fromStdString(category))
     .arg(QString::fromStdString(message));
   if (!panel_key.empty()) {
@@ -5667,7 +5677,7 @@ void QarStreamingPanel::emitHeartbeat()
           // of a panel that is being served stays one number.
           line += QString(" UNSERVED %1s nr=%2 stream=%3")
             .arg(pd.unserved_seconds, 0, 'f', 1)
-            .arg(QString::fromStdString(qar_ar_core::not_ready_split_text(pd)))
+            .arg(QString::fromStdString(seam::not_ready_split_text(pd)))
             .arg(QString::fromStdString(pd.stream_id));
         } else if (pd.not_ready_streak > 0) {
           line += QString(" nr=%1").arg(static_cast<qulonglong>(pd.not_ready_streak));
@@ -6065,9 +6075,9 @@ QString QarStreamingPanel::ensurePanelManager()
   // long-press / DRAG, so the same source also makes a QSlider handle draggable
   // in AR.
   panel_input_source_ =
-    std::make_shared<qar_qar_adapter::QarCApiPanelInputSource>(qar_factory_->session());
+    std::make_shared<qar_capi_panels::QarCApiPanelInputSource>(qar_factory_->session());
 
-  panel_sender_factory_ = std::make_shared<qar_qar_adapter::QarCApiPanelSenderFactory>(
+  panel_sender_factory_ = std::make_shared<qar_capi_panels::QarCApiPanelSenderFactory>(
     qar_factory_.get(), panel_input_source_);
 
   qar_qt_streaming::QtPanelStreamingConfig config;
@@ -6097,7 +6107,8 @@ QString QarStreamingPanel::startPanelManager(qar_qt_streaming::QtPanelStreamingC
   // The stable QarOS name of every panel is made from its key and this scope: the same name
   // finds the same panel in the next session, so a panel that was hidden at the end of one
   // session is found and shown again.
-  config.name_scope = name_scope_;
+  config.name_scope = seam::NameScope{
+    name_scope_.program_tag, name_scope_.instance, name_scope_.host};
   // What a size change of a window does to its QarOS panel (QAR_PANEL_RESIZE): by default the
   // panel stays and its video sender is swapped.
   {
@@ -6142,10 +6153,10 @@ QString QarStreamingPanel::startPanelManager(qar_qt_streaming::QtPanelStreamingC
   // owner; the ground rule keeps its lower edge off the RViz ground like every other AR panel.
   // The manager gives no key here, so the line says "dialog".
   panel_manager_->set_dialog_pose_adjuster(
-    [this](const QarPose & top_centre, float height_m) {
-      const GroundedPose grounded = liftAboveGround(top_centre, height_m);
+    [this](const seam::Pose & top_centre, float height_m) {
+      const GroundedPose grounded = liftAboveGround(to_c(top_centre), height_m);
       logGroundRaise(QStringLiteral("dialog"), grounded);
-      return grounded.pose;
+      return to_seam(grounded.pose);
     });
   // A dialog is fitted to its scroll areas on the desktop before its AR panel is created: the
   // manager measures it over a few rounds and streams it once, at the size the fit ends with, so
@@ -6500,13 +6511,13 @@ bool QarStreamingPanel::streamPanelByKey(const QString & key)
   // counting it here would shove the next operator-chosen panel a step further
   // out for no reason.
   options.placement.pose.position =
-    fixedPanelPosition(panel_slot_x(streamed_panels_.size()), -1.0f);
-  options.placement.pose.orientation = QarQuaternion{0.0f, 0.0f, 0.0f, 1.0f};
+    to_seam(fixedPanelPosition(panel_slot_x(streamed_panels_.size()), -1.0f));
+  options.placement.pose.orientation = seam::Quaternion{0.0f, 0.0f, 0.0f, 1.0f};
   // The lower edge of the panel stays above the RViz ground (the height the manager gives the
   // panel once it is laid out: its video inside the frame of QarOS).
   const GroundedPose grounded = liftAboveGround(
-    options.placement.pose, panel_manager_->ar_panel_height_m(*widget, options));
-  options.placement.pose = grounded.pose;
+    to_c(options.placement.pose), panel_manager_->ar_panel_height_m(*widget, options));
+  options.placement.pose = to_seam(grounded.pose);
   // A dock holding an RViz Image/Camera display carries video (variant b): the
   // 15 fps control-panel default would halve a 30 fps stream, so match openVideoPanel.
   if (getDisplayContext() != nullptr) {
@@ -6523,7 +6534,7 @@ bool QarStreamingPanel::streamPanelByKey(const QString & key)
     applyUniqueDisplayName(manager_key, options);
   }
 
-  const qar_ar_core::Result added =
+  const seam::Result added =
     panel_manager_->add_panel(manager_key, widget, options);
   if (!added.ok()) {
     setLastError(QString("AR panel: %1").arg(QString::fromStdString(added.message)));
@@ -6612,7 +6623,7 @@ bool QarStreamingPanel::closeStreamedPanel(
     return cancelled;
   }
   const bool was_parked = panel_manager_->is_parked(manager_key);
-  const qar_ar_core::Result closed = panel_manager_->close_panel(
+  const seam::Result closed = panel_manager_->close_panel(
     manager_key, short_reason.toStdString(), notice_text.toStdString());
   if (!closed.ok()) {
     // A start that was cancelled had no stream yet: the cancel line is all there is to say.
@@ -7034,8 +7045,8 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
     const bool tombstoned = panel_manager_->is_tombstoned(key);
     parked = panel_manager_->is_parked(key);
     bool closed_in_ar = false;
-    const qar_ar_core::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
-    for (const qar_ar_core::PanelStreamDiagnostics & panel : snapshot.panels) {
+    const seam::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
+    for (const seam::PanelStreamDiagnostics & panel : snapshot.panels) {
       if (panel.key == key) {
         closed_in_ar = panel.ar_panel_closed;
         break;
@@ -7070,13 +7081,13 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
   // docs/QAROS_INTEGRATION_NOTES.md, "Known SDK limitations"), so the placement is
   // fixed. The dialogs this panel opens (the Add-display box) are
   // placed by the manager 0.5 m to its +X, which lands them between this and the rest.
-  options.placement.pose.position = fixedPanelPosition(-1.2f, -1.0f);
-  options.placement.pose.orientation = QarQuaternion{0.0f, 0.0f, 0.0f, 1.0f};
+  options.placement.pose.position = to_seam(fixedPanelPosition(-1.2f, -1.0f));
+  options.placement.pose.orientation = seam::Quaternion{0.0f, 0.0f, 0.0f, 1.0f};
   // The lower edge of the copy stays above the RViz ground (its height in metres is the one the
   // manager gives the panel: its video inside the frame of QarOS).
   const GroundedPose grounded = liftAboveGround(
-    options.placement.pose, panel_manager_->ar_panel_height_m(*hidden_displays_, options));
-  options.placement.pose = grounded.pose;
+    to_c(options.placement.pose), panel_manager_->ar_panel_height_m(*hidden_displays_, options));
+  options.placement.pose = to_seam(grounded.pose);
 
   // A new QarOS panel goes under a name no earlier QarOS panel of this process used; the
   // revival of a retired or parked slot creates no QarOS panel and keeps the name it has.
@@ -7085,7 +7096,7 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
     applyUniqueDisplayName(key, options);
   }
 
-  const qar_ar_core::Result added =
+  const seam::Result added =
     panel_manager_->add_panel(key, hidden_displays_.get(), options);
   if (!added.ok()) {
     const QString reason = QString::fromStdString(added.message);
@@ -7115,7 +7126,7 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
     .arg(key_text, QString::fromLatin1(kHiddenDisplaysPanelName))
     .arg(hidden_displays_->width())
     .arg(hidden_displays_->height())
-    .arg(vector3Words(options.placement.pose.position)));
+    .arg(vector3Words(to_c(options.placement.pose.position))));
   logGroundRaise(key_text, grounded);
   updateArPanelStatus();
   return QString();
@@ -8751,14 +8762,14 @@ QarStreamingPanel::VideoPanelStart QarStreamingPanel::startPendingVideoPanel(
   // no existing conversion — not the "straightforward" case, so this uses the
   // same fallback slot logic rather than inventing that conversion here.
   options.placement.pose.position =
-    fixedPanelPosition(panel_slot_x(streamed_panels_.size()), -1.0f);
-  options.placement.pose.orientation = QarQuaternion{0.0f, 0.0f, 0.0f, 1.0f};
+    to_seam(fixedPanelPosition(panel_slot_x(streamed_panels_.size()), -1.0f));
+  options.placement.pose.orientation = seam::Quaternion{0.0f, 0.0f, 0.0f, 1.0f};
   // The lower edge stays above the RViz ground. The widget has the aspect ratio of the video
   // now, so the height the manager gives the panel (its video inside the frame of QarOS) is the
   // one the panel keeps.
   const GroundedPose grounded = liftAboveGround(
-    options.placement.pose, panel_manager_->ar_panel_height_m(*panel.widget, options));
-  options.placement.pose = grounded.pose;
+    to_c(options.placement.pose), panel_manager_->ar_panel_height_m(*panel.widget, options));
+  options.placement.pose = to_seam(grounded.pose);
 
   // A new QarOS panel goes under a name no earlier QarOS panel of this process used; the
   // revival of a retired slot creates no QarOS panel and keeps the name it has.
@@ -8766,7 +8777,7 @@ QarStreamingPanel::VideoPanelStart QarStreamingPanel::startPendingVideoPanel(
     applyUniqueDisplayName(key, options);
   }
 
-  const qar_ar_core::Result added = panel_manager_->add_panel(key, panel.widget.get(), options);
+  const seam::Result added = panel_manager_->add_panel(key, panel.widget.get(), options);
   if (!added.ok()) {
     appendLog(
       QString("AR VIDEO: '%1' could not make its AR panel: %2")
@@ -9189,9 +9200,9 @@ void QarStreamingPanel::logVideoDiagnostics()
   if (!panel_manager_) {
     return;
   }
-  const qar_ar_core::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
+  const seam::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
   auto find_diag =
-    [&snapshot](const std::string & key) -> const qar_ar_core::PanelStreamDiagnostics *
+    [&snapshot](const std::string & key) -> const seam::PanelStreamDiagnostics *
     {
       for (const auto & panel : snapshot.panels) {
         if (panel.key == key) {
@@ -9218,7 +9229,7 @@ void QarStreamingPanel::logVideoDiagnostics()
     }
   }
   const auto pacing_fields =
-    [fg_text](const qar_ar_core::PanelStreamDiagnostics * d) -> QString
+    [fg_text](const seam::PanelStreamDiagnostics * d) -> QString
     {
       const QString max_gap = d ? QString::number(d->submit_gap_max_ms, 'f', 1) : QStringLiteral("-");
       const QString avg_gap = d
@@ -9931,7 +9942,7 @@ bool QarStreamingPanel::requestPanelVisibility(const std::string & key, bool vis
     return false;
   }
   // Only records the request on the stream: the manager's next tick makes the QarOS call.
-  const qar_ar_core::Result result = panel_manager_->set_panel_ar_visible(key, visible);
+  const seam::Result result = panel_manager_->set_panel_ar_visible(key, visible);
   if (!result.ok()) {
     appendLog(
       QString("AR VISIBILITY: could not ask for '%1' to be %2: %3")
@@ -9944,7 +9955,7 @@ bool QarStreamingPanel::requestPanelVisibility(const std::string & key, bool vis
   VisibilityRequest request;
   request.visible = visible;
   request.since = std::chrono::steady_clock::now();
-  const qar_ar_core::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
+  const seam::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
   if (const auto * panel = findPanelDiagnostics(snapshot, key)) {
     request.changes_seen = panel->visibility_changes;
     request.failures_seen = panel->visibility_failures;
@@ -9987,9 +9998,9 @@ void QarStreamingPanel::checkVisibilityOutcomes()
   };
   std::vector<Failure> failures;
   std::vector<std::string> settled;
-  const qar_ar_core::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
+  const seam::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
   for (const auto & [key, request] : visibility_requests_) {
-    const qar_ar_core::PanelStreamDiagnostics * panel = findPanelDiagnostics(snapshot, key);
+    const seam::PanelStreamDiagnostics * panel = findPanelDiagnostics(snapshot, key);
     if (panel == nullptr) {
       settled.push_back(key);  // the panel is gone: nothing left to judge
     } else if (std::chrono::duration<double>(now - request.since).count() > 30.0 &&
@@ -10241,7 +10252,7 @@ void QarStreamingPanel::onArControlEvent(
       const std::string title = ar_control_state_.panel_title(command.slot);
       PanelArState state = PanelArState::Off;
       if (panel_manager_) {
-        const qar_ar_core::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
+        const seam::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
         state = arStateOf(findPanelDiagnostics(snapshot, key));
       }
       if (command.on) {
@@ -10399,7 +10410,7 @@ void QarStreamingPanel::runPanelSwitch(const QueuedControlCommand & command, Ste
   const QString title = QString::fromStdString(command.title);
   PanelArState state = PanelArState::Off;
   if (panel_manager_) {
-    const qar_ar_core::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
+    const seam::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
     state = arStateOf(findPanelDiagnostics(snapshot, key));
   }
 
@@ -11044,7 +11055,7 @@ ControlPanelSnapshot QarStreamingPanel::controlPanelSnapshot()
   snapshot.pick_error = pick.error;
 
   // The panels: the desktop's list, in its order, each with where it stands as an AR panel.
-  qar_ar_core::PanelDiagnosticsSnapshot diagnostics;
+  seam::PanelDiagnosticsSnapshot diagnostics;
   if (panel_manager_) {
     diagnostics = panel_manager_->diagnostics();
   }

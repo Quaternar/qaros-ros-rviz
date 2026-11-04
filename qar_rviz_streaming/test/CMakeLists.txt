@@ -81,9 +81,10 @@ target_include_directories(qar_rviz_streaming_tests PRIVATE
 )
 
 # qar_ar_core: the spatial pick model and frames (Qt-free, so this target keeps its
-# stdlib + QtCore shape).
+# stdlib + QtCore shape). The seam of qar_qt_streaming: the plain panel diagnostics types.
 target_link_libraries(qar_rviz_streaming_tests PRIVATE
   qar_ogre_adapter::qar_ar_core
+  qar_qt_streaming::seam
   qar_rviz_plugin::qar_ui_model
   Qt5::Core
   GTest::gtest_main

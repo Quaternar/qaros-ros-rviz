@@ -1178,7 +1178,7 @@ function Show-QarosState {
     } else {
         $remoteHub = if ($identityPresent) { $identityHub } elseif ($env:QAR_PANEL_HUB_HOST) { "$($env:QAR_PANEL_HUB_HOST):$($env:QAR_PANEL_HUB_PORT)" } else { 'the Hub of the other PC' }
         Write-Host "  Press Connect in the Connection tab of the 'Qar Streaming' panel, then type the host, the onboarding port and the pairing code that $remoteHub shows"
-        Write-Host "  (Connection panel of its Visualizer: Hubs > Pair another Hub > Let another hub join us). The code lives about 10 seconds and works once;"
+        Write-Host "  (see the QAROS documentation for where that Hub shows the code for a new device). The code works once;"
         Write-Host "  the pairing is stored, so the next start joins without a code."
         if ($InvitePeers.Count -gt 0) {
             Write-Host "  -InvitePeers is set, but only the Hub of this PC (local mode) invites devices: a Hub of another PC refuses." -ForegroundColor Yellow

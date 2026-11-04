@@ -33,7 +33,7 @@
 #include <optional>
 #include <string>
 
-#include "qar_ar_core/panel_types.hpp"       // PanelStreamDiagnostics
+#include "qar_qt_streaming/seam/panel_types.hpp"       // PanelStreamDiagnostics
 #include "qar_ar_core/qar_streaming_c.hpp"  // QarPose
 #include "qar_ar_core/spatial_frames.hpp"   // ScenePlacement
 
@@ -239,7 +239,7 @@ constexpr float panel_slot_x(std::size_t slot)
 /// up), with a blank in front. ` lum=-` while nothing has been measured, that is, when any of the
 /// three luminance values is negative or not a number. The ` a=<alpha>` part is left out while the
 /// alpha has not been measured.
-std::string brightness_field(const qar_ar_core::PanelStreamDiagnostics & panel);
+std::string brightness_field(const qar_qt_streaming::seam::PanelStreamDiagnostics & panel);
 
 }  // namespace qar_rviz_streaming
 

@@ -13,6 +13,8 @@
 
 namespace qar_rviz_streaming
 {
+namespace seam = qar_qt_streaming::seam;
+
 namespace
 {
 
@@ -308,7 +310,7 @@ float fixed_panel_top_y(
   return scene_ground_room_y(placement, room_x, room_z, fallback_ground_y) + kFixedPanelTopM;
 }
 
-std::string brightness_field(const qar_ar_core::PanelStreamDiagnostics & panel)
+std::string brightness_field(const seam::PanelStreamDiagnostics & panel)
 {
   const auto measured = [](double value) {return std::isfinite(value) && value >= 0.0;};
   const auto whole = [](double value) {

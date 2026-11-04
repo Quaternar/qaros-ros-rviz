@@ -607,10 +607,10 @@ namespace
 
 using qar_rviz_streaming::brightness_field;
 
-qar_ar_core::PanelStreamDiagnostics measured_panel(
+qar_qt_streaming::seam::PanelStreamDiagnostics measured_panel(
   double all, double top, double rest, double alpha)
 {
-  qar_ar_core::PanelStreamDiagnostics panel;
+  qar_qt_streaming::seam::PanelStreamDiagnostics panel;
   panel.luminance_all = all;
   panel.luminance_top = top;
   panel.luminance_rest = rest;
@@ -642,7 +642,7 @@ TEST(HeartbeatBrightness, ValuesAreRoundedToWholeNumbersAndHalvesGoUp)
 
 TEST(HeartbeatBrightness, NothingMeasuredIsLumDashWhicheverOfTheThreeIsMissing)
 {
-  EXPECT_EQ(brightness_field(qar_ar_core::PanelStreamDiagnostics()), " lum=-");
+  EXPECT_EQ(brightness_field(qar_qt_streaming::seam::PanelStreamDiagnostics()), " lum=-");
   EXPECT_EQ(brightness_field(measured_panel(-1.0, 10.0, 10.0, 255.0)), " lum=-");
   EXPECT_EQ(brightness_field(measured_panel(10.0, -1.0, 10.0, 255.0)), " lum=-");
   EXPECT_EQ(brightness_field(measured_panel(10.0, 10.0, -1.0, 255.0)), " lum=-");
@@ -659,7 +659,7 @@ TEST(HeartbeatBrightness, EveryFormMatchesThePatternOfTheScorecardWholly)
   const std::vector<std::string> fields = {
     brightness_field(measured_panel(255.0, 255.0, 255.0, 255.0)),
     brightness_field(measured_panel(10.0, 20.0, 30.0, -1.0)),
-    brightness_field(qar_ar_core::PanelStreamDiagnostics()),
+    brightness_field(qar_qt_streaming::seam::PanelStreamDiagnostics()),
   };
   for (const std::string & field : fields) {
     std::smatch match;
