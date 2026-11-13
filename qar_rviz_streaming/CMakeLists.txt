@@ -13,7 +13,7 @@
 # This package MAY include rviz/Qt/ament; qar_ogre_streaming may NOT.
 
 cmake_minimum_required(VERSION 3.8)
-project(qar_rviz_streaming VERSION 0.1.0 LANGUAGES CXX)
+project(qar_rviz_streaming VERSION 0.2.0 LANGUAGES CXX)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
@@ -51,19 +51,22 @@ find_package(ament_index_cpp REQUIRED)
 # (scripts/build_plugin.ps1 passes -DQAR_PREFIX=<install prefix>) or, for development, their
 # source checkouts (-DQAR_OGRE_ADAPTER_SOURCE_DIR, -DQAR_QT_STREAMING_SOURCE_DIR; see
 # cmake/QarBuildSupport.cmake). The web libraries qar_ui_model, qar_ros_ui and qar_web_panels
-# are part of this repository and are built from its tree. QAR_REPO_ROOT also locates
+# are part of this repository and are built from its tree, and so is qar_capi_panels, the
+# QarOS C API behind the panel interfaces of qar_qt_streaming. QAR_REPO_ROOT also locates
 # third_party/stb below.
 # ---------------------------------------------------------------------------
 get_filename_component(QAR_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 include("${QAR_REPO_ROOT}/cmake/QarBuildSupport.cmake")
+include("${QAR_REPO_ROOT}/cmake/QarRosBuildSupport.cmake")
 
-qar_find_upstream(qar_ogre_adapter VERSION 0.1.0
-  COMPONENTS qar_ar_core qar_ogre_streaming session render panels url gestures)
-qar_find_upstream(qar_qt_streaming VERSION 0.1.0)
+qar_find_upstream(qar_ogre_adapter VERSION 0.2.0
+  COMPONENTS qar_ar_core qar_ogre_streaming capi session render url gestures)
+qar_find_upstream(qar_qt_streaming VERSION 0.2.0 COMPONENTS seam qar_qt_streaming)
 add_subdirectory("${QAR_REPO_ROOT}/qar_ui_model" "${CMAKE_BINARY_DIR}/qar_ui_model")
 add_subdirectory("${QAR_REPO_ROOT}/qar_ros_ui" "${CMAKE_BINARY_DIR}/qar_ros_ui")
 find_package(Qt5 REQUIRED COMPONENTS Network WebSockets)
 add_subdirectory("${QAR_REPO_ROOT}/qar_web_panels" "${CMAKE_BINARY_DIR}/qar_web_panels")
+add_subdirectory("${QAR_REPO_ROOT}/qar_capi_panels" "${CMAKE_BINARY_DIR}/qar_capi_panels")
 
 # Enable Qt MOC only AFTER the subdirectory (so the reusable library, which has
 # no Q_OBJECT types, is not scanned) and BEFORE our target is defined.
@@ -176,13 +179,14 @@ set_source_files_properties(src/hidden_rviz_panel.cpp PROPERTIES
 target_link_libraries(qar_rviz_streaming
   qar_ogre_adapter::qar_ar_core              # Qt-free seams, pick model, frames, timing
   qar_ogre_adapter::qar_ogre_streaming
-  qar_qt_streaming::qar_qt_streaming        # Qt widget -> QarOS GUI panel
+  qar_qt_streaming::seam                    # the plain values and interfaces of the panels
+  qar_qt_streaming::qar_qt_streaming        # Qt widget -> AR panel
   qar_rviz_plugin::qar_ui_model                # schema + widget tree + protocol
   qar_rviz_plugin::qar_ros_ui                    # graph, introspection, bridges
   qar_rviz_plugin::qar_web_panels            # HTTP/WebSocket panel delivery
   qar_ogre_adapter::session                 # the owner of the QarOS session (Hub join, targets)
   qar_ogre_adapter::render                  # 3D stereo streams on that session
-  qar_ogre_adapter::panels                  # Qt widget panels out, panel input in
+  qar_rviz_plugin::qar_capi_panels          # the QarOS C API behind the Qt widget panels
   qar_ogre_adapter::url                     # browser-backed (web tool) panels
   qar_ogre_adapter::gestures                # app-volume (spatial) gestures
   Qt5::Core

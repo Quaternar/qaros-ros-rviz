@@ -23,17 +23,18 @@ ctest --preset vs2019-x64
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
         Start   1: check_layering_qar_ui_model
-  1/889 Test   #1: check_layering_qar_ui_model ..................................................................   Passed    0.15 sec
+  1/937 Test   #1: check_layering_qar_ui_model ..................................................................   Passed    0.16 sec
         Start   2: check_layering_qar_web_panels
-  2/889 Test   #2: check_layering_qar_web_panels ................................................................   Passed    0.08 sec
+  2/937 Test   #2: check_layering_qar_web_panels ................................................................   Passed    0.10 sec
         Start   3: check_layering_qar_ros_ui
-  3/889 Test   #3: check_layering_qar_ros_ui ....................................................................   Passed    0.12 sec
-        Start   4: check_layering_qar_rviz_streaming
-  4/889 Test   #4: check_layering_qar_rviz_streaming ............................................................   Passed    0.35 sec
+  3/937 Test   #3: check_layering_qar_ros_ui ....................................................................   Passed    0.13 sec
+        Start   4: check_layering_qar_capi_panels
+  4/937 Test   #4: check_layering_qar_capi_panels ...............................................................   Passed    0.11 sec
 ...
-100% tests passed, 0 tests failed out of 889
 
-Total Test time (real) =  82.14 sec
+100% tests passed, 0 tests failed out of 937
+
+Total Test time (real) = 108.60 sec
 ```
 
 The last lines are the summary: how many tests passed, and the names of those that failed. A test that is skipped is reported as skipped and does not count as a failure.
@@ -51,16 +52,16 @@ Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
   Test   #1: check_layering_qar_ui_model
   Test   #2: check_layering_qar_web_panels
   Test   #3: check_layering_qar_ros_ui
-  Test   #4: check_layering_qar_rviz_streaming
-  Test   #5: check_layering_examples
-  Test   #6: check_layering_selftest
-  Test   #7: UiValue.DefaultIsNull
+  Test   #4: check_layering_qar_capi_panels
+  Test   #5: check_layering_qar_rviz_streaming
+  Test   #6: check_layering_examples
+  Test   #7: check_layering_selftest
 ...
-  Test #634: RosImageFrameSourceTiming.EveryReceivedMessageGetsOneRowWithTheStagesInOrder
-  Test #635: RosImageFrameSourceTiming.ADecodeFailureIsARowWithNoMailboxTime
-  Test #636: RosImageFrameSourceTiming.WithTimingOffNothingIsWrittenAndFramesStillDecode
+  Test #935: HubConnectionWidget.NoTextCanWidenTheGroup
+  Test #936: HubConnectionWidget.ShowingAndHidingTheRemoteFieldsMovesNothing
+  Test #937: HubConnectionWidget.TheModeComboOffersTheThreeHubs
 
-Total Tests: 636
+Total Tests: 937
 ```
 
 ```powershell
@@ -68,19 +69,19 @@ ctest --preset vs2019-x64 -R check_layering_selftest
 ```
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
-    Start 6: check_layering_selftest
-1/1 Test #6: check_layering_selftest ..........   Passed    0.05 sec
+    Start 7: check_layering_selftest
+1/1 Test #7: check_layering_selftest ..........   Passed    0.09 sec
 
 100% tests passed, 0 tests failed out of 1
 
-Total Test time (real) =   0.08 sec
+Total Test time (real) =   0.13 sec
 ```
 
 Use `-R` with a part of a suite name to run one suite, and add `-j` followed by a number to run tests in parallel; tests that share a resource, such as the live ROS tests, never run at the same time, because they hold a common lock. When a test fails, its output is printed by the preset; add the option `--rerun-failed` to the command to run only the tests that failed in the last run.
 
 ## What the tests cover
 
-The unit tests are eight GoogleTest executables, three for the web libraries and five for the plugin, and the layering guard adds its own tests. The list command above prints every registered test by name, with the number of tests at the end. `qar_rviz_streaming_tests` compiles the pure units of the plugin into one executable that needs neither RViz, nor a ROS 2 graph, nor QarOS: they use the standard library, `qar_ui_model` and QtCore only. `qar_rviz_streaming_widget_tests` builds the tabbed layout of the panel from the same pieces as the panel, with Qt Widgets and no RViz, under the offscreen platform of Qt, so that no window opens on the desktop, and it asserts on sizes that must not change and never on pixels or absolute metrics. The other three executables of the plugin start real ROS 2 participants and are, with `qar_ros_ui_tests`, the live ROS tests of [Live ROS tests and the re-run rule](#live-ros-tests-and-the-re-run-rule). The rules with the edge cases of the plugin, which are the generation of a panel from a ROS 2 type, the decision what a control event from a headset may do, the picking of points and the choice of display classes, live in the pure units on purpose: the layer of Qt and RViz above them is a thin shell, and these are the parts that a test can reach.
+The unit tests are nine GoogleTest executables, three for the web libraries, one for the QarOS panel module `qar_capi_panels` and five for the plugin, and the layering guard adds its own tests. The list command above prints every registered test by name, with the number of tests at the end. `qar_rviz_streaming_tests` compiles the pure units of the plugin into one executable that needs neither RViz, nor a ROS 2 graph, nor QarOS: they use the standard library, `qar_ui_model` and QtCore only. `qar_rviz_streaming_widget_tests` builds the tabbed layout of the panel from the same pieces as the panel, with Qt Widgets and no RViz, under the offscreen platform of Qt, so that no window opens on the desktop, and it asserts on sizes that must not change and never on pixels or absolute metrics. The other three executables of the plugin start real ROS 2 participants and are, with `qar_ros_ui_tests`, the live ROS tests of [Live ROS tests and the re-run rule](#live-ros-tests-and-the-re-run-rule). The rules with the edge cases of the plugin, which are the generation of a panel from a ROS 2 type, the decision what a control event from a headset may do, the picking of points and the choice of display classes, live in the pure units on purpose: the layer of Qt and RViz above them is a thin shell, and these are the parts that a test can reach.
 
 `qar_ui_model_tests` works on strings and value trees only; `qar_web_panels_tests` runs a real server and talks to it over real sockets on the loopback interface of the test process; and `qar_ros_ui_tests` loads the typesupport libraries of the distribution and, for its live suites, starts real ROS 2 participants.
 
@@ -116,6 +117,9 @@ The unit tests are eight GoogleTest executables, three for the web libraries and
 | | `StablePanelLayout` | the size hints of the stand-in panel stay constant across tab switches, text changes and hiding and showing; a scroll page never scrolls sideways; the status strip has a fixed height, and a shortened label keeps its full text as the tool tip; the tab widget takes the height that the strip leaves and adds nothing to the layout hints; the hints follow the pages once and honour the cap; a combo box or spin box with the wheel guard does not change on a wheel step unless it has the keyboard focus, and leaves the event to the page under it; the start size leaves room for a scroll bar, the hint width covers the tab bar and keeps the widest page, and the width of the tab bar does not follow the width of the panel; the default size of the dock fits the height of the hint, is kept to the room that is available, is never below the minimum and gives every page its room; the height of a dock in a shared column is set as asked and held even when the column has room to spare, a dock that is high enough is not held, the window grows by what the others cannot give, a maximized or full-screen window is left alone, the window grows only as far as the room goes, moves up when its lower edge would leave the room, and takes the room from its own screen by default; docks that are kept keep their height while another dock grows, and the window grows when nothing else can give way, but not when a kept dock stands in another column or is floating or hidden; holds on one dock end in any order of their releases, and releasing a hold on a dock that is gone is harmless; a floating dock is resized directly; the vertical overflow of a scroll area is the range of its bar, zero for a bar that is always off and for an area that is not on show, follows the range before the bar is shown, and counts rows for a view that scrolls by item; the missing height is the largest overflow of the visible areas inside; a fit adds eight pixels to what is missing and resizes six times at most; the fit of a tree to its view grows until the tree needs no bar, makes a short tree lower but not below the minimum, stops at the maximum, counts rows that were added just before, adds the slack to what the bar says is missing, and measures only the view that it is given; the description of a page says that it fits or scrolls, and the shortfall of the pages is the worst scroll of all pages, or zero when every page fits |
 | | `SettledHeightFit`, `DockGrowthReason`, `StartFit` | the fit is done when two looks agree, and two looks at different heights do not agree; rows added on a queued call are found by the settled fit; an area that cannot be measured is never said to need no bar; two trees in a splitter are summed and not maximised; an area that scrolls by design never makes the widget taller; the fit gives up at the height limit, at the round limit and when the widget does not grow at all, and says so; a tree that needs less is made lower once but not below the minimum; a trim leaves the slack and one spare row, a spare row is added to every growth, and a widget that had to grow is never trimmed; a dock is looked at again after its hold is released; a need that the census cannot see is counted and named; a horizontal bar is no reason to grow and is not said to be no bar, though a horizontal bar next to a vertical overflow counts with it; a widget that cannot be made higher is given up only when two looks agree, and a stuck look that the next one does not repeat is no give-up; the log lines have the shape that the checks of the logs read; a window that limited the dock is named, a window that grew or did not have to is not blamed, a dock that lost its height after the hold was released says so, and the words take the place of the reason in the last line of the fit; the reasons not to fit the dock at start are given in order, and the line says what became of the dock |
 | | `ReadoutBox` | the box is built so that nothing can move it or scroll it; four panels fit without a bar or one more line; panel lines that do not fit are dropped from the end and counted; a wrapped line counts for all the lines that it takes; the measure agrees with the label itself; every line that fits is kept and one more is not |
+| `qar_capi_panels_tests` | `PanelSender`, `PanelStateGuard` | the panel sender runs on the session owner and a fake of the function tables of QarOS: every call of the consumer returns within milliseconds, a session that is not running refuses the panel, a failed create comes back as a result and leaves the panel unusable, a frame is shown once the panel is ready and never on the thread of the owner, the pointer subscription of the panel starts on the owner thread and ends before the close, a resize swaps the stream and detaches before the new create, and the end of a session hides and detaches a panel before the session is released; of several placements that queue up while the thread is busy only the last is applied, a reattach that fails never closes the panel of an earlier session, frames flow while the attach probe runs, and the probe asks once and finds the panel in a long list; the guard of the state asks QarOS again for a panel that it reports hidden after the reattach, at most three times, not inside the hold after an ask and not six seconds after a change, and it never contests the states closed and minimized |
+| | `PanelSeamBoundary`, `SeamC` | the pose and the size of a description and of a placement reach the QarOS panel as the C values of the same numbers, a state of the seam comes back as the same state, and every conversion between the values of `seam` and the C types of QarOS keeps each field, the numbers of the enumerations and the order of the samples that are appended to a list |
+| | `PanelInputGolden`, `PanelInputGoldenIds` | the input source turns a fixed sequence of gesture events of QarOS into the recorded table of pointer samples (kind, phase, hand, pointer id, panel coordinates and the cancels of the lifecycle), and the pointer id of a peer and a hand is the recorded one |
 | `qar_ui_model_tests` | `UiValue`, `JsonWrite`, `JsonParse`, `JsonRoundTrip`, `Utf8`, `HtmlEscape` | an integer and a double stay different kinds, and an unsigned value above the largest `int64` becomes a double; an object keeps the order of its keys; a double survives a write and a parse bit for bit and a non-finite double becomes null; ill-formed UTF-8 is replaced and never forwarded; the writer's HTML-safe mode escapes whatever could end a script element; the parser reports line and column of an error, takes the last of duplicate keys and refuses nesting beyond its limit; the five significant characters are escaped and an attempt to break out of an attribute is neutralised |
 | | `FieldPath`, `ResolveFieldPath`, `ValuePaths`, `DefaultValues`, `ValidateValue`, `MessageDescription` | the dotted path grammar and its resolution against a message description; `set_path` creates the missing levels and, when a kind clashes, refuses and leaves the document untouched; a default follows the default of the interface definition; a value is checked against its description and every kind of mismatch is reported, including the extremes of `int64` and `uint64` |
 | | `Widget`, `WidgetIds`, `UiModel`, `Validate`, `Serialization` | the rules for widget ids; every structural, binding and type-specific rule of validation, with and without a schema; a model survives a round trip through its value tree and its JSON, only members that differ from the default are written, and malformed input is refused |
@@ -129,6 +133,7 @@ The unit tests are eight GoogleTest executables, three for the web libraries and
 | `qar_ros_ui_tests` | `TypeSupportRegistry`, `Introspection` | the naming rules match the generated symbols; both handles of a message load and are cached; an unknown package or type is reported and a malformed name is refused before anything loads; a service loads with its two halves and an action with its eight messages; every typesupport type id maps to a kind of the schema; the description of `PoseStamped` matches the message field for field, and defaults are read from the generated constructor |
 | | `DynamicMessage`, `QosSelection` | a value tree converts to a message of a type without a header and back: defaults, partial objects, unknown fields, kind and range errors with their paths, integral doubles for integers, `NaN` and null, fixed and bounded arrays, string bounds in bytes, wide strings, and the limits that truncate long arrays and stop deep trees; the serialised bytes equal those of the compile-time type; the QoS rules follow the publishers that exist |
 | | `GraphDiscovery`, `TopicBridgeLive`, `ServiceBridgeLive`, `ActionBridge`, `ActionBridgeLive`, `GraphDiscoveryLive` | hidden names follow the ROS convention and an action is recovered from its services and topics; the snapshot sees topics, services and actions with their types and detects a change; an adaptive subscription hears a best-effort and a reliable publisher, and a latched message arrives through transient local; `reconcile` resubscribes when a publisher appears; a push callback runs on the thread of the executor; a service and an action report a timeout, a rejected goal and a failure as results and never as exceptions, and a deferred request waits for a late server |
+
 
 
 
@@ -150,10 +155,11 @@ The file `qar_streaming_panel.cpp`, which holds the panel, and the other sources
 
 ## Test doubles
 
-No test of this repository calls the QarOS C API, and none of the three web libraries calls it either, so there is no stand-in for the QarOS SDK. The tests use real objects wherever they can, and these stand in for the rest; the last three stand in for the other end of a connection of the web libraries.
+No test of this repository loads the QarOS library: the tests of `qar_capi_panels` call the QarOS C API through a fake of its function tables, and the three web libraries do not call it. The tests use real objects wherever they can, and these stand in for the rest; the last three stand in for the other end of a connection of the web libraries.
 
 | Test helper | What it stands in for |
 |---|---|
+| the fake of `fake_qar_api.cpp` | the QarOS library: it fills the function tables that the vendored header resolves every call through, with functions of its own whose outcomes the test scripts, so that the session owner and the adapters of `qar_capi_panels` run without the library |
 | `FakeRecordingFactory`, `FakePanelFactory` and the other classes of `rtti_guard_test_types.hpp` | the factories of RViz that the guard in front of the hidden Displays panel meets: a root that is not a template, a class template derived from it, and concrete factories that the test code cannot name and receives only as an opaque pointer, the way `PanelFactory` is defined only in the library of RViz |
 | the message descriptions of `ar_semantic_templates_tests.cpp` | the description of a ROS 2 interface that `qar_ros_ui` reads from the introspection library of the distribution; they are written by hand to match the real interface definitions field by field, and `qar_rviz_streaming_ros_tests` checks every template again against the descriptions of the installed distribution |
 | the publisher of `ros_image_frame_source_timing_tests.cpp` | the camera node of a robot: a publisher of the host context of the test, while the source under test receives in a context of its own |
@@ -167,7 +173,7 @@ No test of this repository calls the QarOS C API, and none of the three web libr
 ## What the automated tests do not cover
 
 - **The panel in RViz.** No test loads the plugin into RViz or constructs the panel. The panel, the dialog of the topic browser, the adapters of the display context and of the render lock, the access to the panel factory of RViz, the floor plane in the Ogre scene and the reader of the video are sources that only `colcon` builds, so only a live session shows what they do in a running RViz. The tabbed layout, the fit of the docks and the readout box are tested on a stand-in panel that is built from the same pieces, with Qt Widgets and no RViz.
-- **QarOS.** The connection, the invitation of a peer, the hand-over of the pictures, the creation of panels and the gestures of the runtime are not called by any test. Whether a Visualizer shows the stream and whether a pointer reaches a panel is not tested here. [What the live sessions showed](VERIFICATION.md#what-the-live-sessions-showed) says what the logs of the live sessions show and what the authors of qar_rviz_plugin confirmed. The URL panel itself is created by the adapter of `qar_ogre_adapter`, which no test of this repository uses; whether a Visualizer shows the page and whether its pointing reaches the page is not tested here.
+- **QarOS.** The connection, the invitation of a peer, the hand-over of the pictures, the creation of panels and the gestures of the runtime are not called by any test against the runtime; `qar_capi_panels_tests` call them against a fake of the function tables, which checks the order and the threads of the calls and not what QarOS does with them. Whether a Visualizer shows the stream and whether a pointer reaches a panel is not tested here. [What the live sessions showed](VERIFICATION.md#what-the-live-sessions-showed) says what the logs of the live sessions show and what the authors of qar_rviz_plugin confirmed. The URL panel itself is created by the adapter of `qar_ogre_adapter`, which no test of this repository uses; whether a Visualizer shows the page and whether its pointing reaches the page is not tested here.
 - **The accuracy of a pick.** The tests construct the gestures of the runtime and check the arithmetic and the rules of a pick. How near to the aimed point a pick lands in a live session has no measured figure.
 - **A real network.** The live ROS tests use a domain of their own, entities in the test process and the UDP transport only. Another machine, another domain and the middleware settings of a real robot are not exercised. The server tests connect over the loopback interface. A firewall, a second network interface, a headset on Wi-Fi and the choice of the advertised host are not exercised.
 - **Message packages that are missing.** The live tests of the video source need `std_msgs`, and those of the image source need `sensor_msgs` and the library `qar_qt_streaming`; without them the tests are compiled out or skipped, and the rest still runs. The live tests need `test_msgs`, `geometry_msgs` and `std_srvs`; without all three they are compiled out, and the rest of the tests still run.
@@ -228,6 +234,7 @@ check_layering examples: OK (2 files)
 check_layering qar_ui_model: OK (37 files)
 check_layering qar_web_panels: OK (18 files)
 check_layering qar_ros_ui: OK (35 files)
+check_layering qar_capi_panels: OK (13 files)
 check_layering qar_rviz_streaming: OK (97 files)
 ```
 
@@ -252,11 +259,12 @@ Fix the include rather than the table: move the code to the layer that may use t
 
 The module `qar_rviz_streaming` may include the standard library, Qt, Ogre, ROS 2, RViz, `stb` and the platform headers `windows.h`, `mmsystem.h`, `process.h` and `unistd.h`, and it may include the headers of every project module of the stack; its tests may in addition include GoogleTest. It is the one module of the stack that may use the headers of RViz, because it is the one that is loaded into RViz: the libraries below it must not know RViz, and the guard is what keeps them so.
 
-The guard checks the modules `qar_ui_model`, `qar_web_panels`, `qar_ros_ui` and `qar_rviz_streaming`, and `examples` when that folder exists. CTest registers one test for each, `check_layering_qar_ui_model`, `check_layering_qar_web_panels`, `check_layering_qar_ros_ui`, `check_layering_qar_rviz_streaming` and `check_layering_examples`, and the test `check_layering_selftest`. What the rules mean here:
+The guard checks the modules `qar_ui_model`, `qar_web_panels`, `qar_ros_ui`, `qar_capi_panels` and `qar_rviz_streaming`, and `examples` when that folder exists. CTest registers one test for each, `check_layering_qar_ui_model`, `check_layering_qar_web_panels`, `check_layering_qar_ros_ui`, `check_layering_qar_capi_panels`, `check_layering_qar_rviz_streaming` and `check_layering_examples`, and the test `check_layering_selftest`. What the rules mean here:
 
 - `qar_ui_model` includes the standard library and its own headers, and nothing else: no Qt, no ROS 2, no Ogre.
 - `qar_web_panels` includes the standard library, Qt, its own headers and the headers of `qar_ui_model`, and from `qar_ar_core` only the wrapper header of the QarOS C header, which it needs for the type of a panel size. It includes no ROS 2 header.
 - `qar_ros_ui` includes the standard library, ROS 2 headers, its own headers and those of `qar_ui_model`, and no Qt header.
+- `qar_capi_panels` includes the standard library, its own headers, `qar_ar_core`, the headers of the component `capi` of `qar_ogre_adapter` (its tests also those of `session`) and, of qar_qt_streaming, only the headers of `seam`; it includes no Qt, ROS 2, Ogre or RViz header.
 - Every folder under `examples` has its own entry. The folder `web_panel_example` may include the standard library, Qt, `qar_ui_model`, `qar_web_panels`, `qar_ar_core` and the headers of the components `render` and `url` of `qar_ogre_adapter`; the folder `ros_topic_panel_example` may in addition include ROS 2 headers and `qar_ros_ui`.
 
 ## Adding a test

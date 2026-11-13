@@ -4,7 +4,7 @@ The plugin is a panel for RViz and not a library, so this page lists the surface
 
 ## The plugin's public surface
 
-The plugin offers one class to RViz and no C++ API to integrators. RViz loads the class by its identifier through pluginlib and does not link it: the class is declared without an export macro, and the headers that the package installs serve the units of the plugin among themselves. A program that wants QarOS in a scene of its own uses the libraries of qar_ogre_adapter and qar_qt_streaming, which have API documents of their own, and a program that wants a panel of its own on a web page uses the three libraries of this repository, which [Header map](#header-map) and the sections after it document.
+The plugin offers one class to RViz and no C++ API to integrators. RViz loads the class by its identifier through pluginlib and does not link it: the class is declared without an export macro, and the headers that the package installs serve the units of the plugin among themselves. A program that wants QarOS in a scene of its own uses the libraries of qar_ogre_adapter and qar_qt_streaming, which have API documents of their own, a program that wants the Qt widget panels of qar_qt_streaming on the QarOS C API uses the module `qar_capi_panels` of this repository ([qar_capi_panels](#qar_capi_panels)), and a program that wants a panel of its own on a web page uses the three libraries of this repository, which [Header map](#header-map) and the sections after it document.
 
 | Item | Where | What it is |
 |---|---|---|
@@ -83,7 +83,7 @@ The router decides what a control event means, and it answers every event with a
 
 ## Module guide for contributors
 
-Every file is in `qar_rviz_streaming`, headers in `include\qar_rviz_streaming` and sources in `src`. The pure units compile into the test target of the plain-CMake project, and the others build only under colcon ([Build gates](DEVELOPING.md#build-gates)).
+Every file of this table is in `qar_rviz_streaming`, headers in `include\qar_rviz_streaming` and sources in `src`; the module `qar_capi_panels` has its own folder and its own section, [qar_capi_panels](#qar_capi_panels). The pure units compile into the test target of the plain-CMake project, and the others build only under colcon ([Build gates](DEVELOPING.md#build-gates)).
 
 | File | What it holds | Tests |
 |---|---|---|
@@ -169,6 +169,14 @@ Every public header of the repository, by module. The sections below describe th
 | `service_bridge.hpp` | `ServiceBridge`, `ServiceCallOptions`, `ServiceCallOutcome` |
 | `action_bridge.hpp` | `ActionBridge`, `ActionGoalHandle`, `ActionGoalOptions`, `GoalEvent`, `GoalStatus` |
 | `qar_ros_ui/detail/dynamic_service_client.hpp`, `qar_ros_ui/detail/dynamic_action_client.hpp` | `DynamicServiceClient` and `DynamicActionClient`: internal to the bridges and installed for the tests |
+
+**`qar_capi_panels`**: the QarOS C API behind the panel interfaces of `qar_qt_streaming::seam`. It needs the components `capi` and `qar_ar_core` of qar_ogre_adapter and the headers of `seam` of qar_qt_streaming, and no Qt.
+
+| Header | What it declares |
+|---|---|
+| `qar_capi_panel_sender_adapter.hpp` | `QarCApiPanelSenderAdapter` and `QarCApiPanelSenderFactory`: the implementations of `seam::IPanelSender` and `seam::IPanelSenderFactory` |
+| `qar_capi_panel_input_source.hpp` | `QarCApiPanelInputSource` and `PanelInputStats`: the implementation of `seam::IPanelInputSource` |
+| `seam_c.hpp` | `to_seam` and `to_c` for the values that cross between `seam` and the QarOS C types, and `append_to_seam` for the pointer samples |
 
 ## qar_ui_model
 
@@ -557,6 +565,41 @@ if (sent.ok()) {
   bridge.cancel(goal);                                               // the answer arrives as a CancelResponse event
 }
 ```
+
+## qar_capi_panels
+
+`qar_capi_panels` implements the three panel interfaces of `qar_qt_streaming::seam` on the QarOS C API, so that the panel manager of qar_qt_streaming can stream a Qt widget into a QarOS GUI panel. A host makes one `QarCApiPanelInputSource` from the session, makes a `QarCApiPanelSenderFactory` from the session owner and that source, and gives both to the manager; the factory hands the source to every panel that it creates, so each panel subscribes itself to the gestures of QarOS. A factory without an input source makes panels that stream out and take no input.
+
+```cpp
+// One input source serves all panels; the factory hands it to every panel that it creates.
+auto input = std::make_shared<qar_capi_panels::QarCApiPanelInputSource>(owner->session());
+qar_capi_panels::QarCApiPanelSenderFactory factory(owner, input);
+
+seam::PanelDesc desc;
+desc.key = "status";
+desc.common_name = seam::make_panel_common_name(desc.key, scope);
+desc.buffer_width = 1024;
+desc.buffer_height = 768;
+desc.content_width = 1000;                           // the part of the buffer that the widget paints;
+desc.content_height = 760;                           // zero means the whole buffer
+const std::shared_ptr<seam::IPanelSender> sender = factory.create_panel_sender(desc);
+if (!sender) {
+  std::printf("panel: %s\n", factory.last_error().c_str());
+  return;
+}
+
+// The panel is subscribed to its gestures. On the GUI thread, once for each tick:
+std::vector<seam::PanelPointerSample> samples;
+input->drain(samples);
+std::vector<std::string> closed;
+input->drain_closed_panels(closed);                  // the keys of the panels that the operator closed in AR
+std::printf("%zu samples, %zu closed, %zu subscriptions\n", samples.size(), closed.size(),
+  input->subscription_count());
+```
+
+`create_panel_sender` returns a sender, or a null pointer with the reason in `last_error()`. The sender is refused when it has no owner, when its description is bad (an empty common name is one case) or when no session accepts calls, and `refused()` then says so; a panel that was accepted and fails later reports it through `drain_results`. The calls of a sender are for the Qt GUI thread and none of them waits for the Hub: the panel and its video sender are made, changed and destroyed by tasks on the thread of the session owner, in the order of the calls. QarOS delivers the gestures of a panel on a callback thread of its own, and the input source only queues them: `drain` hands the pointer samples to the host on the GUI thread, and `drain_closed_panels` the keys of the panels that the operator closed in AR.
+
+The values of `seam` become the C types of QarOS in `seam_c.hpp`: `to_c` converts a `seam::Vector3`, `seam::Quaternion`, `seam::Pose`, `seam::PanelSize`, `seam::TimePoint`, `seam::PeerId`, `seam::PanelState` or `seam::PixelFormat`, `to_seam` converts back, and a `static_assert` for each pair checks the layout and the numbers of the enumerations.
 
 ## Wire protocol
 

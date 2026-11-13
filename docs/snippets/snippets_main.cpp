@@ -11,12 +11,15 @@
 #include "qar_ui_model/type_description.hpp"
 #include "qar_ui_model/ui_model.hpp"
 #include "qar_web_panels/url_panel_sizing.hpp"
+#include "qar_qt_streaming/seam/common_name.hpp"
 #include "qar_web_panels/web_panel_server.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 
 #include <memory>
 #include <string>
+
+namespace qar_qar_adapter { class IQarSessionOwner; }
 
 namespace ui = qar_ui_model;
 namespace wp = qar_web_panels;
@@ -37,6 +40,9 @@ std::string snippet_server(ui::UiModel model);
 void snippet_session(wp::PanelSession & session, CounterSink & sink);
 void snippet_signals(wp::PanelSession & session, QObject * host);
 QarGuiPanelSize snippet_sizing(const wp::PanelSession & session, const wp::PanelViewportReport & report);
+
+// capi_panels_snippets.cpp
+void snippet_capi_panels(qar_qar_adapter::IQarSessionOwner * owner, const qar_qt_streaming::seam::NameScope & scope);
 
 // ros_ui_snippets.cpp
 void snippet_graph(const std::shared_ptr<rclcpp::Node> & node);
@@ -64,6 +70,8 @@ int main(int argc, char** argv) {
     snippet_session(*session, *sink);
     snippet_signals(*session, nullptr);
     snippet_sizing(*session, report);
+
+    snippet_capi_panels(nullptr, qar_qt_streaming::seam::NameScope{});
 
     snippet_graph(node);
     snippet_introspection();

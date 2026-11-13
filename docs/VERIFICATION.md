@@ -34,7 +34,7 @@ Set-Location "$env:QAR_ROOT\src\qar_rviz_plugin"
 
 ### Configure, build and test the units
 
-The plain CMake project of the repository builds the three web libraries, the two examples, the pure units of the plugin and their tests. It does not build the file that holds the panel, because the plugin builds only under `colcon`; that build is the next step. [Configure, build and test the units](INSTALL.md#configure-build-and-test-the-units) has the details.
+The plain CMake project of the repository builds the module `qar_capi_panels`, the three web libraries, the two examples, the pure units of the plugin and their tests. It does not build the file that holds the panel, because the plugin builds only under `colcon`; that build is the next step. [Configure, build and test the units](INSTALL.md#configure-build-and-test-the-units) has the details.
 
 ```powershell
 cmake --preset vs2019-x64
@@ -48,15 +48,13 @@ Preset CMake variables:
   QAR_QT_ROOT="C:\qar\deps\Qt\5.15.2\msvc2019_64"
   QAR_ROS2_INSTALL_ROOT="C:\qar\deps\ros2_humble\ros2-windows"
 ...
--- The CXX compiler identification is MSVC 19.29.30151.0
-...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
 ...
--- qar_ogre_adapter 0.1.0: C:/qar/install/share/qar_ogre_adapter/cmake
--- qar_qt_streaming 0.1.0: C:/qar/install/share/qar_qt_streaming/cmake
+-- qar_ogre_adapter 0.2.0: C:/qar/install/share/qar_ogre_adapter/cmake
+-- qar_qt_streaming 0.2.0: C:/qar/install/share/qar_qt_streaming/cmake
 ...
--- Configuring done (12.8s)
--- Generating done (0.5s)
+-- Configuring done (6.2s)
+-- Generating done (0.4s)
 -- Build files have been written to: C:/qar/src/qar_rviz_plugin/build/vs2019-x64
 ```
 
@@ -65,6 +63,8 @@ cmake --build --preset vs2019-x64
 ```
 
 ```text
+...
+  qar_capi_panels_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_capi_panels\test\RelWithDebInfo\qar_capi_panels_tests.exe
 ...
   qar_rviz_streaming_widget_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_widget_tests.exe
 ...
@@ -91,24 +91,25 @@ ctest --preset vs2019-x64
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
         Start   1: check_layering_qar_ui_model
-  1/889 Test   #1: check_layering_qar_ui_model ..................................................................   Passed    0.15 sec
+  1/937 Test   #1: check_layering_qar_ui_model ..................................................................   Passed    0.16 sec
         Start   2: check_layering_qar_web_panels
-  2/889 Test   #2: check_layering_qar_web_panels ................................................................   Passed    0.08 sec
+  2/937 Test   #2: check_layering_qar_web_panels ................................................................   Passed    0.10 sec
         Start   3: check_layering_qar_ros_ui
-  3/889 Test   #3: check_layering_qar_ros_ui ....................................................................   Passed    0.12 sec
-        Start   4: check_layering_qar_rviz_streaming
-  4/889 Test   #4: check_layering_qar_rviz_streaming ............................................................   Passed    0.35 sec
+  3/937 Test   #3: check_layering_qar_ros_ui ....................................................................   Passed    0.13 sec
+        Start   4: check_layering_qar_capi_panels
+  4/937 Test   #4: check_layering_qar_capi_panels ...............................................................   Passed    0.11 sec
 ...
-100% tests passed, 0 tests failed out of 889
 
-Total Test time (real) =  82.14 sec
+100% tests passed, 0 tests failed out of 937
+
+Total Test time (real) = 108.60 sec
 ```
 
 [Testing](TESTING.md#what-the-automated-tests-do-not-cover) lists what these tests leave out: the panel in RViz, every call into QarOS, the JavaScript of the pages, the accuracy of a pick and a real network. Of the checks of the next levels, only those of Level 1 were run for this release: the dry runs of the launcher, which start nothing, and the two examples of the web libraries over the loopback interface. The panel in RViz and the calls into QarOS were exercised only in the live sessions and checks of Level 2: the two sessions ran with builds that were made before the last changes of the code, and the live checks on the desktop Visualizer ran a build that differs from this release only in comments and the text of one tool tip. No accuracy of a pick has been measured.
 
 ### The layering guard and the analyzer
 
-The guard checks the include rules of the four modules and of the examples, and its self-test checks the guard itself. The analyzer of the timing files has a self-test of its own that CTest does not register: it writes four fabricated recordings and checks that the analyzer names the cause of each. [The layering guard](TESTING.md#the-layering-guard) and [The analyzer of the timing files](TESTING.md#the-analyzer-of-the-timing-files) describe them.
+The guard checks the include rules of the five modules and of the examples, and its self-test checks the guard itself. The analyzer of the timing files has a self-test of its own that CTest does not register: it writes four fabricated recordings and checks that the analyzer names the cause of each. [The layering guard](TESTING.md#the-layering-guard) and [The analyzer of the timing files](TESTING.md#the-analyzer-of-the-timing-files) describe them.
 
 ```powershell
 & "$env:QAR_VENV\Scripts\python.exe" scripts\check_layering.py --all
@@ -119,6 +120,7 @@ check_layering examples: OK (2 files)
 check_layering qar_ui_model: OK (37 files)
 check_layering qar_web_panels: OK (18 files)
 check_layering qar_ros_ui: OK (35 files)
+check_layering qar_capi_panels: OK (13 files)
 check_layering qar_rviz_streaming: OK (97 files)
 ```
 
@@ -527,7 +529,7 @@ The authors of qar_rviz_plugin ran two live sessions of the plugin in RViz again
 
 **The authors of qar_rviz_plugin confirmed** in earlier live sessions, held with older builds and a runtime earlier than 0.9.0-dev.3008+65dc9aeb, that a click and a hover reach the real widget of RViz, with the lists of drop-down boxes and the dialogs; that two Visualizers stream at the same time; and that the page of a velocity command opens in AR, pages and publishes. In the two sessions of this section they reported that the three commands of the README for the recorded bag worked. On the rest they gave no verdict step by step. How the pictures looked in the Visualizer (depth, shading, the colour of the floor), whether the pages of the other AR tools were readable and how near the picks landed to the points that were aimed at were not judged in those two sessions, and no accuracy has been measured.
 
-**Has not been checked in a live session:** geographic anchoring against a live GPS source, real multi-user devices, and the drag of a slider, the use of two hands, the tap count and the long press. **Not confirmed:** the result of a service call and of an action goal from AR, because the plugin logs neither (the pages of a service and an action of the demo servers of the distribution loaded, and the authors of qar_rviz_plugin reported no result), and the templates `diagnostics`, `imu`, `robot-service` and `navigation-goal`, which no log of a live run shows. The synthetic demo bag failed in the second session: its script wrote no index, and RViz ended when the robot description reached it because `tinyxml.dll` was missing. Both are repaired in this release and have not been run in a live session since. The examples of the web libraries were not run against a Visualizer.
+**Has not been checked in a live session:** geographic anchoring against a live GPS source, real multi-user devices, and the use of two hands, the tap count and the long press; drags on the streamed dock panels (expanding a tree item, dragging a slider, scrolling) were checked in the live check of the installed QAROS. **Not confirmed:** the result of a service call and of an action goal from AR, because the plugin logs neither (the pages of a service and an action of the demo servers of the distribution loaded, and the authors of qar_rviz_plugin reported no result), and the templates `diagnostics`, `imu`, `robot-service` and `navigation-goal`, which no log of a live run shows. The synthetic demo bag failed in the second session: its script wrote no index, and RViz ended when the robot description reached it because `tinyxml.dll` was missing. Both are repaired in this release and have not been run in a live session since. The examples of the web libraries were not run against a Visualizer.
 
 ### Without QarOS: the offline preview
 
@@ -703,6 +705,7 @@ The table lists what this repository provides, the automated suites that exercis
 | The height of the AR panels above the RViz ground, the frame of the AR panels and the size of the app volume | `PanelGroundRule`, `FixedPoses`, `ArFrame`, `AppVolumeSize` | 0 |
 | The brightness field of the heartbeat and the line of the render device | `HeartbeatBrightness`, `RenderDeviceLine` | 0 |
 | Spatial picking and the messages that it publishes | `SpatialInteraction`, `SpatialPointPublish`, `SpatialPosePublish`, `SpatialNavGoalPublish`, `SpatialAreaPublish`, `SpatialTargetOptions` | 0; [2](#desktop-visualizer-checks-level-2) (earlier builds), picks of points only |
+| The Qt widget panels on the QarOS C API: the panel sender, the guard of the panel state, the conversions and the samples of the input source | `PanelSender`, `PanelStateGuard`, `PanelSeamBoundary`, `SeamC`, `PanelInputGolden`, `PanelInputGoldenIds` | 0 |
 | Video in AR: display classes, transports and the sources of images | `IsVideoDisplayClass`, `ShouldSkipDisplayForExposedTopic`, `ImageTopicTransportTest`, `VideoSourceExecutor`, `RosImageFrameSourceTiming`, `WindowsScheduling` | 0; [2](#desktop-visualizer-checks-level-2) (earlier builds) |
 | Health readout of a video display | `FormatVideoDisplayHealth` | 0 |
 | Build, install and load of the plugin | none | 0; [2](#desktop-visualizer-checks-level-2) (earlier builds) |

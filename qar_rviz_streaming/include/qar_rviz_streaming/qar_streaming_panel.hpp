@@ -35,6 +35,7 @@
 #include "qar_ogre_streaming/types.hpp"
 
 #include "qar_ar_core/common_name.hpp"
+#include "qar_ar_core/timing_log.hpp"
 #include "qar_qar_adapter/qar_capi_render_sender_adapter.hpp"
 #include "qar_qar_adapter/qar_session_owner.hpp"
 
@@ -115,11 +116,15 @@ namespace qar_qar_adapter
 {
 class QarSessionOwner;
 class QarCApiSenderFactory;
-class QarCApiPanelSenderFactory;
-class QarCApiPanelInputSource;
 class QarCApiSpatialGestureSource;
 class QarCApiUrlPanelFactory;
 }  // namespace qar_qar_adapter
+
+namespace qar_capi_panels
+{
+class QarCApiPanelSenderFactory;
+class QarCApiPanelInputSource;
+}  // namespace qar_capi_panels
 
 namespace qar_rviz_streaming
 {
@@ -153,7 +158,7 @@ class ElidedLabel;
 /// RViz cleanly. This gives scriptable proof without a human clicking.
 class QarStreamingPanel : public rviz_common::Panel,
   public qar_ogre_streaming::OgreQarDiagnosticsSink,
-  public qar_ar_core::PanelDiagnosticsSink,
+  public qar_qt_streaming::seam::PanelDiagnosticsSink,
   public qar_web_panels::IPanelControlSink,
   public qar_ros_ui::RosUiDiagnosticsSink
 {
@@ -197,7 +202,7 @@ public:
   /// `QtPanelStreamingConfig::diagnostics` and forwarded to @ref appendLog and so
   /// to the run script's `.err.log`.
   void on_message(
-    qar_ar_core::DiagnosticSeverity severity,
+    qar_qt_streaming::seam::DiagnosticSeverity severity,
     const std::string & category,
     const std::string & message,
     const std::string & panel_key) override;
@@ -1400,8 +1405,8 @@ private:
   /// their own, so this is belt and braces).
   ///
   /// panel_input_source_ is the click/hover half — the panels' input.
-  std::shared_ptr<qar_qar_adapter::QarCApiPanelInputSource> panel_input_source_;
-  std::shared_ptr<qar_qar_adapter::QarCApiPanelSenderFactory> panel_sender_factory_;
+  std::shared_ptr<qar_capi_panels::QarCApiPanelInputSource> panel_input_source_;
+  std::shared_ptr<qar_capi_panels::QarCApiPanelSenderFactory> panel_sender_factory_;
 
   /// The dedicated node + executor `acquireFrameSource()` hands every
   /// `RosImageFrameSource` instead of RViz's own node — see

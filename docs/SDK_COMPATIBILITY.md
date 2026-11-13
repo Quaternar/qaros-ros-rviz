@@ -41,7 +41,7 @@ The repository qar_ogre_adapter installs the header with its libraries, so the c
 55E6E3F48D940CA29331F0528FE475C1B7230FB19A59C31D5525C6E90B097F6C
 ```
 
-If the two hashes are equal, your QAROS has the C API of the verified version. If they differ, your installation is another one. The third command checks whether the header of your installation still declares the three parts of the C API that the code uses; it prints True for each item that the header declares.
+If the two hashes are equal, your QAROS has the C API of the verified version. If they differ, your installation is another one. The third command checks whether the header of your installation still declares the parts of the C API that the code uses; it prints True for each item that the header declares.
 
 ```powershell
 $qaros = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Quaternar\QAROS'
@@ -56,15 +56,15 @@ QarStreamParamsOpenGlWgl                       True
 app_volume_id                                  True
 ```
 
-An installation that has all three items and a different header is not verified: the stack may work with it, but nobody has checked. Build the repositories, run the tests, and read the changes listed for each version before you rely on it.
+An installation that has all the items and a different header is not verified: the stack may work with it, but nobody has checked. Build the repositories, run the tests, and read the changes listed for each version before you rely on it.
 
 ## Updating the QarOS header
 
-This repository does not hold the QarOS C header. It comes with the repository qar_ogre_adapter, which vendors it and installs it into the prefix next to its libraries, so that every repository of this stack compiles against the same file. To move to another QAROS version, update the header there first, following the document "SDK compatibility" of qar_ogre_adapter, install qar_ogre_adapter into the prefix again, and then rebuild this repository.
+This repository does not hold the QarOS C header. It comes with the repository qar_ogre_adapter, which vendors it and installs it into the prefix next to its libraries, so that this repository compiles against the same file as those libraries. The repository qar_qt_streaming carries copies of the headers of its own, which this repository does not compile against. To move to another QAROS version, update the header of qar_ogre_adapter first, following the document "SDK compatibility" of that repository, update the copies of qar_qt_streaming by its own document, install both into the prefix again, and then rebuild this repository.
 
 ### Rebuild order
 
-After the header has changed, rebuild the repositories in the order of their dependencies: qar_ogre_adapter first, then qar_qt_streaming, and qar_rviz_plugin last. Each repository is built and installed into the prefix as described in its installation document, and the later ones find the new header and libraries there.
+After the header has changed, rebuild the repositories in the order of their dependencies: qar_ogre_adapter and qar_qt_streaming first, and qar_rviz_plugin last. Each repository is built and installed into the prefix as described in its installation document, and the later ones find the new header and libraries there.
 
 Rebuild from scratch rather than incrementally: an incremental build can keep objects that were compiled against the old header.
 

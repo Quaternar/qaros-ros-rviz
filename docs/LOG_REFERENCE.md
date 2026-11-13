@@ -9,7 +9,7 @@ The panel writes every line that it logs to two places. It appends the line to i
 | Destination | What is in it | What controls it |
 |---|---|---|
 | the `Diagnostics` view | the lines of the panel, with `HH:mm:ss.zzz` in front, the last 2000 | the heartbeat only: `QAR_PANEL_HEARTBEAT_S` |
-| the standard error of RViz | the same lines after `[qar-panel]`, and the lines that the libraries of qar_ogre_adapter write straight to it | nothing for the panel; the adapters follow `QAR_ADAPTER_TRACE` for the per-call lines |
+| the standard error of RViz | the same lines after `[qar-panel]`, and the lines that the libraries of qar_ogre_adapter and `qar_capi_panels` write straight to it | nothing for the panel; the adapters follow `QAR_ADAPTER_TRACE` for the per-call lines |
 | the standard output of RViz | nothing of the panel; the console copy of the QarOS library | `QAR_PANEL_LOG_CONSOLE` |
 | the QarOS log folder | `qar_streaming.log`, the log of the library inside RViz, the crash reports of the process, and the frame trace | `QAR_PANEL_LOG_DIR`, `QAR_PANEL_LOG_SEVERITY` |
 | the folder logs of the QarOS log folder | the logs of the processes that QAROS starts: one folder for each session of the runtime launcher below `qar-launcher-default`, and `qaros-hub-service` for the Hub service | QAROS |
@@ -35,7 +35,7 @@ qaros-hub-service
 
 ## Channels and prefixes
 
-Every line starts with the prefix of its writer. The first rows come through the panel, which forwards the diagnostics of the libraries to its own log. The last row is written straight to the standard error by the adapters of qar_ogre_adapter 0.1.0, whose document TROUBLESHOOTING describes them in the section "Reading the logs".
+Every line starts with the prefix of its writer. The first rows come through the panel, which forwards the diagnostics of the libraries to its own log. The last row is written straight to the standard error by the adapters of qar_ogre_adapter and of `qar_capi_panels`; the document TROUBLESHOOTING describes them in the section "Reading the logs".
 
 | Prefix | Written by | Lines |
 |---|---|---|
@@ -44,7 +44,7 @@ Every line starts with the prefix of its writer. The first rows come through the
 | `"[qt_lib:"` | the manager of qar_qt_streaming, through the sink of the panel | the lifecycle of the AR panels of Qt windows, with the key of the panel |
 | `"[ros_ui:"` | qar_ros_ui, through the sink of the panel | the diagnostics of the graph discovery and of the bridges |
 | `[qar-web]` | the panel | the viewport that a web page reports |
-| `[qar-adapter]`, `[qar-panel-adapter]`, `[qar-url-panel-adapter]`, `[qar-panel-input]`, `[qar-spatial]`, `[qar-timing]` | the adapters and the timing log of qar_ogre_adapter | the calls into QarOS, the creation and close of panels, the gestures, and a timing file that could not be created |
+| `[qar-adapter]`, `[qar-panel-adapter]`, `[qar-url-panel-adapter]`, `[qar-panel-input]`, `[qar-spatial]`, `[qar-timing]` | the adapters of qar_ogre_adapter and `qar_capi_panels`, and the timing logs of qar_ogre_adapter and qar_qt_streaming | the calls into QarOS, the creation and close of panels, the gestures, and a timing file that could not be created |
 
 The lines of the panel itself start with a keyword, and the sections of this page follow the keywords:
 

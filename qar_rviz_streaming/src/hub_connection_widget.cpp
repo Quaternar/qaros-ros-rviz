@@ -118,9 +118,8 @@ HubConnectionWidget::HubConnectionWidget(QWidget * parent)
   code_edit_->setPlaceholderText("pairing code");
   code_edit_->setInputMethodHints(Qt::ImhDigitsOnly | Qt::ImhNoPredictiveText);
   code_edit_->setToolTip(
-    "The code that the other PC's Hub shows (Connection panel, Hubs, Pair another Hub). It "
-    "lives about ten seconds and works once: type it and press Enter at once. It is not "
-    "saved or logged.");
+    "The pairing code that the Hub of the other PC shows for a new device (see the QAROS "
+    "documentation). It works once: type it and press Enter. It is not saved or logged.");
   code_edit_->setEnabled(false);
   pair_button_ = new QPushButton("Pair", this);
   pair_button_->setToolTip("Pair with the Hub at the host and port above, using the code.");

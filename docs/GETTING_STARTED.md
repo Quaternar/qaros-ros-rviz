@@ -81,8 +81,9 @@ Usage: qar_web_panel_example [--local | --hub HOST:PORT [--code CODE] | --forget
                      QAROS window
   --hub H:P          join the Hub of another PC at host H and onboarding port P (the port is
                      shown with the pairing code in the Visualizer of that PC)
-  --code CODE        the pairing code that Hub shows; it works once and lives about 10 seconds.
-                     Only the first join needs it: the pairing is stored for the next start
+  --code CODE        the pairing code that the Hub of that PC shows for a new device
+                     (see the QAROS documentation); it works once. Only the first join
+                     needs it: the pairing is stored for the next start
   --forget           erase the stored pairing with another PC's Hub and exit
   --no-qaros         do not join QAROS: only serve the page, for a desktop browser
   --connect-only     join QAROS, print the runtime, the mode, this program's peer and the
@@ -97,8 +98,9 @@ Usage: qar_ros_topic_panel_example [--local | --hub HOST:PORT [--code CODE] | --
                      QAROS window
   --hub H:P          join the Hub of another PC at host H and onboarding port P (the port is
                      shown with the pairing code in the Visualizer of that PC)
-  --code CODE        the pairing code that Hub shows; it works once and lives about 10 seconds.
-                     Only the first join needs it: the pairing is stored for the next start
+  --code CODE        the pairing code that the Hub of that PC shows for a new device
+                     (see the QAROS documentation); it works once. Only the first join
+                     needs it: the pairing is stored for the next start
   --forget           erase the stored pairing with another PC's Hub and exit
   --no-qaros         do not join QAROS: only serve the page, for a desktop browser
   --connect-only     join QAROS, print the runtime, the mode, this program's peer and the
@@ -378,7 +380,7 @@ Select-String -Path $log.FullName -Pattern 'AR PANEL: streaming|qar-panel-adapte
 QAR-PENDING-OUTPUT RP-GS-07
 ```
 
-A click and a hover reach the real widget of RViz, which the authors of qar_rviz_plugin confirmed in earlier live sessions, held with builds for a QAROS runtime earlier than 0.9.0-dev.3008+65dc9aeb, together with the lists of drop-down boxes and the dialogs; in the live checks with 0.9.0-dev.3008+65dc9aeb the dialog of the hidden Displays panel opened in AR, also on a panel that was found again. The unit tests also cover the dragging of a slider and the use of two hands, but no live session has exercised them yet, so do not rely on them; [What the live sessions showed](VERIFICATION.md#what-the-live-sessions-showed) lists the evidence.
+A click and a hover reach the real widget of RViz, which the authors of qar_rviz_plugin confirmed in earlier live sessions, held with builds for a QAROS runtime earlier than 0.9.0-dev.3008+65dc9aeb, together with the lists of drop-down boxes and the dialogs; in the live checks with 0.9.0-dev.3008+65dc9aeb the dialog of the hidden Displays panel opened in AR, also on a panel that was found again. The unit tests also cover the dragging of a slider and the use of two hands; a live check exercised drags on the streamed RViz dock panels (expanding a tree item, dragging a slider, scrolling), and no live session has exercised two hands, so do not rely on them; [What the live sessions showed](VERIFICATION.md#what-the-live-sessions-showed) lists the evidence.
 
 ## The hidden Displays panel
 
@@ -763,7 +765,7 @@ You can also open the address in a desktop browser on the same machine while the
 
 ## Open the panel in QarOS
 
-The same program opens the page in QAROS when it joins the QAROS Hub. By default it joins the Hub of this PC: QAROS asks once to allow the program, and again after each rebuild of it, so click Allow in the QAROS window. `--hub HOST:PORT --code CODE` joins the Hub of another PC at its onboarding port, which that PC shows next to the code; the code works once and lives about ten seconds, and only the first join needs it, because the pairing is stored for the next start. `--forget` erases the stored pairing and exits, `--no-qaros` serves the page without QAROS, and `--connect-only` joins, prints the runtime, the mode, the peer of the program and the targets, and exits without a server or a panel. When the example ends, it hides its panel and lets go of it instead of closing it, so that the next start finds the panel by name. The example joins first, through a session owner, before it starts the server, and only a target that the Hub lists receives the panel; it needs no invitation. The example sets the log severity of the QAROS library to `warn` and turns off the copy of the library log to the console; the file log stays on.
+The same program opens the page in QAROS when it joins the QAROS Hub. By default it joins the Hub of this PC: QAROS asks once to allow the program, and again after each rebuild of it, so click Allow in the QAROS window. `--hub HOST:PORT --code CODE` joins the Hub of another PC at its onboarding port, which that PC shows next to the code; the code works once, and only the first join needs it, because the pairing is stored for the next start. `--forget` erases the stored pairing and exits, `--no-qaros` serves the page without QAROS, and `--connect-only` joins, prints the runtime, the mode, the peer of the program and the targets, and exits without a server or a panel. When the example ends, it hides its panel and lets go of it instead of closing it, so that the next start finds the panel by name. The example joins first, through a session owner, before it starts the server, and only a target that the Hub lists receives the panel; it needs no invitation. The example sets the log severity of the QAROS library to `warn` and turns off the copy of the library log to the console; the file log stays on.
 
 ```cpp
 std::shared_ptr<qqa::QarSessionOwner> owner;  // stays empty with --no-qaros: no QAROS is needed
@@ -891,7 +893,7 @@ The panel opens only when the browser of QarOS can reach the address. The Visual
 
 ## Expose a ROS topic as an AR panel
 
-The second example puts a ROS 2 topic on a panel. It builds a small model by hand: a value display bound to the field `data` of the newest message of `/qar_example/text`, which the example keeps under the path `message` of the data document, and a button that publishes. The panels that the repository `qar_rviz_plugin` 0.1.0 generates for any topic are built from templates; the example does not use them. It opens its page as a URL panel as the first example does, but it sizes the panel from the page and the fixed design viewport and does not follow the viewport that the page reports.
+The second example puts a ROS 2 topic on a panel. It builds a small model by hand: a value display bound to the field `data` of the newest message of `/qar_example/text`, which the example keeps under the path `message` of the data document, and a button that publishes. The panels that the repository `qar_rviz_plugin` 0.2.0 generates for any topic are built from templates; the example does not use them. It opens its page as a URL panel as the first example does, but it sizes the panel from the page and the fixed design viewport and does not follow the viewport that the page reports.
 
 ```cpp
 // The label is bound to the field "data" of the message, which the example keeps under the path "message" of

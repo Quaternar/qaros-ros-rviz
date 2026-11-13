@@ -8,29 +8,32 @@ The plugin is one ament package, `qar_rviz_streaming`, and its one shared librar
 
 | Repository | Components | What the plugin uses them for |
 |---|---|---|
-| qar_ogre_adapter | `qar_ar_core`, `qar_ogre_streaming`, `session`, `render`, `panels`, `url`, `gestures` | rendering the scene of RViz from the head pose of each peer, the session of QarOS, the senders and the input source of GUI panels, the panels that show a URL, the gestures of the app volume, and the seams and the pick model |
-| qar_qt_streaming | `qar_qt_streaming` | streaming a Qt widget as a GUI panel: the manager of the panels, the video panel widget and the window that is shown off-screen |
-| this repository | `qar_ui_model`, `qar_ros_ui`, `qar_web_panels` | the model of a page, graph discovery and the bridges for topics, services and actions, and the server that delivers the pages |
+| qar_ogre_adapter | `qar_ar_core`, `qar_ogre_streaming`, `capi`, `session`, `render`, `url`, `gestures` | rendering the scene of RViz from the head pose of each peer, the loader of the QarOS C API, the session of QarOS, the panels that show a URL, the gestures of the app volume, and the seams and the pick model |
+| qar_qt_streaming | `seam`, `qar_qt_streaming` | streaming a Qt widget as a GUI panel: the manager of the panels, the video panel widget and the window that is shown off-screen, and, in `seam`, the plain values and the interfaces of a panel (the sender, its factory and the input source) that the manager drives; the component `qaros` of that repository is not used |
+| this repository | `qar_capi_panels`, `qar_ui_model`, `qar_ros_ui`, `qar_web_panels` | the QarOS C API behind the panel interfaces of `seam`, the model of a page, graph discovery and the bridges for topics, services and actions, and the server that delivers the pages |
 
 ```mermaid
 flowchart TB
   rviz["RViz2: rviz_common, rviz_rendering, rviz_default_plugins"]
   plugin["qar_rviz_streaming: the panel and its units"]
-  ogre["qar_ogre_adapter: qar_ogre_streaming, render, panels, url, gestures, qar_ar_core"]
-  qt["qar_qt_streaming"]
+  ogre["qar_ogre_adapter: qar_ogre_streaming, capi, session, render, url, gestures, qar_ar_core"]
+  qt["qar_qt_streaming: seam, qar_qt_streaming"]
+  capi["this repository: qar_capi_panels"]
   web["this repository: qar_ui_model, qar_ros_ui, qar_web_panels"]
   qaros["QarOS runtime"]
   rviz -- "loads the panel" --> plugin
   plugin -- "scene, render lock, display tree" --> rviz
   plugin --> ogre
   plugin --> qt
+  plugin --> capi
   plugin --> web
-  qt -- "qar_ar_core" --> ogre
+  capi -- "seam interfaces" --> qt
+  capi -- "capi, session owner, qar_ar_core" --> ogre
   web -- "qar_ar_core" --> ogre
   ogre -- "C API, loaded at run time" --> qaros
 ```
 
-The dependencies point one way. The plugin depends on `qar_ogre_streaming`, which depends on the QarOS C API and on Ogre; the plugin may include the headers of RViz, Qt and ament, and `qar_ogre_streaming` may not. `qar_qt_streaming` and `qar_web_panels` depend on `qar_ar_core` of qar_ogre_adapter, for the seams of the panels and the C types of QarOS. Nothing links an import library of the SDK, because qar_ogre_adapter loads `qar-streaming-c.dll` at run time ([Rebuilding after an SDK update](SDK_COMPATIBILITY.md#rebuilding-after-an-sdk-update)). The panel is the one place where the libraries meet. It hands the scene of RViz to `qar_ogre_streaming`, the widget of a streamed window to the manager of `qar_qt_streaming` and the model of a page to the server of `qar_web_panels`, and everything that reaches QarOS goes through the one session that the render factory of qar_ogre_adapter owns: the senders and the input source of the panels and the factory of the URL panels borrow it.
+The dependencies point one way. The plugin depends on `qar_ogre_streaming`, which depends on the QarOS C API and on Ogre; the plugin may include the headers of RViz, Qt and ament, and `qar_ogre_streaming` may not. `qar_qt_streaming` needs neither of the other two repositories, and `qar_ogre_adapter` and `qar_qt_streaming` do not depend on each other. `qar_web_panels` depends on `qar_ar_core` of qar_ogre_adapter for the C types of QarOS. `qar_capi_panels` is the one library that joins the two upstream repositories: it implements the panel interfaces of `seam` of qar_qt_streaming on the C API and the session owner of qar_ogre_adapter ([The module qar_capi_panels](#the-module-qar_capi_panels)). Nothing links an import library of the SDK, because qar_ogre_adapter loads `qar-streaming-c.dll` at run time ([Rebuilding after an SDK update](SDK_COMPATIBILITY.md#rebuilding-after-an-sdk-update)). The panel is the one place where the libraries meet. It hands the scene of RViz to `qar_ogre_streaming`, the widget of a streamed window to the manager of `qar_qt_streaming` and the model of a page to the server of `qar_web_panels`, and everything that reaches QarOS goes through the one session that the render factory of qar_ogre_adapter owns: the senders and the input source of the panels and the factory of the URL panels borrow it.
 
 ## RViz integration points
 
@@ -76,6 +79,12 @@ The units of the plugin are small, and the rules that have edge cases live in th
 
 The units that are pure compile into the test target `qar_rviz_streaming_tests` and the colcon build compiles every unit, so the colcon build is the only one that proves that the panel compiles ([Build gates](DEVELOPING.md#build-gates)).
 
+### The module qar_capi_panels
+
+`qar_capi_panels` is the part of this repository that talks to QarOS for the panels of Qt widgets. The manager of qar_qt_streaming knows a panel only through the interfaces of its layer `seam` (`IPanelSender`, `IPanelSenderFactory` and `IPanelInputSource`) and, in the build of this repository, has no code that calls QarOS. The module implements those interfaces on the QarOS C API: `QarCApiPanelSenderFactory` and `QarCApiPanelSenderAdapter` make, change and destroy a QarOS GUI panel and its video sender, and `QarCApiPanelInputSource` subscribes the panels to the gestures of QarOS and queues the pointer samples that the manager drains on the GUI thread.
+
+The panel and its video sender are made, changed and destroyed by tasks on the thread of the session owner of qar_ogre_adapter, in the order of the calls, and no call of the adapter waits for the Hub on the GUI thread; the per-frame calls stay on the GUI thread because the SDK documents them as not blocking. The values of `seam` become the C types of QarOS in `seam_c.hpp`, once at the entry and once at the exit of each call, and a `static_assert` for each pair checks size, field offsets and enumerator values. The module is a static library, `qar_rviz_plugin::qar_capi_panels`, that links `qar_ogre_adapter::capi`, `qar_ogre_adapter::qar_ar_core` and `qar_qt_streaming::seam`, and it needs neither Qt nor ROS 2 nor Ogre nor RViz nor an import library of the SDK. Its tests, `qar_capi_panels_tests`, run the adapters on a fake of the function tables of QarOS and load no QarOS library ([Testing](TESTING.md#what-the-tests-cover)).
+
 ## The render tick
 
 Everything that the panel does repeatedly runs in one handler of one timer on the Qt GUI thread, `onRenderTick()`. The timer is a `QTimer` of the type `Qt::PreciseTimer`, and its period is 0.1 ms unless `QAR_PANEL_TICK_MS` gives another one. One call of the handler does these things in this order:
@@ -106,7 +115,7 @@ When the owner reports the state `running`, `onSessionRunning()` makes the rende
 
 The panels pipeline turns a Qt widget of RViz into a QarOS GUI panel and carries the clicks of the operator in AR back to the widget. The plugin owns little of it: it prepares the manager of qar_qt_streaming once the session is live, and the manager captures the widgets, creates the QarOS panels with their video senders, and delivers the input. The steps are these:
 
-1. **Preparation.** `ensurePanelManager()` needs a live session and says so when there is none. It makes the input source of the panels from the session, the factory of the senders from the render factory and that source, and a `QtPanelStreamManager` that has the panel as the sink of its diagnostics, the close mode that `QAR_PANEL_CLOSE_MODE` selects, and the pump of the input in the tick switched off.
+1. **Preparation.** `ensurePanelManager()` needs a live session and says so when there is none. It makes the input source of the panels from the session (`QarCApiPanelInputSource` of `qar_capi_panels`), the factory of the senders from the render factory and that source (`QarCApiPanelSenderFactory`), and a `QtPanelStreamManager` that has the panel as the sink of its diagnostics, the close mode that `QAR_PANEL_CLOSE_MODE` selects, and the pump of the input in the tick switched off.
 2. **Choosing.** The combo lists the panel itself, then the docks of the main window under the key `dock:<title>`, the open video panels under `video:<topic>`, and the copy of the Displays panel. `"Stream panel to AR"` places the widget and gives it to the manager, and the QarOS panel is created on the next tick and not on the click.
 3. **Capturing.** Each tick, `tickArPanels()` shows the hidden panel again if something hid it, retires the streams whose widgets were destroyed, adopts the aspect of the video panels, calls `tick()` of the manager, which captures, submits and paces every panel by its own frame rate, and refreshes the readout at most every 0.25 s.
 4. **Input.** QarOS delivers the gestures of a panel on a callback thread, and the input source only queues them. A pump that the render tick posts as an event drains the queue on the GUI thread and gives each gesture to the widget. The pump is posted and not called, because a click can open a dialog, and the nested event loop of the dialog would stop the timer of the tick ([Design notes](#the-render-tick-is-a-timer-a-nested-event-loop-must-never-be-entered-from-its-handler)).
@@ -240,7 +249,7 @@ flowchart BT
 
 The libraries meet in the value tree `UiValue`. A `TopicSubscription` gives a `UiValue` that `PanelSession::set_value` ships to the page. A control event of the page carries the action string and the new value, which the host maps to `TopicPublisher::publish`, `ServiceBridge::call` or `ActionBridge::send_goal`, and `PanelSession::ack` reports the outcome. The ROS example of the repository is this join.
 
-`qar_web_panels` needs one thing from qar_ogre_adapter 0.1.0: the C type `QarGuiPanelSize`, which `size_url_panel` returns through `qar_ar_core/qar_streaming_c.hpp`, the wrapper of the QarOS C header. None of the three libraries calls a QarOS function, so linking them needs neither the SDK nor its loader. QarOS opens the page through the component `url` of qar_ogre_adapter, which takes the address that `WebPanelServer::page_url` returns ([Getting started](GETTING_STARTED.md#open-the-panel-in-qaros)). The semantic templates that turn a ROS type into a model, and the RViz plugin that exposes a topic as a panel, are the part of the plugin ([Adding a semantic template](DEVELOPING.md#adding-a-semantic-template)).
+`qar_web_panels` needs one thing from qar_ogre_adapter 0.2.0: the C type `QarGuiPanelSize`, which `size_url_panel` returns through `qar_ar_core/qar_streaming_c.hpp`, the wrapper of the QarOS C header. None of the three libraries calls a QarOS function, so linking them needs neither the SDK nor its loader. QarOS opens the page through the component `url` of qar_ogre_adapter, which takes the address that `WebPanelServer::page_url` returns ([Getting started](GETTING_STARTED.md#open-the-panel-in-qaros)). The semantic templates that turn a ROS type into a model, and the RViz plugin that exposes a topic as a panel, are the part of the plugin ([Adding a semantic template](DEVELOPING.md#adding-a-semantic-template)).
 
 ## Two routes into AR
 
@@ -250,7 +259,7 @@ A QarOS GUI panel has one of two content types, and the type is fixed when the p
 |---|---|---|
 | Content type of the panel | `QAR_GUI_PANEL_CONTENT_TYPE_STREAM_ID`, created with `QarGuiPanelStreamIdExt` | `QAR_GUI_PANEL_CONTENT_TYPE_WEBSITE_URI`, created with `QarGuiPanelUrlExt` |
 | What the panel shows | a video that the host renders and sends; in this stack a Qt widget | a page that QarOS fetches and renders in its own browser |
-| Who renders it | the host, in qar_qt_streaming 0.1.0 | the browser of QarOS |
+| Who renders it | the host, in qar_qt_streaming 0.2.0 | the browser of QarOS |
 | Where the input goes | to the host, as the gestures that QarOS reports for the panel | to the browser, which handles pointing itself; the page sends every control event over the WebSocket of its own server |
 | Content budget | whatever the widget is: the host chooses the raster and the physical size | the viewport that the browser is given, which follows the size of the panel under the installed QAROS and for which the plugin plans 500 by 500 CSS pixels; what lies below it is reached by paging |
 | Suited to | mirroring an existing Qt widget | panels that are made for AR, from a model or from ROS 2 types |

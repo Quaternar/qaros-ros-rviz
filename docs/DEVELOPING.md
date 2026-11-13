@@ -7,16 +7,17 @@ This page is for a contributor who changes the code of the plugin: where things 
 | File | What it holds |
 |---|---|
 | `qar_rviz_streaming` | the ament package: `include\qar_rviz_streaming`, `src`, `test`, `config`, `plugin_description.xml`, `package.xml` and the `CMakeLists.txt` that colcon builds |
-| `CMakeLists.txt` and `CMakePresets.json` | the plain-CMake project of the root, which builds the three web libraries, the two examples, the pure units of the plugin and their tests without RViz |
-| `cmake\QarBuildSupport.cmake` | the functions that find the two upstream packages or their source checkouts, the warning flags, the download of GoogleTest and the tests of the layering guard |
+| `qar_capi_panels` | the module that drives the Qt panels of qar_qt_streaming through the QarOS session: `include\qar_capi_panels`, `src` and `test` |
+| `CMakeLists.txt` and `CMakePresets.json` | the plain-CMake project of the root, which builds `qar_capi_panels`, the three web libraries, the two examples, the pure units of the plugin and their tests without RViz |
+| `cmake\QarBuildSupport.cmake` and `cmake\QarRosBuildSupport.cmake` | the functions that find the two upstream packages or their source checkouts and the ROS 2 distribution, the warning flags, the download of GoogleTest and the tests of the layering guard |
 | `scripts` | the scripts that build, start and test the plugin, the repairs of the ROS 2 distribution, the layering guard `check_layering.py`, and the helper programs: the publishers of test data, the helpers for rosbag files and the analyser of the timing files |
 | `third_party\stb` | the vendored single-header PNG writer and its README |
 | `docs` | the documents, and `docs\snippets`, the compile-checked snippets of the documents |
 
 
-The units of the package are listed with their roles in [Components](ARCHITECTURE.md#components) and in [Module guide for contributors](API.md#module-guide-for-contributors). The repository holds the plugin and the three web libraries that it uses; the libraries of qar_ogre_adapter and qar_qt_streaming live in those repositories, and a change in one of them is made there and installed into the prefix before the plugin is built again.
+The units of the package are listed with their roles in [Components](ARCHITECTURE.md#components) and in [Module guide for contributors](API.md#module-guide-for-contributors). The repository holds the plugin, its module `qar_capi_panels` and the three web libraries that it uses; the libraries of qar_ogre_adapter and qar_qt_streaming live in those repositories, and a change in one of them is made there and installed into the prefix before the plugin is built again.
 
-The web libraries, the examples and the build files around them are laid out like this.
+The module `qar_capi_panels`, the web libraries, the examples and the build files around them are laid out like this.
 
 ```text
 qar_rviz_plugin/
@@ -35,6 +36,10 @@ qar_rviz_plugin/
     include/qar_ros_ui/      public headers; detail/ holds the two internal headers of the dynamic clients
     src/                     sources
     test/                    the test executable qar_ros_ui_tests
+  qar_capi_panels/       the QarOS C API behind the Qt panel interfaces of qar_qt_streaming; no Qt
+    include/qar_capi_panels/ public headers
+    src/                     sources
+    test/                    the test executable qar_capi_panels_tests and the fake of the QarOS function tables
   examples/              CMakeLists.txt, web_panel_example/ and ros_topic_panel_example/
   docs/                  these documents; snippets/ holds the compile-checked snippets
   scripts/               check_layering.py, the layering guard, and the scripts of the install kit
@@ -43,7 +48,7 @@ qar_rviz_plugin/
 
 ## Layering rules
 
-The layering guard `scripts\check_layering.py` reads the `#include` lines of the sources and enforces which module may include which; [The layering guard](TESTING.md#the-layering-guard) describes the rules, the tests and how to read a failure. In this repository it checks the modules `qar_ui_model`, `qar_web_panels`, `qar_ros_ui` and `qar_rviz_streaming` and the folder `examples`. In production code `qar_rviz_streaming` may include the standard library, Qt, Ogre, ROS 2, RViz, stb and the platform headers `windows.h`, `mmsystem.h`, `process.h` and `unistd.h`, and every project module; its tests may also include GoogleTest. It is the only module of the stack that may include the headers of RViz, because it is the one that RViz loads.
+The layering guard `scripts\check_layering.py` reads the `#include` lines of the sources and enforces which module may include which; [The layering guard](TESTING.md#the-layering-guard) describes the rules, the tests and how to read a failure. In this repository it checks the modules `qar_ui_model`, `qar_web_panels`, `qar_ros_ui`, `qar_capi_panels` and `qar_rviz_streaming` and the folder `examples`. In production code `qar_rviz_streaming` may include the standard library, Qt, Ogre, ROS 2, RViz, stb and the platform headers `windows.h`, `mmsystem.h`, `process.h` and `unistd.h`, and every project module; its tests may also include GoogleTest. It is the only module of the stack that may include the headers of RViz, because it is the one that RViz loads.
 
 The three libraries form a stack, and the layering guard keeps it that way. `qar_ui_model` is the base and includes the standard library only. `qar_web_panels` adds Qt and the delivery of pages, and `qar_ros_ui` adds ROS 2 and the bridges. Neither of the two upper libraries includes the other: a host that needs both, as the example `ros_topic_panel_example` does, joins them itself.
 
@@ -54,6 +59,7 @@ The guard cannot see a smaller boundary that the plugin keeps inside itself: the
 | `qar_ui_model` | the standard library and its own headers | no Qt, no ROS 2, no Ogre and no JSON library of a third party, so that the guard can enforce that it includes the standard library only |
 | `qar_web_panels` | the standard library, Qt, its own headers, those of `qar_ui_model`, and from `qar_ar_core` only the wrapper header of the QarOS C header | it is reusable by any Qt application, with no dependency on RViz, ament, `rclcpp`, Ogre or Qt Widgets |
 | `qar_ros_ui` | the standard library, ROS 2 headers, its own headers and those of `qar_ui_model` | the ROS 2 client libraries are its point, and Qt and Ogre stay out so that a web server, a command line tool or a test can use it |
+| `qar_capi_panels` | the standard library, its own headers, `qar_ar_core`, the headers of the component `capi` of qar_ogre_adapter (in its tests also `session`) and the headers of `seam` of qar_qt_streaming | it is the one library that joins the two upstream repositories, and it needs no Qt, ROS 2, Ogre or RViz, so that a program that is not RViz can use it |
 
 
 A violation is fixed in the code: move the code to the layer that may use the header, or pass the dependency in through an interface. The table is changed only when the architecture changes. It is in three dictionaries and a list at the top of `scripts\check_layering.py`: `POLICY` for the libraries, `EDGE_ONLY` for the edges that may use named headers only, `EXAMPLE_POLICY` for the folders under `examples`, and `MODULES` for the names. A new library needs an entry in `POLICY` and its name in `MODULES`, and the top-level build passes the name to the function `qar_add_layering_guard_tests`, which registers one test for it. A new example folder needs an entry in `EXAMPLE_POLICY`. The self test has to keep passing.
@@ -65,7 +71,7 @@ The plugin is C++17 and is built in the configuration `RelWithDebInfo`, which th
 Every library is a static library with the alias target `qar_rviz_plugin::<library>`, compiled as C++17 through a public compile feature and with position-independent code, and its sources are listed one by one in its CMake file; nothing is found by a glob.
 
 - **colcon builds the package, and only `scripts\build_plugin.ps1` starts it.** The repository root is not a colcon package, so the script passes the folder of the package with `--paths`, which makes it the one supported way to build the plugin. [Build and install qar_rviz_plugin](INSTALL.md#build-and-install-qar_rviz_plugin) lists its steps.
-- **The libraries come from installed packages or from checkouts.** The default is the packages in the prefix, which `-DQAR_PREFIX` names, and a developer who changes a library of those repositories passes the two `-DQAR_..._SOURCE_DIR` options to build against the checkouts; the web libraries always come from the tree of this repository ([Build options](CONFIGURATION.md#build-options)).
+- **The libraries come from installed packages or from checkouts.** The default is the packages in the prefix, which `-DQAR_PREFIX` names, and a developer who changes a library of those repositories passes the two `-DQAR_..._SOURCE_DIR` options to build against the checkouts; `qar_capi_panels` and the web libraries always come from the tree of this repository ([Build options](CONFIGURATION.md#build-options)).
 - **Moc and the headers.** Qt moc is switched on after the upstream libraries are found, so that the libraries, which have no `Q_OBJECT` types, are not scanned. The headers that declare `Q_OBJECT` types are listed among the sources of the library, so that the automatic moc processes them: a new class with `Q_OBJECT` goes into that list.
 - **Link signatures.** Every `target_link_libraries` on the target uses the plain signature, because `ament_target_dependencies` does, and mixing the keyword form into one target is an error.
 - **Warnings.** The test targets get the warning flags of the repository, `/W4` and `/permissive-` where the module sets it, from `qar_apply_warning_flags`.
@@ -96,7 +102,7 @@ These conventions apply to every C++ file of this repository. Keep them when you
 
 **Comments and documentation.** Write in English. A comment states what the code does and why it does it that way, as the code is now. It contains no dates, no milestone or ticket tags, no names of people or tools and no account of how the code came to be. Documentation comments describe the contract of a function or type: what it expects, what it returns, who owns what, and on which thread it may be called.
 
-**Logic that talks to another system.** Code that reads the environment, Qt, ROS 2 or QarOS is kept thin; the decisions it makes are put into functions that take plain values, so that they can be tested without a QarOS session, a window or a ROS 2 graph. For example, the helpers that parse environment variables take the raw text and never read the environment themselves; their callers pass it in. There is no fake of the QarOS SDK.
+**Logic that talks to another system.** Code that reads the environment, Qt, ROS 2 or QarOS is kept thin; the decisions it makes are put into functions that take plain values, so that they can be tested without a QarOS session, a window or a ROS 2 graph. For example, the helpers that parse environment variables take the raw text and never read the environment themselves; their callers pass it in. The tests that reach the QarOS C API load no QarOS library: they run on a fake of its function tables.
 
 This repository adds these rules to the shared ones.
 
