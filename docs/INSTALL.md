@@ -368,7 +368,7 @@ How a program joins the QAROS Hub is described by QuaternAR: [Onboarding and ses
 The next steps use the scripts and the `requirements.txt` of this repository, so clone it first.
 
 ```powershell
-git clone https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
+git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
 ```
 ```text
 Cloning into 'C:\qar\src\qar_rviz_plugin'...
@@ -729,7 +729,7 @@ cmake --build --preset vs2019-x64
   qar_ogre_streaming_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\test\RelWithDebInfo\qar_ogre_streaming_tests.exe
 ```
 
-Install it into the prefix. The install puts the libraries of the three modules `qar_ar_core`, `qar_ogre_streaming` and `qar_qar_adapter` and the vendored QarOS C header below `$env:QAR_PREFIX`, together with the CMake package that the other repositories of this stack find there.
+Install it into the prefix. The install puts the libraries of the three modules `qar_ar_core`, `qar_ogre_streaming` and `qar_qar_adapter` and the QarOS C header below `$env:QAR_PREFIX`, together with the CMake package that the other repositories of this stack find there.
 
 ```powershell
 cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFIX

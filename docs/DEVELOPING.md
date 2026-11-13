@@ -9,8 +9,9 @@ This page is for a contributor who changes the code of the plugin: where things 
 | `qar_rviz_streaming` | the ament package: `include\qar_rviz_streaming`, `src`, `test`, `config`, `plugin_description.xml`, `package.xml` and the `CMakeLists.txt` that colcon builds |
 | `qar_capi_panels` | the module that drives the Qt panels of qar_qt_streaming through the QarOS session: `include\qar_capi_panels`, `src` and `test` |
 | `CMakeLists.txt` and `CMakePresets.json` | the plain-CMake project of the root, which builds `qar_capi_panels`, the three web libraries, the two examples, the pure units of the plugin and their tests without RViz |
-| `cmake\QarBuildSupport.cmake` and `cmake\QarRosBuildSupport.cmake` | the functions that find the two upstream packages or their source checkouts and the ROS 2 distribution, the warning flags, the download of GoogleTest and the tests of the layering guard |
+| `cmake\QarBuildSupport.cmake` and `cmake\QarRosBuildSupport.cmake` | the functions that find the two upstream packages or their source checkouts, the ROS 2 distribution and the QarOS headers of the submodule `external\qaros`, the warning flags, the download of GoogleTest and the tests of the layering guard |
 | `scripts` | the scripts that build, start and test the plugin, the repairs of the ROS 2 distribution, the layering guard `check_layering.py`, and the helper programs: the publishers of test data, the helpers for rosbag files and the analyser of the timing files |
+| `external\qaros` | the git submodule of the public qaros repository: the QarOS C header (`qar-streaming-c\include\qar_streaming.h`) and C++ headers (`qar-streaming-cpp`) of the build; `external\COLCON_IGNORE` hides it from colcon. Fetch it with `git clone --recurse-submodules` or `git submodule update --init external/qaros`; a build-only clone may set `GIT_LFS_SKIP_SMUDGE=1` |
 | `third_party\stb` | the vendored single-header PNG writer and its README |
 | `docs` | the documents, and `docs\snippets`, the compile-checked snippets of the documents |
 

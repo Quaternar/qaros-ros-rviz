@@ -16,7 +16,9 @@
     there first; the web libraries are built from the tree of this repository. A developer can
     build the two from source checkouts instead by passing the -DQAR_OGRE_ADAPTER_SOURCE_DIR and
     -DQAR_QT_STREAMING_SOURCE_DIR options through -CMakeArgs (see cmake/QarBuildSupport.cmake);
-    that mode reads the QarOS SDK folder from the environment variable QAR_SDK_ROOT.
+    that mode reads the QarOS SDK folder from the environment variable QAR_SDK_ROOT. The QarOS C
+    and C++ headers always come from the git submodule external/qaros of this repository
+    (clone with --recurse-submodules, or run `git submodule update --init external/qaros`).
 
     colcon installs with --merge-install into the prefix, which therefore gets
         <Prefix>\bin\qar_rviz_streaming.dll

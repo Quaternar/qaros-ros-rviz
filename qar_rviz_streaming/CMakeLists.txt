@@ -13,7 +13,7 @@
 # This package MAY include rviz/Qt/ament; qar_ogre_streaming may NOT.
 
 cmake_minimum_required(VERSION 3.8)
-project(qar_rviz_streaming VERSION 0.2.0 LANGUAGES CXX)
+project(qar_rviz_streaming VERSION 0.2.0 LANGUAGES C CXX)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
@@ -53,11 +53,13 @@ find_package(ament_index_cpp REQUIRED)
 # cmake/QarBuildSupport.cmake). The web libraries qar_ui_model, qar_ros_ui and qar_web_panels
 # are part of this repository and are built from its tree, and so is qar_capi_panels, the
 # QarOS C API behind the panel interfaces of qar_qt_streaming. QAR_REPO_ROOT also locates
-# third_party/stb below.
+# third_party/stb below and the qaros submodule external/qaros, whose QarOS C and C++ headers
+# (qar-streaming-c, qar-streaming-cpp) are those of this build.
 # ---------------------------------------------------------------------------
 get_filename_component(QAR_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 include("${QAR_REPO_ROOT}/cmake/QarBuildSupport.cmake")
 include("${QAR_REPO_ROOT}/cmake/QarRosBuildSupport.cmake")
+qar_use_qaros_submodule("${QAR_REPO_ROOT}")
 
 qar_find_upstream(qar_ogre_adapter VERSION 0.2.0
   COMPONENTS qar_ar_core qar_ogre_streaming capi session render url gestures)

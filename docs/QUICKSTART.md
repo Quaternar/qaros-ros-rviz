@@ -30,7 +30,7 @@ New-Item -ItemType Directory -Force -Path $layout.QAR_ROOT, $layout.QAR_DEPS_ROO
 2. Clone this repository and go to the folder of the clone; the next steps run there until a step names another folder ([Python environment](INSTALL.md#python-environment)).
 
 ```powershell
-git clone https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
+git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
 ```
 ```text
 Cloning into 'C:\qar\src\qar_rviz_plugin'...

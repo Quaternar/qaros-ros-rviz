@@ -22,7 +22,7 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 Then clone this repository, build and install the plugin, check the launch configuration and start RViz2:
 
 ```powershell
-git clone https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
+git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
 Set-Location "$env:QAR_ROOT\src\qar_rviz_plugin"
 .\scripts\build_plugin.ps1
 .\scripts\run_live_rviz_stream_real.ps1
@@ -75,8 +75,8 @@ This repository is one of three that together stream an Ogre scene, Qt widgets, 
 
 | Repository | Version | What it provides | Depends on | Also needs |
 |---|---|---|---|---|
-| qar_ogre_adapter | 0.2.0 | The QarOS integration layer: renders an Ogre scene for each eye and streams it to QarOS; the adapter for the QarOS C API; the vendored C header | none | The ROS 2 distribution, for Ogre only |
-| qar_qt_streaming | 0.2.0 | Qt widgets as QarOS AR GUI panels, as a Qt library that needs no ROS 2, no RViz and no Ogre | none | Qt 5.15.2 or Qt 6.5 and newer, the QarOS C++ SDK headers (a copy is carried) |
+| qar_ogre_adapter | 0.2.0 | The QarOS integration layer: renders an Ogre scene for each eye and streams it to QarOS; the adapter for the QarOS C API | none | The ROS 2 distribution, for Ogre only |
+| qar_qt_streaming | 0.2.0 | Qt widgets as QarOS AR GUI panels, as a Qt library that needs no ROS 2, no RViz and no Ogre | none | Qt 5.15.2 or Qt 6.5 and newer, the QarOS C++ SDK headers |
 | **qar_rviz_plugin** (this repository) | 0.2.0 | The RViz2 plugin that streams RViz into QarOS, and web AR panels from a UI model and from the ROS 2 graph | qar_ogre_adapter, qar_qt_streaming | The ROS 2 distribution with its repairs, Qt 5.15.2, colcon |
 
 The installation document of each repository installs the repositories it depends on, with the commands for each, so you can start from any of them.
@@ -106,7 +106,7 @@ The installation document of each repository installs the repositories it depend
 
 QAROS, which consists of `qar-streaming-c.dll`, `qar_streaming.dll`, the zenoh and GStreamer stacks, the Hub and the Visualizer `qar-streaming-viz.exe`, is QuaternAR's proprietary product and is not part of this repository. You obtain its setup program from QuaternAR and install it once on the PC. The crash reports of the Visualizer carry the name of a second program of the same installation, `qar-stereokit-gui.exe`.
 
-No part of QAROS is copied into this repository. The C header of the QarOS C API is vendored by the repository qar_ogre_adapter and installed with its libraries.
+No part of QAROS is copied into this repository. The headers of the QarOS API, the C header `qar_streaming.h` (`qar-streaming-c`) and the C++ headers `qar_streaming_cpp/` (`qar-streaming-cpp`), come from the public repository [qaros](https://github.com/Quaternar/qaros), which this repository holds as the git submodule `external/qaros`, so that the C and the C++ headers are always those of one qaros commit. Clone with `--recurse-submodules`, or run `git submodule update --init external/qaros` in an existing clone. A clone that only builds may skip the Git LFS files of qaros (images of its documentation) with `$env:GIT_LFS_SKIP_SMUDGE = '1'` before the clone or the submodule update. The installed qar_ogre_adapter carries a copy of the same headers, and configuring stops when that copy differs from the submodule ([Configuration](docs/CONFIGURATION.md#build-options)).
 
 You do not need QAROS to build this repository or to run its tests. Nothing links against QAROS: a program loads the installed library `qar-streaming-c.dll` at run time, and configuring this repository does not look at QAROS. You need QAROS to connect to it.
 
@@ -124,5 +124,6 @@ This repository is licensed under the MIT license; the text is in [LICENSE](LICE
 
 Third-party material in this repository:
 
+- `external/qaros` is the git submodule of the public qaros repository, the source of the QarOS C and C++ headers; `external/COLCON_IGNORE` keeps colcon from taking it for a package.
 - `third_party/stb` holds the single-header PNG writer `stb_image_write.h`; its README names the origin.
 - GoogleTest is downloaded when you configure, only for the tests; it is not part of this repository and is not installed with it.

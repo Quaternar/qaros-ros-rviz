@@ -159,7 +159,7 @@ No test of this repository loads the QarOS library: the tests of `qar_capi_panel
 
 | Test helper | What it stands in for |
 |---|---|
-| the fake of `fake_qar_api.cpp` | the QarOS library: it fills the function tables that the vendored header resolves every call through, with functions of its own whose outcomes the test scripts, so that the session owner and the adapters of `qar_capi_panels` run without the library |
+| the fake of `fake_qar_api.cpp` | the QarOS library: it fills the function tables that the QarOS C header resolves every call through, with functions of its own whose outcomes the test scripts, so that the session owner and the adapters of `qar_capi_panels` run without the library |
 | `FakeRecordingFactory`, `FakePanelFactory` and the other classes of `rtti_guard_test_types.hpp` | the factories of RViz that the guard in front of the hidden Displays panel meets: a root that is not a template, a class template derived from it, and concrete factories that the test code cannot name and receives only as an opaque pointer, the way `PanelFactory` is defined only in the library of RViz |
 | the message descriptions of `ar_semantic_templates_tests.cpp` | the description of a ROS 2 interface that `qar_ros_ui` reads from the introspection library of the distribution; they are written by hand to match the real interface definitions field by field, and `qar_rviz_streaming_ros_tests` checks every template again against the descriptions of the installed distribution |
 | the publisher of `ros_image_frame_source_timing_tests.cpp` | the camera node of a robot: a publisher of the host context of the test, while the source under test receives in a context of its own |
@@ -215,7 +215,7 @@ CTest registers one guard test per module that this repository holds, named `che
 |---|---|
 | L1, include classes | A module includes only the foreign header families listed for it: the standard library, Qt, Ogre, ROS 2, RViz, platform headers, GoogleTest, stb. |
 | L2, project edges | A module includes only the project modules listed for it, and some edges only through named headers: no upward and no sideways edge. Every example folder has its own entry. |
-| L3, vendored header | Only the wrapper header of the core includes the vendored QarOS C header. |
+| L3, QarOS C header | Only the wrapper header of the core includes the QarOS C header (`qar_streaming.h` of the qaros submodule). |
 | L4, core calls no API | The core calls no QarOS C function; it uses the types of the C API only, so it never needs the SDK DLL. |
 | L5, adapter components | Every file of the adapter belongs to one component and includes only headers of its own component and of the components it may use. |
 | L6, loader | The dynamic-loading implementation macro of the C header appears exactly once, in the loader file of the adapter, and nothing defines the dynamic-loading switch except CMake. |

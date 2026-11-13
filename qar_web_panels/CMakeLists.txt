@@ -40,7 +40,7 @@ target_include_directories(qar_web_panels PUBLIC
 
 # qar_ui_model is PUBLIC: the session API takes UiModel / UiValue / PatchEntry.
 # qar_ar_core is PUBLIC: url_panel_sizing.hpp returns the QarOS C type
-# QarGuiPanelSize (through qar_ar_core's wrapper of the vendored header).
+# QarGuiPanelSize (through qar_ar_core's wrapper of the QarOS C header of the qaros submodule).
 # Qt is PUBLIC because the public headers derive from QObject.
 target_link_libraries(qar_web_panels PUBLIC
   qar_rviz_plugin::qar_ui_model
