@@ -13,7 +13,7 @@
 # This package MAY include rviz/Qt/ament; qar_ogre_streaming may NOT.
 
 cmake_minimum_required(VERSION 3.8)
-project(qar_rviz_streaming VERSION 0.2.0 LANGUAGES C CXX)
+project(qar_rviz_streaming VERSION 0.2.0 LANGUAGES CXX)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)

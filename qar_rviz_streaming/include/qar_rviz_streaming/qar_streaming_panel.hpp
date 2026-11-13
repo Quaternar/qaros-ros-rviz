@@ -850,12 +850,6 @@ private:
   /// @brief The configuration of the owner: the settings in force and the environment. Logs how
   /// the QAROS library logging was decided; call it when the owner is made.
   qar_qar_adapter::SessionOwnerConfig makeSessionOwnerConfig();
-  /// @brief The Hub mode, host and port of the settings in force.
-  void currentHubSettings(
-    qar_qar_adapter::HubMode & mode, qar_qar_adapter::HubEndpoint & endpoint) const;
-  /// @brief The text of the Hub settings in force, to tell when the owner has to be given new
-  /// ones.
-  std::string hubSettingsSignature() const;
   /// @brief The panel is connected to QarOS but streaming is paused: the session, the render
   /// factory and everything built on them stay, and "Connect to QarOS" resumes.
   bool streamingPaused() const;
@@ -880,7 +874,7 @@ private:
   /// submit mode, read from the environment.
   qar_qar_adapter::QarCApiSenderFactory::Config makeFactoryConfig();
   /// @brief Asks the Hub to start the apps of QAR_PANEL_INVITE_PEERS ("hololens:<host>,
-  /// headset:<host>"). This-PC mode only; each invite is asynchronous. Once per session: a resume
+  /// headset:<host>"). Each invite is asynchronous. Once per session: a resume
   /// logs one line and sends nothing.
   void inviteFromEnvironment();
   /// @brief Releases everything built on the QAROS session in the order of the teardown: the 3D
@@ -898,14 +892,8 @@ private:
   ConnectionInput connectionInput() const;
   /// @brief Rewrites the target list from the owner's table.
   void refreshTargetList();
-  /// @brief The identity file of this program, read again.
-  void refreshIdentity();
   /// @brief Appends a line to the diagnostics view only (the line is already on stderr).
   void appendToView(const QString & line) const;
-  /// @brief "Pair" or Enter in the code field.
-  void onPairRequested(const QString & code, const QString & host, int port);
-  /// @brief The confirmed "Forget pairing".
-  void onForgetConfirmed();
   /// @brief "Cancel" while the join is in progress.
   void onCancelConnect();
   /// @brief The QarOS common name of the panel with @p key: a stable name made of the key, the
@@ -1027,7 +1015,7 @@ private:
   /// "Start test markers" / "Stop test markers" (Diagnostics tab). Follows test_markers_process_
   /// and the two QAR_PANEL_TEST_MARKERS_* variables; it is not saved in the configuration.
   QPushButton * test_markers_button_ = nullptr;
-  /// The "QAROS Hub" group of the Connection tab: the Hub to join, the pairing, the targets.
+  /// The "QAROS Hub" group of the Connection tab: the join to the Hub of this PC and the targets.
   HubConnectionWidget * hub_widget_ = nullptr;
   /// The groups that one mode shows: "Invite a device" (every mode; only its button follows the
   /// session), "Advanced" (Settings, shown by "Show advanced options") and "Simulated peers"
@@ -1248,7 +1236,7 @@ private:
   // The owner of the QAROS session (Hub join, target list). Declared BEFORE qar_factory_ and the
   // panel factories, so it is destroyed after the factory, the panel managers and the senders:
   // all of them borrow its session, and none may outlive the hand-back. Null until the first
-  // connect (or forget) in QAR_PANEL_LIVE_STREAM mode.
+  // connect in QAR_PANEL_LIVE_STREAM mode.
   std::shared_ptr<qar_qar_adapter::QarSessionOwner> session_owner_;
   // Sender factory backed by the real QAR C API. Non-null only in
   // QAR_PANEL_LIVE_STREAM mode, between the owner's kRunning and the release of the session;
@@ -1264,14 +1252,12 @@ private:
   bool attach_pending_ = false;
 
   // --- The join to the QAROS Hub --------------------------------------------
-  // The session owner does the joining on a thread of its own (library load, runtime, approval
-  // or pairing); the render tick drains its events (pollSessionOwner()), so no call that waits
+  // The session owner does the joining on a thread of its own (library load, runtime, approval);
+  // the render tick drains its events (pollSessionOwner()), so no call that waits
   // for QAROS runs on the GUI thread. These are the GUI thread's copies of what it reported.
   ConnectionPhase connection_phase_ = ConnectionPhase::Idle;
   /// The plain-words cause of the last failure or refusal.
   std::string owner_failure_message_;
-  /// The Hub settings that the owner holds, to tell when it has to be given new ones.
-  std::string owner_hub_signature_;
   /// When the wait for approval began, and how long it lasts at most (seconds), for the countdown.
   std::chrono::steady_clock::time_point approval_started_{};
   /// When the countdown on screen was last refreshed.
@@ -1283,16 +1269,6 @@ private:
   /// resume after a pause connects again and must not invite the devices a second time. Reset when
   /// the session is released.
   bool environment_invites_done_ = false;
-  /// A release of the session that a click asked for. It runs at the next render tick, outside
-  /// the click: the click may be an AR click delivered by the panel manager that the release
-  /// destroys.
-  enum class PendingSessionAction { None, Forget };
-  PendingSessionAction pending_session_action_ = PendingSessionAction::None;
-  /// The identity file of this program (a pairing with another PC's Hub), as last read.
-  bool identity_present_ = false;
-  std::string identity_host_;
-  int identity_port_ = 0;
-  std::string identity_short_id_;
   /// The lines that the owner's log sink queued from the owner thread (it must not touch Qt).
   struct OwnerLogQueue
   {

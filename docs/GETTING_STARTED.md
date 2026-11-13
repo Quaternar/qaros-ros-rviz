@@ -28,7 +28,7 @@ Two programs open windows: RViz, which the launcher starts, and the QAROS Visual
 |---|---|---|---|
 | `qar_web_panel_example --help` | prints the options and exits | the Qt folder on `PATH` | no |
 | `qar_web_panel_example --serve-seconds 60` | serves the counter panel for 60 seconds and prints the address of its page; `--loopback` keeps the server on this machine | the Qt folder on `PATH` | no |
-| `qar_web_panel_example` | joins the QAROS Hub of this PC and also opens the page as a URL panel in QAROS, and serves for 60 seconds unless `--serve-seconds` says otherwise; `--hub HOST:PORT --code CODE` joins the Hub of another PC, `--no-qaros` serves the page only | the installed QAROS | a prompt of QAROS; the page opens in a Visualizer that you opened |
+| `qar_web_panel_example` | joins the QAROS Hub of this PC and also opens the page as a URL panel in QAROS, and serves for 60 seconds unless `--serve-seconds` says otherwise; `--no-qaros` serves the page only | the installed QAROS | a prompt of QAROS; the page opens in a Visualizer that you opened |
 | `qar_ros_topic_panel_example` with the same options | runs a ROS 2 node, shows the newest message of `/qar_example/text` in the panel and publishes on `/qar_example/pressed` from the button | a shell prepared with `env_setup.ps1`; the installed QAROS for the panel in QAROS | as above |
 
 
@@ -74,34 +74,26 @@ $ros = '.\build\vs2019-x64\examples\ros_topic_panel_example\RelWithDebInfo\qar_r
 ```
 
 ```text
-Usage: qar_web_panel_example [--local | --hub HOST:PORT [--code CODE] | --forget | --no-qaros]
+Usage: qar_web_panel_example [--local | --no-qaros]
                              [--connect-only] [--serve-seconds N] [--loopback] [--port N]
   --local            join the QAROS Hub of this PC (the default). QAROS asks once to allow
                      this program, and again after each rebuild of it: click Allow in the
                      QAROS window
-  --hub H:P          join the Hub of another PC at host H and onboarding port P (the port is
-                     shown with the pairing code in the Visualizer of that PC)
-  --code CODE        the pairing code that the Hub of that PC shows for a new device
-                     (see the QAROS documentation); it works once. Only the first join
-                     needs it: the pairing is stored for the next start
-  --forget           erase the stored pairing with another PC's Hub and exit
+                     The Hub of another PC is reached by making the Hub of this PC a
+                     member of it
   --no-qaros         do not join QAROS: only serve the page, for a desktop browser
   --connect-only     join QAROS, print the runtime, the mode, this program's peer and the
                      targets, and exit; no server, no panel
   --serve-seconds N  serve the panel for N seconds, then exit (default 60)
   --loopback         listen on 127.0.0.1 only, so that no other machine can connect (default: all interfaces)
   --port N           TCP port of the panel server (default 0: the operating system picks a free port)
-Usage: qar_ros_topic_panel_example [--local | --hub HOST:PORT [--code CODE] | --forget | --no-qaros]
+Usage: qar_ros_topic_panel_example [--local | --no-qaros]
                                    [--connect-only] [--serve-seconds N] [--loopback]
   --local            join the QAROS Hub of this PC (the default). QAROS asks once to allow
                      this program, and again after each rebuild of it: click Allow in the
                      QAROS window
-  --hub H:P          join the Hub of another PC at host H and onboarding port P (the port is
-                     shown with the pairing code in the Visualizer of that PC)
-  --code CODE        the pairing code that the Hub of that PC shows for a new device
-                     (see the QAROS documentation); it works once. Only the first join
-                     needs it: the pairing is stored for the next start
-  --forget           erase the stored pairing with another PC's Hub and exit
+                     The Hub of another PC is reached by making the Hub of this PC a
+                     member of it
   --no-qaros         do not join QAROS: only serve the page, for a desktop browser
   --connect-only     join QAROS, print the runtime, the mode, this program's peer and the
                      targets, and exit; no node, no server, no panel
@@ -192,8 +184,7 @@ The launcher has two modes. Without `-Confirm` it only prints the configuration 
   QAR_PANEL_LIVE_STREAM    = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
-  QAR_PANEL_HUB_MODE       = (not set: the panel setting "Hub" of the QAROS Hub group decides, Automatic by default)
-  QAR_PANEL_HUB_HOST / _PORT = (not set) / (not set)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = (none - pass -InvitePeers to invite devices)
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
   QAR_PANEL_VOLUME_Y       = -1.6 (launcher default)
@@ -220,8 +211,7 @@ The launcher has two modes. Without `-Confirm` it only prints the configuration 
   qar-streaming-viz        : running (pid 46064, since 11:52:59)
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
-  Hub mode (resolved)      : local (auto: QAROS is installed on this PC; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)
-  identity file            : not present (C:\Users\<user>\AppData\Local\Quaternar\QarOS-ROS\rviz2-plugin\identity.txt): no pairing with the Hub of another PC is stored
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
@@ -248,7 +238,7 @@ The script takes the locations from its parameters `-SdkRoot`, `-Prefix`, `-QtRo
 | `QAR_PANEL_LIVE_STREAM` | `1`: the panel is live-capable, which relabels its buttons, and it connects only when you press a button |
 | `FASTRTPS_DEFAULT_PROFILES_FILE` | the profile `scripts\fastdds_large_data.xml` that enlarges the shared-memory segment of Fast-DDS for large messages, unless the variable is already set in your shell, which then wins, or you pass `-NoDdsProfile` |
 | `QAR_SCENE_LIGHT` | `both`: the scene is lit by a world-fixed rig and by a light at the head of each target, and the headlight of RViz is suppressed while the plugin streams |
-| `QAR_PANEL_HUB_MODE`, `QAR_PANEL_HUB_HOST`, `QAR_PANEL_HUB_PORT` | the Hub that the panel joins, from `-HubMode`, `-HubHost` and `-HubPort`; without them the panel setting decides, `auto` by default |
+| `QAR_PANEL_HUB_MODE` | from `-HubMode`; every value joins the Hub of this PC |
 | `QAR_PANEL_INVITE_PEERS` | the devices that the plugin invites when it has joined the Hub of this PC, from `-InvitePeers` |
 | `QAR_PANEL_FIXED_POSES`, `QAR_PANEL_VOLUME_Y` | where the panels hang and at which height the centre of the app volume is, each with its source: the defaults of the launcher, `ground` and `-1.6`, or `environment` when your shell already held a value |
 | **test markers**, `QAR_PANEL_TEST_MARKERS_PYTHON`, `QAR_PANEL_TEST_MARKERS_SCRIPT` | whether the publisher of the test markers starts with RViz, which `-TestMarkers` asks for, and the python and the script that the button of the panel runs; the lines say `"(not exported)"` when python or the script is missing |
@@ -295,7 +285,7 @@ Everything the panel logs goes to its `Diagnostics` view and, with a time of day
 
 QAROS has to run on this PC. Open it from the Start menu, which starts the Hub, and open a Visualizer window from it; the Visualizer is the target that receives the scene. A fresh Visualizer has no receiver: click `Add receiver` in it once, after which the Hub lists the Visualizer as a target. The onboarding and the Visualizer are described by the vendor: [Onboarding and sessions](https://docs.quaternar.com/docs/next/developer-guide/onboarding-and-sessions/), [Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/) and [Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/).
 
-In RViz open the tab `Connection` of the panel `"Qar Streaming"`. The group `"QAROS Hub"` offers `Automatic`, `"This PC (approve once in the QAROS Hub)"` and `"Another PC (pairing code)"`; keep `Automatic`, which takes the Hub of this PC when QAROS is installed here and no pairing with another PC is stored. Press `"Connect to QarOS"`. RViz stays responsive: the session owner of the plugin loads the installed library of QAROS and joins the Hub on a thread of its own, and the render tick collects what it reports. The State line, which the first line of the status strip repeats, goes through these states: `"QarOS: loading the QAROS runtime ..."`, then `"QarOS: waiting for approval in the QAROS Hub - click Allow in the QAROS window"` with the time that is left. The first time, QAROS asks in a window of its own whether `rviz2` may join: click Allow. QAROS asks again after `rviz2.exe` was updated in place, and a moved or copied `rviz2.exe` is refused until the old approval is revoked in the Visualizer ([Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/)). `Cancel` stops the wait, and the wait ends by itself after 120 seconds unless `QAR_PANEL_APPROVAL_TIMEOUT_S` says otherwise. After Allow the State line reads `QarOS: joined (local app) - setting up the session ...` while the plugin makes the app volume of the scene, and then `QarOS: connected (local app) - 1 target(s), 1 served`. If the join fails, the State line and the label `"Last error: <none>"` say why in a plain sentence, for example that QAROS denied the app or that nobody answered the prompt in time, and `"Connect to QarOS"` tries again. Denying, not answering and the other failures of the join are described from the code and have not been run in a live session.
+In RViz open the tab `Connection` of the panel `"Qar Streaming"`. The plugin joins the Hub of this PC as a local app; to reach the Hub of another PC, make the Hub of this PC a member of it. Press `"Connect to QarOS"`. RViz stays responsive: the session owner of the plugin loads the installed library of QAROS and joins the Hub on a thread of its own, and the render tick collects what it reports. The State line, which the first line of the status strip repeats, goes through these states: `"QarOS: loading the QAROS runtime ..."`, then `"QarOS: waiting for approval in the QAROS Hub - click Allow in the QAROS window"` with the time that is left. The first time, QAROS asks in a window of its own whether `rviz2` may join: click Allow. QAROS asks again after `rviz2.exe` was updated in place, and a moved or copied `rviz2.exe` is refused until the old approval is revoked in the Visualizer ([Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/)). `Cancel` stops the wait, and the wait ends by itself after 120 seconds unless `QAR_PANEL_APPROVAL_TIMEOUT_S` says otherwise. After Allow the State line reads `QarOS: joined (local app) - setting up the session ...` while the plugin makes the app volume of the scene, and then `QarOS: connected (local app) - 1 target(s), 1 served`. If the join fails, the State line and the label `"Last error: <none>"` say why in a plain sentence, for example that QAROS denied the app or that nobody answered the prompt in time, and `"Connect to QarOS"` tries again. Denying, not answering and the other failures of the join are described from the code and have not been run in a live session.
 
 If RViz ends as soon as you press the button, read the end of `rviz_live_<stamp>.err.log`: a line about a `SEH FAULT` in `qar_library_init` that names the `MSVCP140.dll` of the distribution means that the C++ runtime next to `rviz2.exe` is too old, and [The QarOS library crashes while it starts](TROUBLESHOOTING.md#the-qaros-library-crashes-while-it-starts) gives the repair.
 
@@ -327,7 +317,7 @@ Select-String -Path $log.FullName -Pattern 'Connecting to QarOS|Connected to Qar
 QAR-PENDING-OUTPUT RP-GS-05
 ```
 
-`"Disconnect (pause)"` does not disconnect. It pauses the streaming and keeps the session open, and the log shows the line `"QarOS: streaming paused (session kept open)."` Pressing `"Connect to QarOS"` again resumes the streaming on the open session: the log shows the line `"QarOS: streaming resumed."` and no new join happens. The session ends when `Forget pairing` is confirmed, when the session ends on its own, and when RViz closes; [Connecting and pausing](OPERATOR_GUIDE.md#connecting-and-pausing) and [Connect, invite and session lines](LOG_REFERENCE.md#connect-invite-and-session-lines) describe the states and the lines.
+`"Disconnect (pause)"` does not disconnect. It pauses the streaming and keeps the session open, and the log shows the line `"QarOS: streaming paused (session kept open)."` Pressing `"Connect to QarOS"` again resumes the streaming on the open session: the log shows the line `"QarOS: streaming resumed."` and no new join happens. The session ends when it ends on its own and when RViz closes; [Connecting and pausing](OPERATOR_GUIDE.md#connecting-and-pausing) and [Connect, invite and session lines](LOG_REFERENCE.md#connect-invite-and-session-lines) describe the states and the lines.
 
 ## See the scene in the Visualizer
 
@@ -548,13 +538,13 @@ When the session ends, the AR panels that are hidden stay in the Hub under their
 
 The authors of qar_rviz_plugin state that an earlier build of the plugin streamed to a HoloLens 2 with a QAROS runtime earlier than 0.9.0-dev.3008+65dc9aeb; no record of that run exists. The steps of this section were not run against a device while this documentation was written, because no device was available, so the output of a device is given as lines quoted from the code and not as recorded output.
 
-A HoloLens joins the Hub as a target, like the Visualizer. There are two ways to put it there. In QAROS, add the device in the Visualizer of the Hub, on its Connection panel under Devices, as the [Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/) of the vendor describes. Or ask the Hub of this PC to start the app of the device from the plugin: choose `"HoloLens 2"` in the drop-down of the group `"Invite a device"`, type the host name or address of the device in the field next to it, and press `"Invite peer"`. The button is grey unless the panel is joined to the Hub of this PC and streaming, because a Hub of another PC refuses invitations. Without a host name the panel refuses, and its message has this form:
+A HoloLens joins the Hub as a target, like the Visualizer. There are two ways to put it there. In QAROS, add the device in the Visualizer of the Hub, on its Connection panel under Devices, as the [Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/) of the vendor describes. Or ask the Hub of this PC to start the app of the device from the plugin: choose `"HoloLens 2"` in the drop-down of the group `"Invite a device"`, type the host name or address of the device in the field next to it, and press `"Invite peer"`. The button is grey unless the panel is joined to the Hub of this PC and streaming. Without a host name the panel refuses, and its message has this form:
 
 ```text
 Invite peer: type the host name or address of the device in the field next to the
 ```
 
-You can also invite devices when the plugin has joined the Hub, with the launcher parameter `-InvitePeers`: entries of the form `kind:hostname`, separated by commas, where the kinds are `hololens` and `headset` and both need a host name. The plugin handles the list once for a session and ignores it for the Hub of another PC. A device that fails to invite is logged and skipped, and never ends the session. The dry run shows the entry in the line `QAR_PANEL_INVITE_PEERS`; replace the host name of the example with the one of your device:
+You can also invite devices when the plugin has joined the Hub, with the launcher parameter `-InvitePeers`: entries of the form `kind:hostname`, separated by commas, where the kinds are `hololens` and `headset` and both need a host name. The plugin handles the list once for a session. A device that fails to invite is logged and skipped, and never ends the session. The dry run shows the entry in the line `QAR_PANEL_INVITE_PEERS`; replace the host name of the example with the one of your device:
 
 ```powershell
 .\scripts\run_live_rviz_stream_real.ps1 -InvitePeers hololens:HOLOLENS-A2B3
@@ -567,8 +557,7 @@ You can also invite devices when the plugin has joined the Hub, with the launche
   QAR_PANEL_LIVE_STREAM    = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
-  QAR_PANEL_HUB_MODE       = (not set: the panel setting "Hub" of the QAROS Hub group decides, Automatic by default)
-  QAR_PANEL_HUB_HOST / _PORT = (not set) / (not set)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = hololens:HOLOLENS-A2B3
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
   QAR_PANEL_VOLUME_Y       = -1.6 (launcher default)
@@ -595,8 +584,7 @@ You can also invite devices when the plugin has joined the Hub, with the launche
   qar-streaming-viz        : running (pid 46064, since 11:52:59)
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
-  Hub mode (resolved)      : local (auto: QAROS is installed on this PC; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)
-  identity file            : not present (C:\Users\<user>\AppData\Local\Quaternar\QarOS-ROS\rviz2-plugin\identity.txt): no pairing with the Hub of another PC is stored
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
@@ -765,7 +753,7 @@ You can also open the address in a desktop browser on the same machine while the
 
 ## Open the panel in QarOS
 
-The same program opens the page in QAROS when it joins the QAROS Hub. By default it joins the Hub of this PC: QAROS asks once to allow the program, and again after each rebuild of it, so click Allow in the QAROS window. `--hub HOST:PORT --code CODE` joins the Hub of another PC at its onboarding port, which that PC shows next to the code; the code works once, and only the first join needs it, because the pairing is stored for the next start. `--forget` erases the stored pairing and exits, `--no-qaros` serves the page without QAROS, and `--connect-only` joins, prints the runtime, the mode, the peer of the program and the targets, and exits without a server or a panel. When the example ends, it hides its panel and lets go of it instead of closing it, so that the next start finds the panel by name. The example joins first, through a session owner, before it starts the server, and only a target that the Hub lists receives the panel; it needs no invitation. The example sets the log severity of the QAROS library to `warn` and turns off the copy of the library log to the console; the file log stays on.
+The same program opens the page in QAROS when it joins the QAROS Hub. By default it joins the Hub of this PC: QAROS asks once to allow the program, and again after each rebuild of it, so click Allow in the QAROS window. The Hub of another PC is reached by making the Hub of this PC a member of it. `--no-qaros` serves the page without QAROS, and `--connect-only` joins, prints the runtime, the mode, the peer of the program and the targets, and exits without a server or a panel. When the example ends, it hides its panel and lets go of it instead of closing it, so that the next start finds the panel by name. The example joins first, through a session owner, before it starts the server, and only a target that the Hub lists receives the panel; it needs no invitation. The example sets the log severity of the QAROS library to `warn` and turns off the copy of the library log to the console; the file log stays on.
 
 ```cpp
 std::shared_ptr<qqa::QarSessionOwner> owner;  // stays empty with --no-qaros: no QAROS is needed
@@ -773,48 +761,16 @@ if (!no_qaros) {
   qqa::SessionOwnerConfig owner_config;
   owner_config.program_tag = kProgramTag;
   owner_config.display_name = std::string("Web panel example on ") + host;
-  owner_config.mode =
-    (!hub_text.empty() || forget) ? qqa::HubMode::kRemote : qqa::HubMode::kLocal;
-  owner_config.remote = hub;
   owner_config.log_severity = QAR_LOG_SEVERITY_WARN;
   owner_config.enable_console_logging = false;
   owner = std::make_shared<qqa::QarSessionOwner>(owner_config);  // starts its own thread
-  if (forget) {
-    owner->forget();
-    for (int i = 0; i < 750; ++i) {  // 15 s
-      std::vector<qqa::SessionEvent> events;
-      owner->poll(events);
-      for (const qqa::SessionEvent & event : events) {
-        if (event.kind == qqa::SessionEvent::Kind::kForgetDone) {
-          std::printf("example: %s\n", event.status.message.c_str());
-          return 0;
-        }
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    std::printf("example: no answer from QAROS to --forget\n");
-    return 1;
-  }
-  if (owner_config.mode == qqa::HubMode::kLocal) {
-    std::printf("example: joining the QAROS Hub of this PC; click Allow if QAROS asks\n");
-  } else {
-    std::printf("example: joining the QAROS Hub at %s:%u\n", hub.host.c_str(),
-      static_cast<unsigned>(hub.port));
-  }
+  std::printf("example: joining the QAROS Hub of this PC; click Allow if QAROS asks\n");
   owner->connect();
   std::vector<qqa::SessionEvent> seen;
   // The approval prompt waits 120 s by default; the wait here is a little longer.
-  qqa::SessionState state = qqa::wait_for_session(*owner, std::chrono::seconds(150), &seen);
-  if (state == qqa::SessionState::kNeedsCode && !code.empty()) {
-    owner->submit_code(code, hub);
-    code.assign(code.size(), '\0');  // the code works once; do not keep it around
-    state = qqa::wait_for_session(*owner, std::chrono::seconds(60), &seen);
-  }
+  const qqa::SessionState state =
+    qqa::wait_for_session(*owner, std::chrono::seconds(150), &seen);
   print_events(seen);
-  if (state == qqa::SessionState::kNeedsCode) {
-    std::printf("example: not paired with that Hub; run with --hub HOST:PORT --code CODE\n");
-    return 1;
-  }
   if (state != qqa::SessionState::kRunning) {
     std::printf("example: QAROS connect failed (state %d)\n", static_cast<int>(state));
     return 1;
@@ -828,8 +784,7 @@ if (!no_qaros) {
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     std::printf("example: runtime: %s\n", owner->runtime_description().c_str());
-    const bool is_local = owner->effective_mode() == qqa::HubMode::kLocal;
-    std::printf("example: mode: %s\n", is_local ? "local" : "remote");
+    std::printf("example: mode: local\n");
     std::printf("example: this program is peer %s\n", peer_text(owner->self_peer()).c_str());
     const std::vector<qqa::TargetInfo> targets = owner->targets();
     std::printf("example: %u target(s)\n", static_cast<unsigned>(targets.size()));

@@ -14,7 +14,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(qar_rviz_plugin VERSION 0.2.0
   DESCRIPTION "Web AR panel libraries, their examples and the unit tests of the RViz2 plugin; the plugin is the ament package qar_rviz_streaming, built by scripts/build_plugin.ps1"
-  LANGUAGES C CXX)
+  LANGUAGES CXX)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/QarBuildSupport.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/QarRosBuildSupport.cmake")
@@ -30,8 +30,7 @@ qar_use_qt5(COMPONENTS Core Gui Widgets Network WebSockets)
 
 # The QarOS C header (qar-streaming-c) and C++ headers (qar-streaming-cpp) come from the public qaros
 # repository, the git submodule external/qaros: one qaros commit for both, and for the upstream
-# packages (see cmake/QarRosBuildSupport.cmake). Its target qar-streaming-c-headers requires the C
-# feature c_std_11, which is why the project enables C as well as C++.
+# packages (see cmake/QarRosBuildSupport.cmake).
 qar_use_qaros_submodule("${CMAKE_CURRENT_SOURCE_DIR}")
 
 set(_qar_upstream_components qar_ar_core capi session)

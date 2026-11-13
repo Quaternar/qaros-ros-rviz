@@ -359,7 +359,7 @@ The runtime initialisation leaves the field `runtime_binaries_folder_path` empty
 
 Nothing in this stack links against QAROS. Configuring this repository does not read `QAR_SDK_ROOT`: only the configure step of `qar_ogre_adapter` checks that the DLL exists below the folder that the variable names, and it prints a warning and continues when the variable is not set or the DLL is missing. A build and the whole test suite therefore work without QAROS; only the programs that connect to QAROS need the installation at run time.
 
-How a program joins the QAROS Hub is described by QuaternAR: [Onboarding and sessions](https://docs.quaternar.com/docs/next/developer-guide/onboarding-and-sessions/) and [Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/). A program that runs on the PC of the Hub joins as a local source app, and the Hub asks its operator once to allow it; a Hub on another PC needs a pairing code.
+How a program joins the QAROS Hub is described by QuaternAR: [Onboarding and sessions](https://docs.quaternar.com/docs/next/developer-guide/onboarding-and-sessions/) and [Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/). A program that runs on the PC of the Hub joins as a local source app, and the Hub asks its operator once to allow it. This plugin joins only that way: to reach the Hub of another PC, make the Hub of this PC a member of it.
 
 ## Python environment
 

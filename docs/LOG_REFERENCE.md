@@ -115,7 +115,7 @@ The brightness field is where the log tells two faults apart: a panel that shows
 
 ## Status lines
 
-The labels of the panel say the same things as the lines, and some of them are logged. In a QarOS session the first line of the strip is the State line of the group `"QAROS Hub"`: `"QarOS: not connected"`, `"QarOS: loading the QAROS runtime ..."`, `"QarOS: waiting for approval in the QAROS Hub - click Allow in the QAROS window"`, `"QarOS: rejoining"`, `"QarOS: pairing"`, `"QarOS: joined"`, `"QarOS: connected"`, `"QarOS: Hub not reachable - waiting for it to come back"`, `"QarOS: disconnecting ..."`, and `"QarOS: "` with the sentence of the failure when a join failed. [Connecting and pausing](OPERATOR_GUIDE.md#connecting-and-pausing) explains each state; the log does not repeat these texts, it has the lines of the owner instead. In the offline preview the label of the connection has the states `Qar runtime: STOPPED` and `Qar runtime: RUNNING (offline preview)`. A failed action sets `"Last error:"`, which turns red, and logs the same text after `ERROR:`; a later success clears it. Both labels are one line each in the strip at the top of the panel: a text that is longer than the strip is shortened to its width, and the whole text is the tool tip. The readout of the AR panels has this form:
+The labels of the panel say the same things as the lines, and some of them are logged. In a QarOS session the first line of the strip is the State line of the group `"QAROS Hub"`: `"QarOS: not connected"`, `"QarOS: loading the QAROS runtime ..."`, `"QarOS: waiting for approval in the QAROS Hub - click Allow in the QAROS window"`, `"QarOS: joined"`, `"QarOS: connected"`, `"QarOS: Hub not reachable - waiting for it to come back"`, `"QarOS: disconnecting ..."`, and `"QarOS: "` with the sentence of the failure when a join failed. [Connecting and pausing](OPERATOR_GUIDE.md#connecting-and-pausing) explains each state; the log does not repeat these texts, it has the lines of the owner instead. In the offline preview the label of the connection has the states `Qar runtime: STOPPED` and `Qar runtime: RUNNING (offline preview)`. A failed action sets `"Last error:"`, which turns red, and logs the same text after `ERROR:`; a later success clears it. Both labels are one line each in the strip at the top of the panel: a text that is longer than the strip is shortened to its width, and the whole text is the tool tip. The readout of the AR panels has this form:
 
 ```text
 AR panels: none
@@ -232,7 +232,7 @@ A connection writes lines of three kinds. The panel writes its own lines, which 
 
 ```text
 LIVE: QarOS library logging: severity=%1 (from %2), console duplicate to stdout=%3%4
-QAROS: session owner made (program %1, Hub mode setting '%2')
+QAROS: session owner made (program %1, local app of the Hub of this PC)
 Connecting to QarOS (the QAROS runtime is loaded and the Hub joined on a thread of its own; RViz stays responsive)...
 QarOS: the Hub session is open; making the render factory.
 LIVE: near/far = %1 / %2 m, depth_scale = %3
@@ -245,7 +245,7 @@ AR VISIBILITY: hide (panels are hidden and parked in AR, never closed while the 
 AR VISIBILITY: close (panels are closed and made again)
 ```
 
-The first two lines are written once, when the owner is made at the first press of `"Connect to QarOS"`; a later press finds the owner and writes `QAROS: the Hub settings changed; the session owner applies them at the next connect.` when a Hub setting differs from the one it holds. The line that names the logging reports the severity that the plugin decided on and where it came from, which is the variable `QAR_PANEL_LOG_SEVERITY`, `QAR_LOG_SEVERITY` or the default, and the part `%4` is a note when `QAR_LOG_SEVERITY` in the environment disagreed and was overwritten. The line about the app volume gives the edge of the cube in metres, where the edge came from, the height of the centre of the cube, the scale and the way in which the panels with a fixed place are hung, `room` or `ground`. The edge comes from `QAR_PANEL_VOLUME_SIZE`, from the default edge times the scale, which the line writes as `"m x app_scale"` and the scale, or it is the default size; with the app volume off, the line `LIVE: fixed panel poses: %1` takes its place. The line about the frame gives the four insets and the fit margin, in metres, with which every AR panel is sized, and where they came from: `QAR_PANEL_AR_FRAME`, `QAR_PANEL_AR_HEADROOM (the top inset only)` or `default`. The part `, QAR_PANEL_AR_HEADROOM ignored` says that both variables were set, in which case the frame variable decides. The line `LIVE: max_peers=%1` gives the largest number of targets that get a stream, 8 unless `QAR_PANEL_MAX_PEERS` says otherwise. The line `Connected to QarOS:` is written when the render factory and the app volume are ready and the streaming has started, and the last line says how a panel is switched off from now on, `hide` or `close`.
+The first two lines are written once, when the owner is made at the first press of `"Connect to QarOS"`; a later press finds the owner. The line that names the logging reports the severity that the plugin decided on and where it came from, which is the variable `QAR_PANEL_LOG_SEVERITY`, `QAR_LOG_SEVERITY` or the default, and the part `%4` is a note when `QAR_LOG_SEVERITY` in the environment disagreed and was overwritten. The line about the app volume gives the edge of the cube in metres, where the edge came from, the height of the centre of the cube, the scale and the way in which the panels with a fixed place are hung, `room` or `ground`. The edge comes from `QAR_PANEL_VOLUME_SIZE`, from the default edge times the scale, which the line writes as `"m x app_scale"` and the scale, or it is the default size; with the app volume off, the line `LIVE: fixed panel poses: %1` takes its place. The line about the frame gives the four insets and the fit margin, in metres, with which every AR panel is sized, and where they came from: `QAR_PANEL_AR_FRAME`, `QAR_PANEL_AR_HEADROOM (the top inset only)` or `default`. The part `, QAR_PANEL_AR_HEADROOM ignored` says that both variables were set, in which case the frame variable decides. The line `LIVE: max_peers=%1` gives the largest number of targets that get a stream, 8 unless `QAR_PANEL_MAX_PEERS` says otherwise. The line `Connected to QarOS:` is written when the render factory and the app volume are ready and the streaming has started, and the last line says how a panel is switched off from now on, `hide` or `close`.
 
 The lines of the owner are what the Hub did. They start with `"QAROS: "`, and the owner writes one line for each of these events; each line has this form:
 
@@ -256,7 +256,6 @@ runtime
 state 
 status 
 progress 
-hub mode 
 joined as peer 
 ) in 
 target 
@@ -265,12 +264,9 @@ not served (
  -> stream stopped
 invite 
  -> error: 
-settings kept for the next connect (state 
-identity file damaged: pair again (
-identity file not written: 
 ```
 
-The line `runtime` names the version, the flavour and the C API of the library that was loaded and the folder it came from. The line `state` names the state of the join, one of `idle`, `loading`, `waiting_for_approval`, `rejoining`, `needs_code`, `pairing`, `running`, `reconnecting`, `stopping` and `failed`, and a state that has a cause is followed by a line `status` with the symbol, the sentence and, in parentheses, the detail. The line `progress` carries a step that the library reported while the join was running, and the line `hub mode` says whether the owner took the Hub of this PC, `local`, or the Hub of another PC, `remote`, with the reason in parentheses. The line `joined as peer` ends the join: it gives the first eight hexadecimal digits of the identifier of the program, the way of the join, `local`, `rejoin` or `pairing`, and the seconds that the join took. The line `target` is written when a peer of the Hub appears, changes its presence or goes: it gives the first eight digits of the peer identifier, the kind of the device, its name and its presence, and whether the peer is `served`, which is to say that a stream is made for it, or `not served`, with the reason in parentheses, for example the cap of targets. The line `invite` gives the kind and the host of an invited device and either the first digits of the new peer or the error that the Hub answered. The line `settings kept for the next connect` says that a change of the Hub settings arrived while a join was running, so that it applies at the next connect, and `"identity file damaged"` says that the stored pairing could not be read, so that the next connect needs a code.
+The line `runtime` names the version, the flavour and the C API of the library that was loaded and the folder it came from. The line `state` names the state of the join, one of `idle`, `loading`, `waiting_for_approval`, `running`, `reconnecting`, `stopping` and `failed`, and a state that has a cause is followed by a line `status` with the symbol, the sentence and, in parentheses, the detail. The line `progress` carries a step that the library reported while the join was running. The line `joined as peer` ends the join: it gives the first eight hexadecimal digits of the identifier of the program, the way of the join, `local`, and the seconds that the join took. The line `target` is written when a peer of the Hub appears, changes its presence or goes: it gives the first eight digits of the peer identifier, the kind of the device, its name and its presence, and whether the peer is `served`, which is to say that a stream is made for it, or `not served`, with the reason in parentheses, for example the cap of targets. The line `invite` gives the kind and the host of an invited device and either the first digits of the new peer or the error that the Hub answered.
 
 A QAROS call of the owner's thread that takes half a second or longer and a task that takes one second or more are logged with their name and their duration, the first twenty of each name and then every fiftieth, and a task that the owner drops at its end is logged with the reason; each line has this form:
 
@@ -291,7 +287,7 @@ The lines `teardown:` are written when the session ends, one for each step in th
 [qar-gui-call] %s WARNING %s took %.0f ms on the GUI thread (limit %.0f ms)
 ```
 
-A join that fails ends with a state `failed` or `needs_code`, and the panel then sets `"Last error:"` to the sentence of the owner, after the prefix `"QarOS: "`, and logs it after `ERROR:`; the State line shows the same sentence and `"Connect to QarOS"` is on again. A failure after the join, when the render factory or the app volume could not be made, ends the attempt with one of these lines, gives the session back to the owner and sets `"Last error:"`; the lines of the buttons are on the same list. Each line has this form:
+A join that fails ends with the state `failed`, and the panel then sets `"Last error:"` to the sentence of the owner, after the prefix `"QarOS: "`, and logs it after `ERROR:`; the State line shows the same sentence and `"Connect to QarOS"` is on again. A failure after the join, when the render factory or the app volume could not be made, ends the attempt with one of these lines, gives the session back to the owner and sets `"Last error:"`; the lines of the buttons are on the same list. Each line has this form:
 
 ```text
 QarOS connect failed: %1
@@ -304,23 +300,20 @@ QarOS: the connect was stopped while the session was being set up.
 
 The first line is the failure. `"QarOS: connect already in progress"` answers a press on `"Connect to QarOS"` while a join is under way, and `"QarOS: already connected."` a press while the panel is connected and streaming. `"QarOS: streaming paused (session kept open)."` is what `"Disconnect (pause)"` writes on a connected panel, and the panel does not count as connected afterwards. `"QarOS: the connect was stopped while the session was being set up."` is what `"Disconnect (pause)"` writes while the app volume is still being made: the render factory lets go and the session goes back to the owner. A press on `"Connect to QarOS"` after a pause writes `"QarOS: streaming resumed."` and then does what the end of a first connection does on the session that is still open: it builds no session, so the lines of the list above up to the app volume are not written again, but it switches the streaming on, which the manager reports with the line `"streaming activated"` after its prefix `"[lib:"`, subscribes to the gestures of the app volume again, and writes the lines `"Connected to QarOS:"` and `"AR VISIBILITY:"` again.
 
-The owner reports the end of a pairing, of a forget and of a cancel to the panel, which writes these lines; each line has this form:
+A press on `Cancel` while the join is under way writes this line:
 
 ```text
-QarOS: pairing code sent to the Hub at %1:%2.
-QarOS: forgetting the pairing with the Hub (the session is released first).
-QarOS: the pairing with the Hub was forgotten; the next connect needs a code.
 QarOS: cancelling the join.
 ```
 
-The pairing code itself is never logged. When the session ends, on `"Forget pairing"`, because the owner left the running state on its own, or when RViz closes the panel, the panel releases what it built on the session, and the lines say what was done; each line has this form:
+When the session ends, because the owner left the running state on its own, or when RViz closes the panel, the panel releases what it built on the session, and the lines say what was done; each line has this form:
 
 ```text
 QarOS: releasing everything built on the session (%1).
 QarOS: %1 session task(s) queued; the owner runs them before it releases the session (%2 ms on this thread). AR panels are hidden in the Hub; start them again with 'Stream panel to AR' after the next connect.
 ```
 
-The first line gives the reason: `the pairing is forgotten` or `the QAROS session ended`. The second line gives the number of calls that wait for the thread of the owner, which hides each QarOS panel and lets go of its sender before it releases the session, and the milliseconds that the release took on the GUI thread; no QarOS panel is closed.
+The first line gives the reason: `the QAROS session ended`. The second line gives the number of calls that wait for the thread of the owner, which hides each QarOS panel and lets go of its sender before it releases the session, and the milliseconds that the release took on the GUI thread; no QarOS panel is closed.
 
 The options that change the connect write one line each when they are not at their defaults, and a value that cannot be used writes an error; each line has this form:
 

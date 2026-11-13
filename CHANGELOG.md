@@ -4,6 +4,21 @@ All notable changes to this repository are listed in this file, newest version f
 
 Each version lists what it adds, the compatibility it was verified with (the QAROS version, the ROS 2 distribution, Qt, the toolchain and the versions of the repositories it builds on), and its known limitations. The version of a repository is the version of its CMake package, 0.2.0 for this release.
 
+## Unreleased
+
+### Changed
+
+- the QarOS C header (`qar-streaming-c`) and C++ headers (`qar-streaming-cpp`) come from the public qaros repository, the git submodule `external/qaros`; clone with `--recurse-submodules`. Configuring stops when an installed upstream package carries QarOS headers of another qaros commit (`QAR_QAROS_HEADER_CHECK`).
+- the panel joins only the Hub of this PC, as a local app. QAROS marks the pairing with the Hub of another PC (code onboarding, rejoin and forget) as deprecated, and the plugin calls none of them: to reach the Hub of another PC, make the Hub of this PC a member of it and join the Hub of this PC.
+- the settings are written as version 4. A configuration of an earlier version with `"Hub Mode"` `remote` loads as `local` with a line in the log, and its `"Hub Host"` and `"Hub Port"` are dropped; `"Hub Mode"` accepts `auto` and `local`, which both join the Hub of this PC.
+
+### Removed
+
+- the Hub choice, the fields `"Host:"`, `"Port:"` and `"Code:"`, the button `Pair` and the button `"Forget pairing"` of the group `"QAROS Hub"`; `Cancel`, the identity and state lines and the targets stay.
+- the settings `"Hub Host"` and `"Hub Port"` with their variables `QAR_PANEL_HUB_HOST` and `QAR_PANEL_HUB_PORT`, which now only produce a line that says they have no effect, and `QAR_PANEL_IDENTITY_DIR`.
+- the launcher parameters `-HubHost` and `-HubPort` and the value `remote` of `-HubMode`.
+- the options `--hub`, `--code` and `--forget` of the two examples.
+
 ## 0.2.0
 
 ### Added
