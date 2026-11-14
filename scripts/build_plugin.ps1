@@ -32,12 +32,15 @@
     The script is non-interactive. It
       1. checks the location parameters and that the two upstream packages are installed;
       2. imports the Visual Studio 2019 (MSVC v142) x64 build environment (cl.exe; Ninja comes
-         from its own install), the toolset the distribution was compiled with;
+         from its own install), the toolset the distribution was compiled with; with the
+         environment variable QAR_VS_VERSION=2022, Visual Studio 2022 (MSVC v143) instead;
       3. dot-sources env_setup.ps1 (distribution, Qt, virtual environment);
       4. runs the idempotent distribution repairs that find_package(rviz_common) needs
          (fix_missing_vendor_cmake_configs.ps1, fix_missing_eigen.ps1,
          fix_stale_pixi_paths.ps1);
-      5. runs `colcon build` with the Ninja generator and RelWithDebInfo.
+      5. runs `colcon build` with the Ninja generator and RelWithDebInfo;
+      6. prints the command that registers the build for QAROS
+         (scripts/register-qaros-plugin.ps1); it does not run it.
 
 .PARAMETER Prefix
     Install prefix. Default: the environment variable QAR_PREFIX. Required.
@@ -52,6 +55,9 @@
 .PARAMETER CMakeArgs
     Extra arguments for the plugin's CMake configure step, for example
     -CMakeArgs '-DQAR_OGRE_ADAPTER_SOURCE_DIR=C:\src\qar_ogre_adapter'.
+.PARAMETER SkipRepairs
+    Do not run the three distribution repairs of step 4, for a distribution that already
+    configures (repaired before, or one that needs no repair).
 .PARAMETER Clean
     Delete <repository>\build\colcon (colcon's build tree and logs) before building. Nothing
     else is deleted.
@@ -68,6 +74,7 @@ param(
     [string]$QtRoot = "",
     [string]$Venv = "",
     [string[]]$CMakeArgs = @(),
+    [switch]$SkipRepairs,
     [switch]$Clean
 )
 
@@ -109,10 +116,14 @@ Write-Host "=== Dot-sourcing env_setup.ps1 ===" -ForegroundColor Cyan
 # The official Windows archive ships several vendored third-party runtime DLLs without
 # their CMake CONFIG files, which breaks find_package(rviz_common) for any downstream
 # ament plugin. These repair scripts are idempotent (no-op if present).
-Write-Host "=== Ensuring downstream ament CMake config gaps are filled ===" -ForegroundColor Cyan
-& "$PSScriptRoot\fix_missing_vendor_cmake_configs.ps1" -Ros2Root $Ros2Root
-& "$PSScriptRoot\fix_missing_eigen.ps1" -Ros2Root $Ros2Root
-& "$PSScriptRoot\fix_stale_pixi_paths.ps1" -Ros2Root $Ros2Root
+if ($SkipRepairs) {
+    Write-Host "=== Skipping the distribution repairs (-SkipRepairs) ===" -ForegroundColor Yellow
+} else {
+    Write-Host "=== Ensuring downstream ament CMake config gaps are filled ===" -ForegroundColor Cyan
+    & "$PSScriptRoot\fix_missing_vendor_cmake_configs.ps1" -Ros2Root $Ros2Root
+    & "$PSScriptRoot\fix_missing_eigen.ps1" -Ros2Root $Ros2Root
+    & "$PSScriptRoot\fix_stale_pixi_paths.ps1" -Ros2Root $Ros2Root
+}
 
 # --- 5. colcon build ---------------------------------------------------------------
 $colconRoot = Join-Path $RepoRoot "build\colcon"
@@ -125,6 +136,9 @@ $qtCmakeDir = Join-Path $QtRoot "lib\cmake\Qt5"
 if (-not (Test-Path (Join-Path $qtCmakeDir "Qt5Config.cmake"))) {
     throw "Qt5 CMake config not found at $qtCmakeDir (install Qt 5.15.2 msvc2019_64)."
 }
+
+# In source mode the prefix may not exist yet, and CMake requires the folder that QAR_PREFIX names.
+if (-not (Test-Path -LiteralPath $Prefix)) { New-Item -ItemType Directory -Force -Path $Prefix | Out-Null }
 
 $ninja = (Get-Command ninja -ErrorAction SilentlyContinue)
 if (-not $ninja) { throw "ninja not found on PATH after the Visual Studio environment import." }
@@ -176,3 +190,6 @@ $desc = Join-Path $Prefix "share\qar_rviz_streaming\plugin_description.xml"
 if (Test-Path $desc) { Write-Host "plugin_description.xml installed: $desc" -ForegroundColor Green }
 $overlay = Join-Path $Prefix "local_setup.ps1"
 if (Test-Path $overlay) { Write-Host "Overlay (dot-source it): $overlay" -ForegroundColor Green }
+Write-Host ""
+Write-Host "To make this build available to QAROS (""ROS 2 Rviz"" in the Visualizer), register it:"
+Write-Host "  & `"$(Join-Path $PSScriptRoot 'register-qaros-plugin.ps1')`" -Prefix `"$Prefix`" -RosRoot `"$Ros2Root`""

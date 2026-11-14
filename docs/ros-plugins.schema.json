@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Quaternar/qaros-ros-rviz/blob/main/docs/ros-plugins.schema.json",
+  "title": "QAROS ROS plugin registrations (ros-plugins.json)",
+  "description": "Per-user file that tells QAROS which qar_rviz_streaming builds exist for which ROS 2 distribution. Windows: %APPDATA%\\Quaternar\\ros-plugins.json. Linux: ${XDG_CONFIG_HOME:-~/.config}/quaternar/ros-plugins.json. Written by scripts/register-qaros-plugin.{ps1,sh} (source local) and by QAROS (source prebuilt). Writers keep fields and records they do not know.",
+  "type": "object",
+  "required": ["version", "plugins"],
+  "properties": {
+    "version": {
+      "description": "Format version. A writer that does not know the version leaves the file unchanged.",
+      "const": 1
+    },
+    "plugins": {
+      "type": "array",
+      "description": "At most one record per (distro, platform, source).",
+      "items": { "$ref": "#/$defs/record" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "distro",
+        "platform",
+        "source",
+        "ros_root",
+        "prefix",
+        "plugin_version",
+        "c_api_header_sha256",
+        "registered_at"
+      ],
+      "properties": {
+        "distro": {
+          "description": "ROS 2 distribution name, lower case (ROS_DISTRO).",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "examples": ["humble", "jazzy"]
+        },
+        "platform": {
+          "description": "Operating system and architecture the plugin was built for.",
+          "type": "string",
+          "pattern": "^(windows|linux)-(x64|arm64)$",
+          "examples": ["windows-x64", "linux-x64"]
+        },
+        "source": {
+          "description": "local: a hand build registered by the register script. prebuilt: a release asset QAROS downloaded and unpacked. A local record wins over a prebuilt one for the same distro and platform.",
+          "enum": ["local", "prebuilt"]
+        },
+        "ros_root": {
+          "description": "Absolute path of the ROS 2 distribution root: the folder with the setup script (local_setup.bat / setup.bash) and rviz2. Sourced before the overlay.",
+          "type": "string",
+          "minLength": 1
+        },
+        "prefix": {
+          "description": "Absolute path of the overlay prefix that holds the plugin (share/ament_index, bin or lib, share/qar_rviz_streaming, local_setup.*).",
+          "type": "string",
+          "minLength": 1
+        },
+        "plugin_version": {
+          "description": "Version of the qar_rviz_streaming package (its package.xml).",
+          "type": "string",
+          "minLength": 1
+        },
+        "c_api_header_sha256": {
+          "description": "SHA-256 (lower-case hex) of the QarOS C header qar_streaming.h the plugin was compiled against (qaros: qar-streaming-c/include/qar_streaming.h). QAROS compares it with its own runtime.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "registered_at": {
+          "description": "UTC time of the registration, ISO 8601 with a Z suffix.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+        },
+        "qaros_version": {
+          "description": "Optional. For prebuilt records: the QAROS release the asset belongs to.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
