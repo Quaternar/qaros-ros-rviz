@@ -61,6 +61,16 @@ include("${QAR_REPO_ROOT}/cmake/QarBuildSupport.cmake")
 include("${QAR_REPO_ROOT}/cmake/QarRosBuildSupport.cmake")
 qar_use_qaros_submodule("${QAR_REPO_ROOT}")
 
+# The SHA-256 of the QarOS C header this plugin is compiled against, installed as
+# share/qar_rviz_streaming/qar_streaming_h.sha256. scripts/register-qaros-plugin.* and
+# scripts/package-release.* read it, so the registration and the release manifest name the C API
+# of the build and not the one of a later checkout. Configuring again when the header changes.
+set(_qar_c_header "${QAROS_SOURCE_DIR}/qar-streaming-c/include/qar_streaming.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_qar_c_header}")
+file(SHA256 "${_qar_c_header}" QAR_C_API_HEADER_SHA256)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qar_streaming_h.sha256" "${QAR_C_API_HEADER_SHA256}\n")
+message(STATUS "QarOS C API header SHA-256: ${QAR_C_API_HEADER_SHA256}")
+
 qar_find_upstream(qar_ogre_adapter VERSION 0.2.0
   COMPONENTS qar_ar_core qar_ogre_streaming capi session render url gestures)
 qar_find_upstream(qar_qt_streaming VERSION 0.2.0 COMPONENTS seam qar_qt_streaming)
@@ -227,7 +237,7 @@ install(TARGETS qar_rviz_streaming
 install(DIRECTORY include/
   DESTINATION include
 )
-install(FILES plugin_description.xml
+install(FILES plugin_description.xml "${CMAKE_CURRENT_BINARY_DIR}/qar_streaming_h.sha256"
   DESTINATION share/${PROJECT_NAME}
 )
 install(DIRECTORY config

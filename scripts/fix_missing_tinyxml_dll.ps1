@@ -160,7 +160,7 @@ foreach ($tool in 'cmake', 'tar') {
         throw "$tool not found on PATH (see docs/INSTALL.md, section 'Toolchain')."
     }
 }
-Write-Host "Visual Studio 2019 tools: $vsPath"
+Write-Host "Visual Studio $(Get-QarVsVersion) tools: $vsPath"
 
 # --- the source archive, checked by its SHA-256 ----------------------------------------------
 $downloads = Join-Path (Split-Path $BuildRoot) "downloads"
@@ -234,7 +234,7 @@ Set-Content -LiteralPath (Join-Path $unpacked "CMakeLists.txt") -Value $cmakeLis
 
 $b = Join-Path $unpacked "_build"
 Write-Host "Configuring (VS2019 x64, matching the distro's v142 toolset)"
-cmake -S $unpacked -B $b -G "Visual Studio 16 2019" -A x64
+cmake -S $unpacked -B $b -G (Get-QarVsGenerator) -A x64
 if ($LASTEXITCODE -ne 0) { throw "tinyxml configure failed" }
 Write-Host "Building tinyxml (RelWithDebInfo, matching the distro's build config)"
 cmake --build $b --config RelWithDebInfo --target tinyxml

@@ -28,7 +28,10 @@
                                must exist, -Optional returns $null when neither the parameter
                                nor the variable is set, -AllowMissing accepts a folder that
                                does not exist yet (the caller creates it).
-      Get-QarVsInstallPath     installation folder of Visual Studio 2019 with the C++ x64 tools.
+      Get-QarVsVersion         the Visual Studio version of the build: 2019 (default) or 2022,
+                               from the environment variable QAR_VS_VERSION.
+      Get-QarVsGenerator       the CMake generator of that version.
+      Get-QarVsInstallPath     installation folder of that Visual Studio with the C++ x64 tools.
       Import-QarBatchEnvironment
                                runs a batch file in cmd.exe and imports the variables it changed
                                into the current session, whatever code page the console uses.
@@ -78,14 +81,35 @@ function Resolve-QarLocation {
     return $full
 }
 
+# The Visual Studio version of the build: 2019 (MSVC v142, the toolset of the ROS 2 Humble Windows
+# distribution, the default) or 2022 (MSVC v143, which links against v142 binaries and is what
+# hosted CI machines have). The environment variable QAR_VS_VERSION selects it.
+function Get-QarVsVersion {
+    $v = $env:QAR_VS_VERSION
+    if ([string]::IsNullOrWhiteSpace($v)) { return '2019' }
+    $v = $v.Trim()
+    if ($v -notin @('2019', '2022')) {
+        throw "QAR_VS_VERSION is '$v'; use 2019 or 2022 (see docs/CONFIGURATION.md)."
+    }
+    return $v
+}
+
+# The CMake generator of that Visual Studio version, for the repair scripts that build a library.
+function Get-QarVsGenerator {
+    if ((Get-QarVsVersion) -eq '2022') { return 'Visual Studio 17 2022' }
+    return 'Visual Studio 16 2019'
+}
+
 function Get-QarVsInstallPath {
+    $vsVersion = Get-QarVsVersion
+    $range = if ($vsVersion -eq '2022') { '[17.0,18.0)' } else { '[16.0,17.0)' }
     $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path -LiteralPath $vswhere)) {
-        throw "vswhere.exe not found at ${vswhere}: install the Visual Studio 2019 Build Tools (see docs/INSTALL.md, section 'Toolchain')."
+        throw "vswhere.exe not found at ${vswhere}: install the Visual Studio $vsVersion Build Tools (see docs/INSTALL.md, section 'Toolchain')."
     }
-    $vsPath = & $vswhere -version '[16.0,17.0)' -products '*' -requires 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' -property installationPath -latest | Select-Object -First 1
+    $vsPath = & $vswhere -version $range -products '*' -requires 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' -property installationPath -latest | Select-Object -First 1
     if (-not $vsPath) {
-        throw "Visual Studio 2019 with the C++ x64 build tools (MSVC v142) not found by vswhere (see docs/INSTALL.md, section 'Toolchain')."
+        throw "Visual Studio $vsVersion with the C++ x64 build tools not found by vswhere (see docs/INSTALL.md, section 'Toolchain'; QAR_VS_VERSION selects 2019 or 2022)."
     }
     return $vsPath
 }
@@ -181,7 +205,7 @@ function Import-QarVsDevEnvironment {
     $vsPath = Get-QarVsInstallPath
     $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvars64.bat'
     if (-not (Test-Path -LiteralPath $vcvars)) { throw "vcvars64.bat not found at $vcvars." }
-    Write-Host "=== Importing the Visual Studio 2019 x64 build environment ===" -ForegroundColor Cyan
+    Write-Host "=== Importing the Visual Studio $(Get-QarVsVersion) x64 build environment ===" -ForegroundColor Cyan
     Write-Host "  vcvars64: $vcvars"
 
     # vcvars64.bat fails with "The input line is too long" when the PATH it starts from is

@@ -113,7 +113,7 @@ if (-not (Test-Path $srcDir)) {
 
 $buildDir = Join-Path $BuildRoot "build"
 Write-Host "Configuring (VS2019 x64, matching the distro's v142 toolset)"
-cmake -S $srcDir -B $buildDir -G "Visual Studio 16 2019" -A x64 `
+cmake -S $srcDir -B $buildDir -G (Get-QarVsGenerator) -A x64 `
     -DSPDLOG_BUILD_SHARED=ON `
     -DSPDLOG_BUILD_EXAMPLE=OFF `
     -DSPDLOG_BUILD_TESTS=OFF `

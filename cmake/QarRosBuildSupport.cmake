@@ -13,14 +13,21 @@ include_guard(GLOBAL)
 # Qt for the RViz build. RViz 2 of the ROS 2 Humble distribution is built against Qt 5.15, and a
 # plugin must run on the same Qt, so this pins Qt 5 and requires QAR_QT_ROOT (the kit folder).
 # The arguments are those of qar_use_qt (OPTIONAL, COMPONENTS).
+# On Linux the distribution uses the Qt 5 of the system packages, so QAR_QT_ROOT is optional there.
 macro(qar_use_qt5)
-  qar_use_qt(MAJOR 5 ROOT_REQUIRED WHAT "Qt 5.15.2 (msvc2019_64)" ${ARGN})
+  if(WIN32)
+    qar_use_qt(MAJOR 5 ROOT_REQUIRED WHAT "Qt 5.15.2 (msvc2019_64)" ${ARGN})
+  else()
+    qar_use_qt(MAJOR 5 WHAT "Qt 5.15" ${ARGN})
+  endif()
 endmacro()
 
 # The ROS 2 Humble distribution on CMAKE_PREFIX_PATH (Ogre comes from its rviz_ogre_vendor).
 macro(qar_use_ros2_distro)
+  # The setup script of the distribution: local_setup.bat on Windows, setup.sh on Linux
+  # (/opt/ros/<distro>).
   qar_resolve_location(QAR_ROS2_INSTALL_ROOT ENV ROS2_INSTALL_ROOT REQUIRED
-    WHAT "ROS 2 Humble distribution (ros2-windows)" MARKER "local_setup.bat")
+    WHAT "ROS 2 distribution" MARKER "local_setup.bat" "setup.sh")
   list(PREPEND CMAKE_PREFIX_PATH "${QAR_ROS2_INSTALL_ROOT}")
   list(REMOVE_DUPLICATES CMAKE_PREFIX_PATH)
   message(STATUS "ROS 2 distribution: ${QAR_ROS2_INSTALL_ROOT}")
