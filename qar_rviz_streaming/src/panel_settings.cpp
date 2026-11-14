@@ -688,6 +688,22 @@ std::vector<std::string> removed_environment_sentences(const EnvLookup & env)
   return sentences;
 }
 
+bool auto_connect_requested(const EnvLookup & env, std::string & out_warning)
+{
+  out_warning.clear();
+  const std::optional<std::string> text = env("QAR_PANEL_AUTO_CONNECT");
+  if (!text || trimmed(*text).empty()) {
+    return false;
+  }
+  bool value = false;
+  if (!parse_bool_word(*text, value)) {
+    out_warning = "QAR_PANEL_AUTO_CONNECT='" + trimmed(*text) +
+      "' is not one of on|off|1|0|true|false|yes|no - not connecting by itself";
+    return false;
+  }
+  return value;
+}
+
 bool pick_target_id_from_word(const std::string & word, int & out_id)
 {
   for (const TargetWord & target : kTargetWords) {

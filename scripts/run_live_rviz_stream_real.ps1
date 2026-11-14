@@ -406,8 +406,8 @@ foreach ($removedVar in 'QAR_RUNTIME_BINARIES_DIR', 'QAR_PANEL_VISUALIZERS', 'QA
 }
 # The panel is a live-stream producer.
 $env:QAR_PANEL_LIVE_STREAM = "1"
-# The panel is a live-stream producer.
-$env:QAR_PANEL_LIVE_STREAM = "1"
+# The panel joins the QAROS Hub by itself at start; QAR_PANEL_AUTO_CONNECT=0 in the shell keeps the button.
+if (-not $env:QAR_PANEL_AUTO_CONNECT) { $env:QAR_PANEL_AUTO_CONNECT = "1" }
 # --- Logging: QUIET by default, the full TRACE set only with -TraceLogs --------
 # Trace logging is heavy I/O: the mixer alone can write thousands of lines per second,
 # and on a nearly full system drive under real-time antivirus scanning that can stall
@@ -671,6 +671,7 @@ if ($sdkProblem) { Write-Host "  QAROS install note: $sdkProblem" -ForegroundCol
 $runtimeDirShown = if ($runtimeDirFull) { $runtimeDirFull } else { '(not set: the plugin uses the installed QAROS)' }
 Write-Host "  QAROS_RUNTIME_DIR        = $runtimeDirShown"
 Write-Host "  QAR_PANEL_LIVE_STREAM    = 1"
+Write-Host "  QAR_PANEL_AUTO_CONNECT   = $env:QAR_PANEL_AUTO_CONNECT"
 Write-Host "  FASTRTPS_DEFAULT_PROFILES_FILE = $ddsProfileNote"
 Write-Host "  QAR_SCENE_LIGHT          = $env:QAR_SCENE_LIGHT (headlight: $(if ($env:QAR_SCENE_LIGHT_HEADLIGHT -eq 'keep') {'kept'} else {'suppressed while streaming'}))"
 $hubVarShown = if ($env:QAR_PANEL_HUB_MODE) { $env:QAR_PANEL_HUB_MODE } else { '(not set: the Hub of this PC)' }

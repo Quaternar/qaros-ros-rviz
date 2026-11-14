@@ -128,6 +128,7 @@ Every environment variable that code of this stack reads inside the RViz process
 | Variable | Read by | Default | Values and parsing | Effect |
 |---|---|---|---|---|
 | `QAR_PANEL_LIVE_STREAM` | `qar_rviz_streaming/src/qar_streaming_panel.cpp` | Unset: the panel runs offline against in-process animated test peers (`AnimatedMockSenderFactory`) and builds no QarOS session. | Any non-empty value turns live mode on, including `0` and `off`; an empty or unset variable leaves it off. | Makes the panel live-capable. The runtime buttons read "Connect to QarOS", "Disconnect (pause)" and "Invite peer", and the QarOS session is built only when the operator presses Connect, never while the panel loads. Set by `scripts/run_live_rviz_stream_real.ps1` (always set to 1). |
+| `QAR_PANEL_AUTO_CONNECT` | `qar_rviz_streaming/src/panel_settings.cpp`, `qar_rviz_streaming/src/qar_streaming_panel.cpp` | Unset: the panel waits until the operator presses "Connect to QarOS". | `1`, `true`, `on` or `yes` (any case, trimmed) is on; `0`, `false`, `off`, `no` or an empty value is off; any other text is off and writes a warning to the log. It is not a saved setting and the panel does not store it. | In live mode, the panel presses "Connect to QarOS" once, about half a second after it has loaded, when no join is under way; it is the same path as the button. A failed join shows its failure and waits for the operator (Connect again, or Cancel), it is not repeated by itself, and "Cancel" and "Disconnect (pause)" work as always. Without `QAR_PANEL_LIVE_STREAM` (the offline preview) it has no effect and the log says so. QAROS sets it, together with `QAR_PANEL_LIVE_STREAM=1`, `QAR_POSE_WORLD=zup` and `QAR_DEPTH_ENCODING=ndc`, when it launches RViz with the plugin from the Visualizer tile "ROS 2 Rviz", and `scripts/run_live_rviz_stream_real.ps1` sets it unless your shell has a value. |
 | `QAR_PANEL_TICK_MS` | `qar_rviz_streaming/src/qar_streaming_panel.cpp` | `0.1` ms. | Read with `strtod`, so a numeric prefix counts (`8ms` is 8). The value must be a finite number: no digits, `nan`, `inf`, a negative value or a value above 100000 give the default; `0` is accepted. | Period of the panel render timer in milliseconds; the panel has no control for it. A period below 1 ms runs a zero-interval timer that is throttled to the period. The log line `Render tick: <ms> ms` names the period and says whether it came from this variable or is the default. |
 | `QAR_ADAPTER_PRIME` | `qar_rviz_streaming/src/qar_streaming_panel.cpp`, qar_ogre_adapter (`qar_qar_adapter`) | `true`. | `1`, `true`, `on` or `yes` (any case) is true; `0`, `false`, `off` or `no` is false; anything else, including an empty value, gives the default. The value is not trimmed. | Initial value of the prime flag of a render sender adapter. When the flag is on, the wait for the next frame starts right after a frame is shown, so a frame takes one tick instead of two. `OgreQarStreamingManager` gives every stream that it creates its own flag, `true` until the host calls its `set_prime_enabled`, so the variable decides only for an adapter that no manager configures. |
 | `QAR_PANEL_FLOOR_PLANE` | `qar_rviz_streaming/src/qar_streaming_panel.cpp` | on. | Trimmed and lower-cased; only the word `off` disables the plane, any other value (including `0` and `false`) leaves it on. | Adds an opaque companion plane under every RViz Grid display so that the AR depth map sees a solid floor instead of the gaps between the grid lines. |
@@ -211,7 +212,7 @@ Every environment variable that code of this stack reads inside the RViz process
 
 **Values that surprise.** The parsing rules are in the table, and a few of them are traps:
 
-- `QAR_PANEL_LIVE_STREAM` is on for any value that is not empty, `0` and `off` included.
+- `QAR_PANEL_LIVE_STREAM` is on for any value that is not empty, `0` and `off` included; `QAR_PANEL_AUTO_CONNECT` is the opposite: `0` and `off` are off.
 - `QAR_PANEL_FLOOR_PLANE`, `QAR_PANEL_GEO` and `QAR_PANEL_APP_VOLUME` are switched off only by the word `off`, in any letter case; `0` and `false` leave them on. `QAR_PANEL_HIDDEN_DISPLAYS` reads a list of words instead: `0`, `false`, `off` and `no` switch it off, `1`, `true`, `on` and `yes` switch it on, and any other value that is not empty is ignored with a warning, so that the saved setting or the default, on, applies.
 - `QAR_POSE_WORLD` and `QAR_DEPTH_ENCODING` are case sensitive: only the exact words `zup` and `ndc` change anything.
 - The adapter variables `QAR_ADAPTER_TRACE`, `QAR_ADAPTER_TRACE_ALL`, `QAR_ADAPTER_FRAME_TRACE` and `QAR_ADAPTER_FLIP_Y` are presence flags, so that a variable that is set to `0` is on.
@@ -274,6 +275,7 @@ The launcher sets a few variables that the plugin needs and some that change wha
 | Variable | The launcher | Without the launcher |
 |---|---|---|
 | `QAR_PANEL_LIVE_STREAM` | `1`, always | unset: the offline preview with in-process test peers, and no session |
+| `QAR_PANEL_AUTO_CONNECT` | `1` unless set | unset: the panel waits for the button "Connect to QarOS" |
 | `QAR_POSE_WORLD` | `zup`, always | unset: the identity basis, so that a viewer arrives on its side in a Z-up world |
 | `QAR_POSE_YAW_DEG` | `180` unless set | `180` |
 | `QAR_POSE_HEIGHT_M`, `QAR_POSE_BACK_M` | `0` unless set | `0` |
@@ -299,7 +301,7 @@ Everything else keeps the default of the code. The clip planes are 0.01 m and 15
 
 ## Running RViz without the launcher
 
-You can start RViz yourself when you need an environment that the launcher does not allow, for example another scene or a debugger. The plugin needs three things from the environment: the distribution and Qt, which `scripts\env_setup.ps1` prepares, the overlay of the plugin, which `local_setup.ps1` in the prefix sets, and the variables of the plugin. `QAR_PANEL_LIVE_STREAM` makes the panel live-capable, and `QAR_POSE_WORLD` and `QAR_DEPTH_ENCODING` give a Z-up world and the window-space depth. The two logging variables keep the run quiet, because the library logs at `trace` when nothing says otherwise.
+You can start RViz yourself when you need an environment that the launcher does not allow, for example another scene or a debugger. The plugin needs three things from the environment: the distribution and Qt, which `scripts\env_setup.ps1` prepares, the overlay of the plugin, which `local_setup.ps1` in the prefix sets, and the variables of the plugin. `QAR_PANEL_LIVE_STREAM` makes the panel live-capable, `QAR_PANEL_AUTO_CONNECT=1` makes it join the QAROS Hub at start (leave it out to press "Connect to QarOS" yourself; QAROS sets it when it launches RViz), and `QAR_POSE_WORLD` and `QAR_DEPTH_ENCODING` give a Z-up world and the window-space depth. The two logging variables keep the run quiet, because the library logs at `trace` when nothing says otherwise.
 
 The commands set the environment in the current window and start RViz with the scene that the launcher uses. They need a window of the desktop, and RViz does not return until you close it. They run in the folder of the clone, so go there first:
 
@@ -310,6 +312,7 @@ Set-Location "$env:QAR_ROOT\src\qar_rviz_plugin"
 ```powershell
 . $env:QAR_PREFIX\local_setup.ps1
 $env:QAR_PANEL_LIVE_STREAM = '1'
+$env:QAR_PANEL_AUTO_CONNECT = '1'
 $env:QAR_POSE_WORLD = 'zup'
 $env:QAR_DEPTH_ENCODING = 'ndc'
 $env:QAR_LOG_SEVERITY = 'warn'

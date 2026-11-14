@@ -241,6 +241,8 @@ protected:
   void resizeEvent(QResizeEvent * event) override;
 
 private Q_SLOTS:
+  /// Presses Connect once, shortly after load, when QAR_PANEL_AUTO_CONNECT is on (live mode only).
+  void scheduleAutoConnect();
   void onStartQar();
   void onStopQar();
   /// @brief "Invite peer" (Connection tab). Enabled only in this-PC mode while connected.

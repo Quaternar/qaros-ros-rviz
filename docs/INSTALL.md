@@ -595,6 +595,8 @@ The check of the repaired distribution comes after the installation of Qt, in th
 
 Qt is not part of the ROS 2 distribution, so you install it separately. The stack uses the Qt 5.15.2 kit for MSVC 2019 (`win64_msvc2019_64`), the Qt build that matches the v142 toolset. The distribution ships no Qt at all.
 
+When QAROS launches RViz itself (the tile "ROS 2 Rviz" of QAROS Visualizer > Sources), it supplies Qt to `rviz2` and looks for it in this order: `QAR_QT_ROOT`, `Qt5_DIR`, `Qt6_DIR` and `QTDIR`, a `qt` folder beside the ROS root, pixi, and `C:\Qt`. The kit that you install here, with `QAR_QT_ROOT` set, is the one it finds first.
+
 The plugin uses the Qt modules Core, Gui and Widgets for its RViz panel, the web panel server uses Core, Network and WebSockets, and the tests of the web panel library also use the Qt Test module.
 
 The installer is `aqt` (aqtinstall), a command-line installer for Qt that needs no Qt account; it is in the virtual environment you created. The command installs the kit below `$env:QAR_DEPS_ROOT\Qt`, which makes the Qt folder `$env:QAR_DEPS_ROOT\Qt\5.15.2\msvc2019_64`, the value of `QAR_QT_ROOT`.

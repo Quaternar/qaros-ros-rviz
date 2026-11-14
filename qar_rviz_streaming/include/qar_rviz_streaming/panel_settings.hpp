@@ -205,6 +205,12 @@ const std::vector<std::string> & removed_environment_variables();
 /// is set (even to an empty text): "ignored: <name> has no effect with this QAROS".
 std::vector<std::string> removed_environment_sentences(const EnvLookup & env);
 
+/// @brief Reads QAR_PANEL_AUTO_CONNECT: whether the panel joins the QAROS Hub by itself at start.
+///
+/// Unset or empty is false. The bool words of @ref parse_bool_word are accepted. Any other text is
+/// false and sets @p out_warning (empty otherwise). The variable is not a saved setting.
+bool auto_connect_requested(const EnvLookup & env, std::string & out_warning);
+
 /// "action_point" | "ground_plane" | "fixed_depth" <-> the target ids of spatial_interaction.hpp.
 /// @return false (and @p out_id unchanged) for any other word.
 bool pick_target_id_from_word(const std::string & word, int & out_id);
