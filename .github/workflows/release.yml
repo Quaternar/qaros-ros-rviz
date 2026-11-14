@@ -207,7 +207,7 @@ jobs:
           $pinned = (Select-String -Path ./scripts/fix_missing_eigen.ps1 -Pattern '^\$archiveSha256\s*=\s*"([0-9A-Fa-f]{64})"').Matches[0].Groups[1].Value
           if ($eigenSha -ne $pinned) { throw "Eigen archive SHA-256 $eigenSha is not the pinned $pinned" }
           $eigenDir = Join-Path $env:RUNNER_TEMP 'eigen'
-          python -I -c "import sys, tarfile; tarfile.open(sys.argv[1], 'r:bz2').extractall(sys.argv[2], filter='data')" $eigenArchive $eigenDir
+          python -I -c "import os, sys, tarfile; t = tarfile.open(sys.argv[1], 'r:bz2'); bad = [m.name for m in t.getmembers() if os.path.isabs(m.name) or '..' in m.name.split('/') or not (m.isfile() or m.isdir())]; sys.exit('unsafe members: ' + str(bad[:5])) if bad else t.extractall(sys.argv[2])" $eigenArchive $eigenDir
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./scripts/fix_missing_eigen.ps1 -EigenSourceInclude (Join-Path $eigenDir 'eigen-3.4.0')
           ./scripts/fix_stale_pixi_paths.ps1 -PythonLib "$env:pythonLocation\libs\python310.lib"
