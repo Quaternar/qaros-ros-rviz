@@ -192,12 +192,24 @@ jobs:
 
       # The repairs that the build needs (docs/INSTALL.md, "Repairs to the ROS 2 Windows
       # distribution"); the run-time repairs are not needed to build. All are idempotent.
+      # Eigen is unpacked here with Python's tarfile and handed to fix_missing_eigen.ps1 as an
+      # include folder: on the hosted runner its tar extraction of the bzip2 archive hung for the
+      # whole job twice (with Git's and with Windows' tar).
       - name: Distribution repairs for the build
+        timeout-minutes: 30
         run: |
           ./scripts/fix_missing_spdlog_dll.ps1
           ./scripts/fix_missing_vendor_dlls.ps1
           ./scripts/fix_missing_vendor_cmake_configs.ps1
-          ./scripts/fix_missing_eigen.ps1
+          $eigenArchive = Join-Path $env:RUNNER_TEMP 'eigen-3.4.0.tar.bz2'
+          Invoke-WebRequest -Uri 'https://deb.debian.org/debian/pool/main/e/eigen3/eigen3_3.4.0.orig.tar.bz2' -OutFile $eigenArchive -UseBasicParsing
+          $eigenSha = (Get-FileHash -LiteralPath $eigenArchive -Algorithm SHA256).Hash
+          $pinned = (Select-String -Path ./scripts/fix_missing_eigen.ps1 -Pattern '^\$archiveSha256\s*=\s*"([0-9A-Fa-f]{64})"').Matches[0].Groups[1].Value
+          if ($eigenSha -ne $pinned) { throw "Eigen archive SHA-256 $eigenSha is not the pinned $pinned" }
+          $eigenDir = Join-Path $env:RUNNER_TEMP 'eigen'
+          python -I -c "import sys, tarfile; tarfile.open(sys.argv[1], 'r:bz2').extractall(sys.argv[2], filter='data')" $eigenArchive $eigenDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/fix_missing_eigen.ps1 -EigenSourceInclude (Join-Path $eigenDir 'eigen-3.4.0')
           ./scripts/fix_stale_pixi_paths.ps1 -PythonLib "$env:pythonLocation\libs\python310.lib"
 
       - name: Build the plugin
