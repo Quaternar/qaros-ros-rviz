@@ -6,10 +6,10 @@ QAROS has a product version. The setup program records it in the registry value 
 
 | QAROS version | Status | Meaning |
 |---|---|---|
-| 0.9.0-dev.3008+65dc9aeb | verified | The installation that this stack was built, tested and run against. The vendored C header is the header of this installation. |
+| 0.9.0-dev.3008+65dc9aeb | verified | The installation that this stack was built, tested and run against. The stack was built then against the C header of this installation; it now builds against the header of the qaros submodule (below). |
 | any other version | not verified | The stack may work with it, but nobody has checked. |
 
-The vendored header declares these three parts of the C API, all of which the code uses:
+The C header declares these three parts of the C API, all of which the code uses:
 
 - the function `qar_gui_panels_subscribe_all_gesture_events`, which subscribes to all gesture events of a GUI panel;
 - the parameter structure `QarStreamParamsOpenGlWgl`, which hands the Windows OpenGL context of the host to a render stream;
@@ -118,6 +118,8 @@ The table lists the parts of the C header of the installed QAROS that this stack
 
 The SHA256 of the file `include\qar_streaming.h` of the verified version is 55E6E3F48D940CA29331F0528FE475C1B7230FB19A59C31D5525C6E90B097F6C.
 
+The build compiles against the header of the qaros submodule, `external/qaros/qar-streaming-c/include/qar_streaming.h`, pinned to qaros 0f2cb2e, whose SHA256 is 94D248D2A3F660E89458E1DF865EAC41A2365CEF1C9F971AF111BC866E8A2762. An installed qar_ogre_adapter must carry the same file: configuring compares them and stops on a difference (`QAR_QAROS_HEADER_CHECK`).
+
 ## QarOS behaviour this repo relies on
 
 The sections below state the QarOS behaviour that this repository relies on.
@@ -166,7 +168,7 @@ The function `is_render_target` of this stack applies that rule: the role must b
 
 The session owner keeps the table of targets and tells its consumer when a target comes and goes. By default at most 8 targets get a stream at the same time, because every target costs four renders of the scene per frame, a colour render and a depth render for each of its two eyes. A further target is listed with the reason that the cap is reached and gets a stream when a served target goes away.
 
-A person can also ask the Hub of this PC to start the app of a device. The owner builds a connection string of the form `hololens:<host>` for a HoloLens, with the host name of the device, or `headset:<host>` for a Meta Quest or other headset, and starts `qar_session_invite_target_app_async` with it; the answer arrives as an event. The header says that the call asks the Hub of this machine to start a target app for the device and that the Hub remembers the device. The Hub of another PC does not serve it, and the owner refuses the call unless the program joined as a source app on the PC of the Hub. These invites were not run against a device.
+A person can also ask the Hub of this PC to start the app of a device. The owner builds a connection string of the form `hololens:<host>` for a HoloLens, with the host name of the device, or `headset:<host>` for a Meta Quest or other headset, and starts `qar_session_invite_target_app_async` with it; the answer arrives as an event. The header says that the call asks the Hub of this machine to start a target app for the device and that the Hub remembers the device. The owner always joins as a source app on the PC of the Hub, so the call is always available once joined. These invites were not run against a device.
 
 The description of a peer, `QarPeerSpec`, answers its role with `qar_peer_spec_get_role` and its presence with `qar_peer_spec_get_presence`, so the stack needs no heuristic about display names or about the time at which a peer appeared.
 
@@ -264,11 +266,11 @@ The content size is the part of the buffer that the widget covers. This stack al
 
 ## Rebuilding after an SDK update
 
-The plugin is tied to QAROS in two places, and an update touches them differently. The header is compiled in: qar_ogre_adapter vendors `qar_streaming.h` and installs it into the prefix, and the plugin compiles against that copy. The library is not compiled in: nothing links an import library, and the session owner of qar_ogre_adapter loads `qar-streaming-c.dll` at run time, from the folder of the plugin first, then from the folder that `QAROS_RUNTIME_DIR` names, then from the installed QAROS and last from the folders of `PATH`.
+The plugin is tied to QAROS in two places, and an update touches them differently. The header is compiled in: `qar_streaming.h` comes from the public qaros repository, the git submodule `external/qaros` of this repository (and of qar_ogre_adapter, which installs its copy into the prefix), and configuring the plugin stops when the installed copy differs from the submodule. The library is not compiled in: nothing links an import library, and the session owner of qar_ogre_adapter loads `qar-streaming-c.dll` at run time, from the folder of the plugin first, then from the folder that `QAROS_RUNTIME_DIR` names, then from the installed QAROS and last from the folders of `PATH`.
 
 **The header is the same.** Compare the hashes as [Identifying the QAROS version](#identifying-the-qaros-version) shows. When they are equal, the C API is the one that the plugin was built against and you rebuild nothing: install the new QAROS and run the launcher without `-Confirm`. The launcher reads the installed version and folder from the registry, uses `-SdkRoot` or `QAR_SDK_ROOT` instead when you give one, and shows the Hub processes of the PC; it only checks and plans, because the plugin loads the library itself.
 
-**The header changed.** Update the header in qar_ogre_adapter and rebuild and install the repositories in the order of [Rebuild order](#rebuild-order), the plugin last. For the plugin, `scripts\build_plugin.ps1` with `-Clean` deletes only the colcon build tree `build\colcon`, so that no object that was compiled against the old header survives, and the build then replaces `qar_rviz_streaming.dll` in the prefix. Windows refuses to replace a library that a running `rviz2.exe` has loaded, so close RViz first. The prefix is never deleted, and the script checks only that the two upstream packages exist in it and not that they are the new ones: install them again before you build the plugin.
+**The header changed.** Move the submodule `external/qaros` of this repository and of qar_ogre_adapter to the same qaros commit (`git -C external/qaros checkout <commit>` and commit the new pin), and rebuild and install the repositories in the order of [Rebuild order](#rebuild-order), the plugin last. For the plugin, `scripts\build_plugin.ps1` with `-Clean` deletes only the colcon build tree `build\colcon`, so that no object that was compiled against the old header survives, and the build then replaces `qar_rviz_streaming.dll` in the prefix. Windows refuses to replace a library that a running `rviz2.exe` has loaded, so close RViz first. The prefix is never deleted, and the script checks only that the two upstream packages exist in it and not that they are the new ones: install them again before you build the plugin.
 
 **After the rebuild.** The build does not say whether the new version behaves, so run the launcher without `-Confirm`, then connect once and look at the first lines of the log, as [Getting started](GETTING_STARTED.md#connect-to-qaros) shows. The default target of a spatial pick, `Action Point (QarOS scene intersect)`, relies on a runtime that reports the intersection of the ray with the scene as the action point, which the installed runtime does and the header states; check a pick against the scene before you rely on it with another version. [API changes by QAROS version](#api-changes-by-qaros-version) lists what else changed.
 

@@ -229,26 +229,7 @@ std::vector<SettingSpec> build_specs()
   specs.push_back(fps);
 
   specs.push_back(choice_spec(
-      settings_key::kHubMode, "QAR_PANEL_HUB_MODE", "auto", {"auto", "local", "remote"}));
-
-  SettingSpec hub_host;
-  hub_host.key = settings_key::kHubHost;
-  hub_host.env = "QAR_PANEL_HUB_HOST";
-  hub_host.kind = SettingKind::Text;
-  hub_host.default_value = "";
-  hub_host.min_length = 0;
-  hub_host.max_length = 253;
-  hub_host.allowed_chars = ".-:_";
-  specs.push_back(hub_host);
-
-  SettingSpec hub_port;
-  hub_port.key = settings_key::kHubPort;
-  hub_port.env = "QAR_PANEL_HUB_PORT";
-  hub_port.kind = SettingKind::Int;
-  hub_port.default_value = "0";
-  hub_port.min = 0.0;
-  hub_port.max = 65535.0;
-  specs.push_back(hub_port);
+      settings_key::kHubMode, "QAR_PANEL_HUB_MODE", "auto", {"auto", "local"}));
   specs.push_back(bool_spec(
       settings_key::kHiddenDisplaysOnConnect, "QAR_PANEL_HIDDEN_DISPLAYS", "true"));
   specs.push_back(bool_spec(settings_key::kArControlPanel, "QAR_PANEL_AR_CONTROL", "true"));
@@ -464,9 +445,40 @@ const char * migrated_invite_device(const std::string & word)
   return nullptr;
 }
 
+/// The keys of the pairing with the Hub of another PC, dropped in version 4.
+constexpr const char * kDroppedHubHostKey = "Hub Host";
+constexpr const char * kDroppedHubPortKey = "Hub Port";
+
+/// Version 4: QAROS no longer lets an app pair with the Hub of another PC; the plugin joins the
+/// Hub of this PC, which can be a member of the other PC's Hub.
+void migrate_remote_hub(SettingsText & config, SettingsLoadReport & report)
+{
+  const auto mode = config.find(settings_key::kHubMode);
+  if (mode != config.end() && lowered(trimmed(mode->second)) == "remote") {
+    report.migrated.push_back(
+      std::string(settings_key::kHubMode) + " 'remote' (pairing with the Hub of another PC) is "
+      "no longer supported by QAROS; it is read as 'local'. To reach the Hub of another PC, make "
+      "the Hub of this PC a member of it");
+    mode->second = "local";
+  }
+  for (const char * key : {kDroppedHubHostKey, kDroppedHubPortKey}) {
+    const auto found = config.find(key);
+    if (found != config.end()) {
+      report.migrated.push_back(
+        std::string(key) + " '" + printable(found->second) +
+        "' has no meaning without the pairing with another PC and is not kept");
+      config.erase(found);
+    }
+  }
+}
+
 /// Brings a configuration below the current version to the current keys and values, in place.
 void migrate_saved_config(SettingsText & config, SettingsLoadReport & report)
 {
+  if (report.version >= 3) {
+    migrate_remote_hub(config, report);
+    return;
+  }
   const auto admission = config.find("Peer Admission");
   if (admission != config.end()) {
     report.migrated.push_back(
@@ -483,6 +495,7 @@ void migrate_saved_config(SettingsText & config, SettingsLoadReport & report)
       device->second = mapped;
     }
   }
+  migrate_remote_hub(config, report);
 }
 
 }  // namespace
@@ -498,7 +511,9 @@ SettingsText parse_saved_settings(const SettingsText & saved_config, SettingsLoa
     any_known = any_known || config.find(spec.key) != config.end();
   }
   // The keys of an older plugin that this plugin has dropped still make a configuration "ours".
-  any_known = any_known || config.find("Peer Admission") != config.end();
+  any_known = any_known || config.find("Peer Admission") != config.end() ||
+    config.find(kDroppedHubHostKey) != config.end() ||
+    config.find(kDroppedHubPortKey) != config.end();
 
   const auto version = config.find(kSettingsVersionKey);
   if (version != config.end()) {
@@ -655,7 +670,7 @@ const std::vector<std::string> & removed_environment_variables()
   static const std::vector<std::string> names = {
     "QAR_PANEL_LAUNCHER_CONFIG", "QAR_PANEL_VISUALIZER_GUID", "QAR_PANEL_VISUALIZERS",
     "QAR_PANEL_PEER_ADMISSION", "QAR_PANEL_PEER_SETTLE_MS", "QAR_PANEL_PEER_NAME_FILTER",
-    "QAR_RUNTIME_BINARIES_DIR"};
+    "QAR_RUNTIME_BINARIES_DIR", "QAR_PANEL_HUB_HOST", "QAR_PANEL_HUB_PORT"};
   return names;
 }
 

@@ -109,7 +109,9 @@ function Get-AndExtract($url, $archiveName, $extractedDirName) {
     $destPath = Join-Path $BuildRoot $extractedDirName
     if (-not (Test-Path $destPath)) {
         Write-Host "Extracting $archiveName"
-        tar -xzf $archivePath -C $BuildRoot
+        $tar = Get-QarTar
+        if (-not $tar) { throw "tar not found on PATH (see docs/INSTALL.md, section 'Toolchain')." }
+        & $tar.Exe @($tar.Prefix + @('-xzf', $archivePath, '-C', $BuildRoot))
         if ($LASTEXITCODE -ne 0) {
             # a later run must find neither an unreadable archive nor a partly unpacked folder
             Remove-Item -LiteralPath $destPath -Recurse -Force -ErrorAction SilentlyContinue
@@ -135,7 +137,7 @@ $cbImportLib = Join-Path $cbRoot "lib\console_bridge.lib"
 if (-not ((Test-Path (Join-Path $destDir "console_bridge.dll")) -and (Test-Path (Join-Path $cbHeaderDir "console.h")) -and (Test-Path $cbImportLib))) {
     $src = Get-AndExtract "https://github.com/ros/console_bridge/archive/1.0.2.tar.gz" "console_bridge-1.0.2.tar.gz" "console_bridge-1.0.2"
     $b = Join-Path $src "_build"
-    cmake -S $src -B $b -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX="$src\_install"
+    cmake -S $src -B $b -G (Get-QarVsGenerator) -A x64 -DCMAKE_INSTALL_PREFIX="$src\_install"
     if ($LASTEXITCODE -ne 0) { throw "console_bridge configure failed" }
     cmake --build $b --config RelWithDebInfo --target console_bridge
     if ($LASTEXITCODE -ne 0) { throw "console_bridge build failed" }
@@ -154,7 +156,7 @@ if (-not ((Test-Path (Join-Path $destDir "console_bridge.dll")) -and (Test-Path 
 if (-not (Test-Path (Join-Path $destDir "tinyxml2.dll"))) {
     $src = Get-AndExtract "https://github.com/leethomason/tinyxml2/archive/refs/tags/9.0.0.tar.gz" "tinyxml2-9.0.0.tar.gz" "tinyxml2-9.0.0"
     $b = Join-Path $src "_build"
-    cmake -S $src -B $b -G "Visual Studio 16 2019" -A x64 -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$src\_install"
+    cmake -S $src -B $b -G (Get-QarVsGenerator) -A x64 -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$src\_install"
     if ($LASTEXITCODE -ne 0) { throw "tinyxml2 configure failed" }
     cmake --build $b --config RelWithDebInfo --target tinyxml2
     if ($LASTEXITCODE -ne 0) { throw "tinyxml2 build failed" }
@@ -165,7 +167,7 @@ if (-not (Test-Path (Join-Path $destDir "tinyxml2.dll"))) {
 if (-not (Test-Path (Join-Path $destDir "yaml-cpp.dll"))) {
     $src = Get-AndExtract "https://github.com/jbeder/yaml-cpp/archive/yaml-cpp-0.7.0.tar.gz" "yaml-cpp-0.7.0.tar.gz" "yaml-cpp-yaml-cpp-0.7.0"
     $b = Join-Path $src "_build"
-    cmake -S $src -B $b -G "Visual Studio 16 2019" -A x64 -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_BUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$src\_install"
+    cmake -S $src -B $b -G (Get-QarVsGenerator) -A x64 -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_BUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$src\_install"
     if ($LASTEXITCODE -ne 0) { throw "yaml-cpp configure failed" }
     cmake --build $b --config RelWithDebInfo --target yaml-cpp
     if ($LASTEXITCODE -ne 0) { throw "yaml-cpp build failed" }
@@ -176,7 +178,7 @@ if (-not (Test-Path (Join-Path $destDir "yaml-cpp.dll"))) {
 if (-not (Test-Path (Join-Path $destDir "assimp-vc141-mt.dll"))) {
     $src = Get-AndExtract "https://github.com/assimp/assimp/archive/v4.1.0.tar.gz" "assimp-4.1.0.tar.gz" "assimp-4.1.0"
     $b = Join-Path $src "_build"
-    cmake -S $src -B $b -G "Visual Studio 16 2019" -A x64 -DASSIMP_BUILD_ASSIMP_TOOLS=OFF -DASSIMP_BUILD_TESTS=OFF -DASSIMP_BUILD_SAMPLES=OFF -DCMAKE_CXX_FLAGS="/w /EHsc" -DCMAKE_C_FLAGS="/w" -DCMAKE_INSTALL_PREFIX="$src\_install"
+    cmake -S $src -B $b -G (Get-QarVsGenerator) -A x64 -DASSIMP_BUILD_ASSIMP_TOOLS=OFF -DASSIMP_BUILD_TESTS=OFF -DASSIMP_BUILD_SAMPLES=OFF -DCMAKE_CXX_FLAGS="/w /EHsc" -DCMAKE_C_FLAGS="/w" -DCMAKE_INSTALL_PREFIX="$src\_install"
     if ($LASTEXITCODE -ne 0) { throw "assimp configure failed" }
     cmake --build $b --config RelWithDebInfo --target assimp
     if ($LASTEXITCODE -ne 0) { throw "assimp build failed" }
@@ -189,7 +191,7 @@ if (-not (Test-Path (Join-Path $destDir "assimp-vc141-mt.dll"))) {
 if (-not (Test-Path (Join-Path $destDir "libcurl.dll"))) {
     $src = Get-AndExtract "https://github.com/curl/curl/releases/download/curl-7_81_0/curl-7.81.0.tar.gz" "curl-7.81.0.tar.gz" "curl-7.81.0"
     $b = Join-Path $src "_build"
-    cmake -S $src -B $b -G "Visual Studio 16 2019" -A x64 -DENABLE_MANUAL=OFF -DBUILD_TESTING=OFF -DCURL_USE_SCHANNEL=ON -DCURL_USE_OPENSSL=OFF -DBUILD_SHARED_LIBS=ON -DCURL_STATICLIB=OFF -DCMAKE_INSTALL_PREFIX="$src\_install"
+    cmake -S $src -B $b -G (Get-QarVsGenerator) -A x64 -DENABLE_MANUAL=OFF -DBUILD_TESTING=OFF -DCURL_USE_SCHANNEL=ON -DCURL_USE_OPENSSL=OFF -DBUILD_SHARED_LIBS=ON -DCURL_STATICLIB=OFF -DCMAKE_INSTALL_PREFIX="$src\_install"
     if ($LASTEXITCODE -ne 0) { throw "curl configure failed" }
     cmake --build $b --config RelWithDebInfo --target libcurl
     if ($LASTEXITCODE -ne 0) { throw "curl build failed" }

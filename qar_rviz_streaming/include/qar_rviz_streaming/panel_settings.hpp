@@ -48,7 +48,7 @@ namespace qar_rviz_streaming
 {
 
 /// The value of the version key that @ref settings_to_save writes.
-constexpr int kPanelSettingsVersion = 3;
+constexpr int kPanelSettingsVersion = 4;
 /// The lowest settings version whose configuration does not ask for the default dock size; see
 /// @ref wants_default_dock_size.
 constexpr int kDefaultDockSizeSettingsVersion = 2;
@@ -61,9 +61,8 @@ namespace settings_key
 {
 constexpr const char * kResolution = "Resolution";
 constexpr const char * kFpsCap = "FPS Cap";
+/// Kept so that older configurations load; every value joins the Hub of this PC as a local app.
 constexpr const char * kHubMode = "Hub Mode";
-constexpr const char * kHubHost = "Hub Host";
-constexpr const char * kHubPort = "Hub Port";
 constexpr const char * kHiddenDisplaysOnConnect = "Hidden Displays On Connect";
 constexpr const char * kArControlPanel = "AR Control Panel";
 constexpr const char * kArPanelCloseMode = "AR Panel Close Mode";
@@ -163,6 +162,10 @@ bool canonicalize_setting(
 /// A configuration below version 3 is read as this plugin's current settings: "Peer Admission"
 /// is dropped (QAROS serves every target, so the key has no meaning) and the invite kinds that
 /// QAROS cannot start are mapped (`quest` to `headset`, `visualizer` and `zed` to `hololens`).
+/// A configuration below version 4 loses the pairing with the Hub of another PC, which QAROS
+/// no longer offers to an app: "Hub Mode" `remote` is read as `local`, and "Hub Host" and
+/// "Hub Port" are dropped. To reach the Hub of another PC, make the Hub of this PC a member of
+/// it and join the Hub of this PC.
 /// Each change is a sentence in @ref SettingsLoadReport::migrated.
 SettingsText parse_saved_settings(const SettingsText & config, SettingsLoadReport & report);
 

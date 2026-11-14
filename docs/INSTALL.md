@@ -359,7 +359,7 @@ The runtime initialisation leaves the field `runtime_binaries_folder_path` empty
 
 Nothing in this stack links against QAROS. Configuring this repository does not read `QAR_SDK_ROOT`: only the configure step of `qar_ogre_adapter` checks that the DLL exists below the folder that the variable names, and it prints a warning and continues when the variable is not set or the DLL is missing. A build and the whole test suite therefore work without QAROS; only the programs that connect to QAROS need the installation at run time.
 
-How a program joins the QAROS Hub is described by QuaternAR: [Onboarding and sessions](https://docs.quaternar.com/docs/next/developer-guide/onboarding-and-sessions/) and [Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/). A program that runs on the PC of the Hub joins as a local source app, and the Hub asks its operator once to allow it; a Hub on another PC needs a pairing code.
+How a program joins the QAROS Hub is described by QuaternAR: [Onboarding and sessions](https://docs.quaternar.com/docs/next/developer-guide/onboarding-and-sessions/) and [Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/). A program that runs on the PC of the Hub joins as a local source app, and the Hub asks its operator once to allow it. This plugin joins only that way: to reach the Hub of another PC, make the Hub of this PC a member of it.
 
 ## Python environment
 
@@ -368,7 +368,7 @@ How a program joins the QAROS Hub is described by QuaternAR: [Onboarding and ses
 The next steps use the scripts and the `requirements.txt` of this repository, so clone it first.
 
 ```powershell
-git clone https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
+git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
 ```
 ```text
 Cloning into 'C:\qar\src\qar_rviz_plugin'...
@@ -660,7 +660,7 @@ usage: ros2 [-h] [--use-python-default-buffering]
 
 Build and install the two repositories one after the other into the prefix `QAR_PREFIX`, in either order, because they do not depend on each other; the plugin needs both, and it finds the components `qar_ar_core`, `qar_ogre_streaming`, `capi`, `session`, `render`, `url` and `gestures` of `qar_ogre_adapter` and the components `seam` and `qar_qt_streaming` of `qar_qt_streaming`. It does not use the component `qaros` of `qar_qt_streaming`: the module `qar_capi_panels` of this repository is the backend of the panels, so the plugin works on the session of the session owner.
 
-### qar_ogre_adapter 0.2.0
+### qar_ogre_adapter 0.2.1
 
 qar_ogre_adapter is the QarOS integration layer. It renders an Ogre scene for each eye into OpenGL textures and streams them to QarOS, and it holds the adapter for the QarOS C API (session, peers, URL panels and gestures) that the plugin repository builds on. It also carries the C header of the QarOS SDK that the plugin repository compiles against.
 
@@ -729,7 +729,7 @@ cmake --build --preset vs2019-x64
   qar_ogre_streaming_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\test\RelWithDebInfo\qar_ogre_streaming_tests.exe
 ```
 
-Install it into the prefix. The install puts the libraries of the three modules `qar_ar_core`, `qar_ogre_streaming` and `qar_qar_adapter` and the vendored QarOS C header below `$env:QAR_PREFIX`, together with the CMake package that the other repositories of this stack find there.
+Install it into the prefix. The install puts the libraries of the three modules `qar_ar_core`, `qar_ogre_streaming` and `qar_qar_adapter` and the QarOS C header below `$env:QAR_PREFIX`, together with the CMake package that the other repositories of this stack find there.
 
 ```powershell
 cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFIX
@@ -749,7 +749,7 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterConfigVersion.cmake
 ```
 
-### qar_qt_streaming 0.2.0
+### qar_qt_streaming 0.2.1
 
 qar_qt_streaming turns Qt widgets into QarOS AR GUI panels: it captures a widget off screen, streams it as a panel and feeds AR touch input back to the widget. It needs Qt and the headers of the QarOS C++ SDK, and nothing of the other repositories of this stack.
 
@@ -859,8 +859,8 @@ Preset CMake variables:
 ...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
 ...
--- qar_ogre_adapter 0.2.0: C:/qar/install/share/qar_ogre_adapter/cmake
--- qar_qt_streaming 0.2.0: C:/qar/install/share/qar_qt_streaming/cmake
+-- qar_ogre_adapter 0.2.1: C:/qar/install/share/qar_ogre_adapter/cmake
+-- qar_qt_streaming 0.2.1: C:/qar/install/share/qar_qt_streaming/cmake
 ...
 -- Configuring done (6.2s)
 -- Generating done (0.4s)
@@ -1018,6 +1018,42 @@ True   share\ament_index\resource_index\rviz_common__pluginlib__plugin\qar_rviz_
 ```
 
 These commands do not load the plugin. The first time that RViz loads it is [Launch RViz with the plugin](GETTING_STARTED.md#launch-rviz-with-the-plugin), and [Check the launch configuration](GETTING_STARTED.md#check-the-launch-configuration) shows without a window what the launcher will do. If the panel is missing in RViz although the three files exist, [RViz and plugin problems](TROUBLESHOOTING.md#rviz-and-plugin-problems) lists the causes.
+
+## Register the plugin for QAROS
+
+QAROS starts RViz2 with this plugin from the "ROS 2 Rviz" source application of the Visualizer. For your own build, register the install prefix once after the build; `scripts\build_plugin.ps1` prints this command at its end and does not run it:
+
+```powershell
+.\scripts\register-qaros-plugin.ps1 -Prefix $env:QAR_PREFIX -RosRoot $env:ROS2_INSTALL_ROOT
+```
+```text
+Added the local record for humble / windows-x64 in C:\Users\<user>\AppData\Roaming\Quaternar\ros-plugins.json
+  ROS 2 root     : C:\qar\deps\ros2_humble\ros2-windows
+  prefix         : C:\qar\install
+  plugin version : 0.2.1
+  C API SHA-256  : 94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762
+                   (from C:\qar\install\share\qar_rviz_streaming\qar_streaming_h.sha256)
+```
+
+Running it again after a new build replaces the record; `-Unregister -Distro humble` removes it. The script checks the prefix and the distribution and writes one record into a per-user file; it changes nothing else. Without a build of your own, QAROS offers to download the prebuilt plugin of its release. [QAROS plugin registration](CONFIGURATION.md#qaros-plugin-registration) describes the file and the parameters.
+
+## Linux (unverified)
+
+The plugin has not been built on Linux by hand, and prebuilt releases are Windows only for now: the first release workflow runs on Ubuntu 22.04 (Humble) and 24.04 (Jazzy) stopped at compile errors with gcc and against the Jazzy API ([#6](https://github.com/Quaternar/qaros-ros-rviz/issues/6)). Treat the steps below as the intended procedure, not a verified one. The repairs of this document are Windows-only: a distribution from the apt packages needs none.
+
+```bash
+sudo apt install ros-humble-rviz2 ros-humble-rviz-default-plugins qtbase5-dev libqt5websockets5-dev \
+  ninja-build python3-colcon-common-extensions
+git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz ~/qar/src/qar_rviz_plugin
+git clone https://github.com/Quaternar/qaros-ogre ~/qar/src/qar_ogre_adapter
+git clone https://github.com/Quaternar/qaros-qt ~/qar/src/qar_qt_streaming
+cd ~/qar/src/qar_rviz_plugin
+scripts/build_plugin.sh --ros-root /opt/ros/humble --prefix ~/qar/install \
+  --ogre-source ~/qar/src/qar_ogre_adapter --qt-source ~/qar/src/qar_qt_streaming
+scripts/register-qaros-plugin.sh --ros-root /opt/ros/humble --prefix ~/qar/install
+```
+
+`scripts/build_plugin.sh` builds the two upstream libraries into the plugin from their checkouts (or finds them installed below `--upstream-prefix`), installs into the prefix with `--merge-install` and ends with `=== BUILD OK ===`, the path of `lib/libqar_rviz_streaming.so` and the register command. `MAKEFLAGS=-j2` limits the parallel jobs.
 
 ## Removing everything again
 

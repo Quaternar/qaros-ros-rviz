@@ -92,7 +92,6 @@
 #include "qar_qar_adapter/env_config.hpp"
 #include "qar_qar_adapter/geo_anchor.hpp"
 #include "qar_qar_adapter/gui_call_guard.hpp"
-#include "qar_qar_adapter/identity_store.hpp"
 #include "qar_capi_panels/qar_capi_panel_sender_adapter.hpp"
 #include "qar_capi_panels/seam_c.hpp"
 #include "qar_qar_adapter/qar_capi_render_sender_adapter.hpp"
@@ -337,12 +336,6 @@ ConnectionPhase phaseOf(qar_qar_adapter::SessionState state)
       return ConnectionPhase::Loading;
     case SessionState::kWaitingForApproval:
       return ConnectionPhase::WaitingForApproval;
-    case SessionState::kRejoining:
-      return ConnectionPhase::Rejoining;
-    case SessionState::kNeedsCode:
-      return ConnectionPhase::NeedsCode;
-    case SessionState::kPairing:
-      return ConnectionPhase::Pairing;
     case SessionState::kRunning:
       return ConnectionPhase::Running;
     case SessionState::kReconnecting:
@@ -353,19 +346,6 @@ ConnectionPhase phaseOf(qar_qar_adapter::SessionState state)
       return ConnectionPhase::Failed;
   }
   return ConnectionPhase::Idle;
-}
-
-qar_qar_adapter::HubMode hubModeOf(HubChoice choice)
-{
-  switch (choice) {
-    case HubChoice::Local:
-      return qar_qar_adapter::HubMode::kLocal;
-    case HubChoice::Remote:
-      return qar_qar_adapter::HubMode::kRemote;
-    case HubChoice::Auto:
-      break;
-  }
-  return qar_qar_adapter::HubMode::kAuto;
 }
 
 /// The words of a device category in the target list.
@@ -597,7 +577,7 @@ QarStreamingPanel::QarStreamingPanel(QWidget * parent)
   // puts the pick where the AR user was not pointing, silently.
   spatial_.set_transform(qar_ar_core::room_to_ros_from_environment());
   refreshSpatialUi();
-  appendLog("Qar streaming panel constructed.");
+  appendLog(QString("Qar streaming panel constructed (qar_rviz_streaming %1).").arg(QAR_RVIZ_PLUGIN_VERSION));
   reportSettings();
   // The variables that have no effect with this QAROS say so, once.
   for (const std::string & sentence : removed_environment_sentences(
@@ -755,8 +735,8 @@ void QarStreamingPanel::buildUi()
   runtime_buttons->addWidget(stop_qar_button_);
   connection_layout->addLayout(runtime_buttons);
 
-  // Which Hub this program joins, the pairing with another PC's Hub and the devices the Hub
-  // lists as targets. The group shows in every mode; the preview shows the settings only.
+  // The join to the Hub of this PC (a local app) and the devices the Hub
+  // lists as targets. The group shows in every mode.
   hub_widget_ = new HubConnectionWidget(connection_page);
   connection_layout->addWidget(hub_widget_);
 
@@ -781,7 +761,7 @@ void QarStreamingPanel::buildUi()
   invite_row->addWidget(peer_kind_combo_);
   invite_row->addWidget(peer_hostname_edit_, 1);
   add_peer_button_ = new QPushButton("Invite peer", invite_group_);
-  add_peer_button_->setToolTip(kInviteRemoteToolTip);  // no session yet
+  add_peer_button_->setToolTip("Inviting a device needs a QarOS session.");  // no session yet
   invite_layout->addLayout(invite_row);
   invite_layout->addWidget(add_peer_button_);
   connection_layout->addWidget(invite_group_);
@@ -1399,36 +1379,9 @@ void QarStreamingPanel::buildUi()
       onSettingEdited(settings_key::kInviteHostname, peer_hostname_edit_->text().trimmed());
     });
 
-  // --- The QAROS Hub group: the Hub settings, the pairing, the targets ---------------------------
-  connect(
-    hub_widget_, &HubConnectionWidget::modeEdited, this,
-    [this](const QString & word) {
-      onSettingEdited(settings_key::kHubMode, word);
-      refreshConnectionView();
-    });
-  connect(
-    hub_widget_, &HubConnectionWidget::hostEdited, this,
-    [this](const QString & text) {
-      onSettingEdited(settings_key::kHubHost, text);
-      refreshConnectionView();
-    });
-  connect(
-    hub_widget_, &HubConnectionWidget::portEdited, this,
-    [this](const QString & text) {
-      // An empty field is a port that is not set.
-      onSettingEdited(settings_key::kHubPort, text.isEmpty() ? QStringLiteral("0") : text);
-      refreshConnectionView();
-    });
-  connect(
-    hub_widget_, &HubConnectionWidget::pairRequested, this, &QarStreamingPanel::onPairRequested);
-  connect(
-    hub_widget_, &HubConnectionWidget::pairRefused, this,
-    [this](const QString & reason) { setLastError("Pairing: " + reason); });
+  // --- The QAROS Hub group: the join in progress, the targets -----------------------------------
   connect(
     hub_widget_, &HubConnectionWidget::cancelRequested, this, &QarStreamingPanel::onCancelConnect);
-  connect(
-    hub_widget_, &HubConnectionWidget::forgetConfirmed, this,
-    &QarStreamingPanel::onForgetConfirmed);
 
   // --- The size of the panel is logged, to prove it does not move ------------------------------
   connect(
@@ -1754,13 +1707,7 @@ void QarStreamingPanel::applySettingsToUi()
   }
   refreshSpatialUi();
 
-  // Connection: the Hub to join, and which device "Invite peer" invites.
-  hub_widget_->set_mode_word(text(settings_key::kHubMode));
-  hub_widget_->set_host_text(text(settings_key::kHubHost));
-  {
-    const int port = setting_int(effective_settings_, settings_key::kHubPort);
-    hub_widget_->set_port_text(port > 0 ? QString::number(port) : QString());
-  }
+  // Connection: which device "Invite peer" invites. The Hub is always the one of this PC.
   {
     const QSignalBlocker blocker(peer_kind_combo_);
     select_data(peer_kind_combo_, text(settings_key::kInviteDevice));
@@ -1771,9 +1718,6 @@ void QarStreamingPanel::applySettingsToUi()
   }
 
   // A control whose variable decides says so, and cannot be edited.
-  markEnvironmentControl(hub_widget_->mode_combo(), resolved(settings_key::kHubMode));
-  markEnvironmentControl(hub_widget_->host_edit(), resolved(settings_key::kHubHost));
-  markEnvironmentControl(hub_widget_->port_edit(), resolved(settings_key::kHubPort));
   markEnvironmentControl(
     hidden_displays_checkbox_, resolved(settings_key::kHiddenDisplaysOnConnect));
   markEnvironmentControl(ar_control_checkbox_, resolved(settings_key::kArControlPanel));
@@ -1781,7 +1725,6 @@ void QarStreamingPanel::applySettingsToUi()
   markEnvironmentControl(ar_panel_scale_spin_, resolved(settings_key::kWebPanelScale));
   // After the visibility switch above has its value: the close choice is used only without hiding.
   refreshCloseModeControl();
-  // The Connection tab follows the Hub settings (the remote fields show for another PC's Hub).
   refreshConnectionView();
 }
 
@@ -2438,7 +2381,7 @@ void QarStreamingPanel::onInitialize()
     appendLog(
       "LIVE mode: panel is live-capable. Click 'Connect to QarOS' to "
       "join the QAROS Hub - deferred, NOT connected at load.");
-    refreshIdentity();
+    refreshConnectionView();
     // Relabel the runtime controls so the live connection is discoverable (buildUi
     // runs before onInitialize, so live_stream_mode_ isn't known there).
     if (start_qar_button_ != nullptr) { start_qar_button_->setText("Connect to QarOS"); }
@@ -2928,10 +2871,11 @@ void QarStreamingPanel::applyPendingGeoFix()
 qar_qar_adapter::SessionOwnerConfig QarStreamingPanel::makeSessionOwnerConfig()
 {
   qar_qar_adapter::SessionOwnerConfig cfg;
-  currentHubSettings(cfg.mode, cfg.remote);
+  // The owner joins the Hub of this PC as a local app (QarOnboardLocalAppExt); the Hub of another
+  // PC is reached through the Hub of this PC as a member of it.
   cfg.program_tag = kProgramTag;
-  cfg.instance = qEnvironmentVariable("QAR_PANEL_INSTANCE").trimmed().toStdString();
   cfg.display_name = "RViz2 (QAROS ROS plugin) on " + QSysInfo::machineHostName().toStdString();
+  cfg.app_version = QAR_RVIZ_PLUGIN_VERSION;
 
   // How long the Hub waits for the person to click Allow: 0 is the Hub's own default (120 s),
   // and the Hub takes at most 600 s.
@@ -3010,26 +2954,6 @@ qar_qar_adapter::SessionOwnerConfig QarStreamingPanel::makeSessionOwnerConfig()
       }
     };
   return cfg;
-}
-
-void QarStreamingPanel::currentHubSettings(
-  qar_qar_adapter::HubMode & mode, qar_qar_adapter::HubEndpoint & endpoint) const
-{
-  mode = hubModeOf(hub_choice_from_word(setting_text(effective_settings_, settings_key::kHubMode)));
-  endpoint.host = setting_text(effective_settings_, settings_key::kHubHost);
-  const int port = setting_int(effective_settings_, settings_key::kHubPort);
-  endpoint.port = (port > 0 && port <= 65535) ? static_cast<std::uint16_t>(port) : 0;
-}
-
-std::string QarStreamingPanel::hubSettingsSignature() const
-{
-  std::string signature;
-  for (const char * key : {settings_key::kHubMode, settings_key::kHubHost,
-      settings_key::kHubPort})
-  {
-    signature += setting_text(effective_settings_, key) + "|";
-  }
-  return signature;
 }
 
 qar_qar_adapter::QarCApiSenderFactory::Config QarStreamingPanel::makeFactoryConfig()
@@ -3186,26 +3110,13 @@ void QarStreamingPanel::ensureSessionOwner()
 {
   if (session_owner_) {
     // The owner and the QAROS library it holds are made once and live until RViz closes the
-    // panel: a new Hub setting is passed on and applied at the next connect.
-    const std::string signature = hubSettingsSignature();
-    if (signature != owner_hub_signature_) {
-      owner_hub_signature_ = signature;
-      qar_qar_adapter::HubMode mode = qar_qar_adapter::HubMode::kAuto;
-      qar_qar_adapter::HubEndpoint endpoint;
-      currentHubSettings(mode, endpoint);
-      session_owner_->configure(mode, std::move(endpoint));
-      appendLog("QAROS: the Hub settings changed; the session owner applies them at the next "
-        "connect.");
-    }
+    // panel.
     return;
   }
-  owner_hub_signature_ = hubSettingsSignature();
   session_owner_ = std::make_shared<qar_qar_adapter::QarSessionOwner>(makeSessionOwnerConfig());
   appendLog(
-    QString("QAROS: session owner made (program %1, Hub mode setting '%2')")
-    .arg(
-      QString::fromLatin1(kProgramTag),
-      QString::fromStdString(setting_text(effective_settings_, settings_key::kHubMode))));
+    QString("QAROS: session owner made (program %1, local app of the Hub of this PC)")
+    .arg(QString::fromLatin1(kProgramTag)));
 }
 
 void QarStreamingPanel::pollSessionOwner()
@@ -3218,18 +3129,6 @@ void QarStreamingPanel::pollSessionOwner()
   }
   for (const std::string & line : lines) {
     appendToView(QString::fromStdString(line));
-  }
-
-  // The release that "Forget pairing" asked for runs here, outside the click: the click may be an
-  // AR click that the panel manager is delivering, and the release destroys that manager.
-  if (pending_session_action_ != PendingSessionAction::None) {
-    const PendingSessionAction action = pending_session_action_;
-    pending_session_action_ = PendingSessionAction::None;
-    releaseSessionConsumers(QStringLiteral("the pairing is forgotten"));
-    if (session_owner_ && action == PendingSessionAction::Forget) {
-      session_owner_->forget();
-    }
-    updateRuntimeStateLabel();
   }
 
   if (!session_owner_) {
@@ -3263,7 +3162,7 @@ void QarStreamingPanel::handleSessionEvent(const qar_qar_adapter::SessionEvent &
           approval_started_ = std::chrono::steady_clock::now();
           approval_shown_ = approval_started_;
         }
-        if (event.state == SessionState::kFailed || event.state == SessionState::kNeedsCode) {
+        if (event.state == SessionState::kFailed) {
           owner_failure_message_ = message;
           if (!message.empty()) {
             setLastError("QarOS: " + QString::fromStdString(message));
@@ -3272,7 +3171,6 @@ void QarStreamingPanel::handleSessionEvent(const qar_qar_adapter::SessionEvent &
         if (event.state == SessionState::kRunning) {
           clearLastError();
           owner_failure_message_.clear();
-          refreshIdentity();
           if (!qar_factory_) {
             onSessionRunning();
           }
@@ -3309,16 +3207,6 @@ void QarStreamingPanel::handleSessionEvent(const qar_qar_adapter::SessionEvent &
         refreshConnectionView();
         break;
       }
-    case Kind::kForgetDone:
-      refreshIdentity();
-      if (event.status.code != 0) {
-        setLastError("Forget pairing: " + QString::fromStdString(event.status.message));
-      } else {
-        clearLastError();
-        appendLog("QarOS: the pairing with the Hub was forgotten; the next connect needs a code.");
-      }
-      updateRuntimeStateLabel();
-      break;
     case Kind::kLog:
       appendLog("QAROS: " + QString::fromStdString(event.text));
       break;
@@ -3439,12 +3327,6 @@ void QarStreamingPanel::inviteFromEnvironment()
     return;
   }
   environment_invites_done_ = true;
-  if (session_owner_->effective_mode() == qar_qar_adapter::HubMode::kRemote) {
-    appendLog(
-      "LIVE: QAR_PANEL_INVITE_PEERS is ignored: device invites are served only to an app that "
-      "joined the Hub on its own PC.");
-    return;
-  }
   appendLog(QString("LIVE: inviting devices at connect: %1").arg(list));
   for (const QString & item : list.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
     const int colon = item.indexOf(QLatin1Char(':'));
@@ -3627,41 +3509,6 @@ void QarStreamingPanel::appendToView(const QString & line) const
   }
 }
 
-void QarStreamingPanel::onPairRequested(const QString & code, const QString & host, int port)
-{
-  if (!session_owner_ || connection_phase_ != ConnectionPhase::NeedsCode) {
-    setLastError("Pairing: the Hub is not waiting for a code (press Connect to QarOS first).");
-    return;
-  }
-  // The host and the port are settings; the code is not kept anywhere and is never logged.
-  onSettingEdited(settings_key::kHubHost, host);
-  onSettingEdited(settings_key::kHubPort, QString::number(port));
-  qar_qar_adapter::HubEndpoint hub;
-  hub.host = host.toStdString();
-  hub.port = static_cast<std::uint16_t>(port);
-  session_owner_->submit_code(code.toStdString(), std::move(hub));
-  appendLog(
-    QString("QarOS: pairing code sent to the Hub at %1:%2.").arg(host).arg(port));
-  clearLastError();
-  connection_phase_ = ConnectionPhase::Pairing;
-  updateRuntimeStateLabel();
-}
-
-void QarStreamingPanel::onForgetConfirmed()
-{
-  if (!live_stream_mode_) {
-    return;
-  }
-  // Forgetting needs the owner even when this run never connected.
-  ensureSessionOwner();
-  appendLog("QarOS: forgetting the pairing with the Hub (the session is released first).");
-  pending_session_action_ = PendingSessionAction::Forget;
-  if (qar_factory_) {
-    connection_phase_ = ConnectionPhase::Stopping;
-  }
-  updateRuntimeStateLabel();
-}
-
 void QarStreamingPanel::onCancelConnect()
 {
   if (!session_owner_) {
@@ -3682,42 +3529,18 @@ ConnectionInput QarStreamingPanel::connectionInput() const
 {
   ConnectionInput input;
   input.phase = live_stream_mode_ ? connection_phase_ : ConnectionPhase::Preview;
-  input.mode_setting =
-    hub_choice_from_word(setting_text(effective_settings_, settings_key::kHubMode));
   input.program_name =
     QFileInfo(QCoreApplication::applicationFilePath()).fileName().toStdString();
   if (input.program_name.empty()) {
     input.program_name = "rviz2.exe";
   }
-  input.has_remote_identity = identity_present_;
   input.streaming_paused = streamingPaused();
   input.attaching = attach_pending_;
   if (session_owner_) {
-    const qar_qar_adapter::HubMode mode = session_owner_->effective_mode();
-    input.mode_resolved = mode != qar_qar_adapter::HubMode::kAuto;
-    input.remote_resolved = mode == qar_qar_adapter::HubMode::kRemote;
-    input.has_remote_identity = identity_present_ || session_owner_->has_remote_identity();
     const std::vector<qar_qar_adapter::TargetInfo> targets = session_owner_->targets();
     input.target_count = targets.size();
     for (const qar_qar_adapter::TargetInfo & target : targets) {
       input.served_count += target.served ? 1U : 0U;
-    }
-  }
-  input.identity_host = identity_host_;
-  input.identity_port = identity_port_;
-  input.pairing_id = identity_short_id_;
-  // The fields hold what the person typed; while a rejoin runs, the stored pairing is the Hub.
-  if (hub_widget_ != nullptr) {
-    input.host = hub_widget_->host_text().toStdString();
-    int port = 0;
-    if (parse_hub_port(hub_widget_->port_text().toStdString(), port)) {
-      input.port = port;
-    }
-  }
-  if (input.host.empty() || input.phase == ConnectionPhase::Rejoining) {
-    if (identity_present_) {
-      input.host = identity_host_;
-      input.port = identity_port_;
     }
   }
   if (input.phase == ConnectionPhase::WaitingForApproval) {
@@ -3764,9 +3587,6 @@ void QarStreamingPanel::refreshConnectionView()
         break;
       case ConnectionPhase::Loading:
       case ConnectionPhase::WaitingForApproval:
-      case ConnectionPhase::Rejoining:
-      case ConnectionPhase::NeedsCode:
-      case ConnectionPhase::Pairing:
       case ConnectionPhase::Reconnecting:
       case ConnectionPhase::Stopping:
         runtime_state_label_->setStyleSheet("font-weight: bold; color: #d35400;");
@@ -3801,38 +3621,6 @@ void QarStreamingPanel::refreshTargetList()
     }
   }
   hub_widget_->set_targets(rows);
-}
-
-void QarStreamingPanel::refreshIdentity()
-{
-  identity_present_ = false;
-  identity_host_.clear();
-  identity_port_ = 0;
-  identity_short_id_.clear();
-  const std::string dir = qar_qar_adapter::default_identity_dir(
-    kProgramTag, qEnvironmentVariable("QAR_PANEL_INSTANCE").trimmed().toStdString());
-  if (!dir.empty()) {
-    qar_qar_adapter::IdentityRecord record;
-    std::string error;
-    if (qar_qar_adapter::read_identity(
-        qar_qar_adapter::identity_file_path(dir), record, error) ==
-      qar_qar_adapter::IdentityRead::kOk)
-    {
-      identity_present_ = true;
-      identity_host_ = record.host;
-      identity_port_ = record.port;
-      identity_short_id_ = record.id.substr(0, 8);
-    }
-  }
-  // The fields start from the stored pairing when the person has typed nothing yet. Nothing is
-  // saved by this: only an edit is the person's own value.
-  if (hub_widget_ != nullptr && identity_present_ && hub_widget_->host_text().isEmpty()) {
-    hub_widget_->set_host_text(QString::fromStdString(identity_host_));
-    if (hub_widget_->port_text().isEmpty() && identity_port_ > 0) {
-      hub_widget_->set_port_text(QString::number(identity_port_));
-    }
-  }
-  refreshConnectionView();
 }
 
 void QarStreamingPanel::startArControlPage(bool live)
@@ -3870,8 +3658,8 @@ void QarStreamingPanel::onStopQar()
 
   // LIVE: "Disconnect (pause)" pauses streaming. The QAROS session, the render factory, the panel
   // manager with the streamed windows, the URL panels and the AR control panel stay as they are;
-  // "Connect to QarOS" resumes at once. Everything built on the session is released only by
-  // "Forget pairing", by a session that ends on its own and when RViz closes the panel.
+  // "Connect to QarOS" resumes at once. Everything built on the session is released only by a
+  // session that ends on its own and when RViz closes the panel.
   if (live_stream_mode_) {
     if (attach_pending_) {
       // Stopped while the app volume is being made: the factory lets go and the session is given
@@ -11010,10 +10798,7 @@ ControlPanelSnapshot QarStreamingPanel::controlPanelSnapshot()
   ControlPanelSnapshot snapshot;
   if (live_stream_mode_) {
     const bool joining = connection_phase_ == ConnectionPhase::Loading ||
-      connection_phase_ == ConnectionPhase::WaitingForApproval ||
-      connection_phase_ == ConnectionPhase::Rejoining ||
-      connection_phase_ == ConnectionPhase::NeedsCode ||
-      connection_phase_ == ConnectionPhase::Pairing;
+      connection_phase_ == ConnectionPhase::WaitingForApproval;
     if (joining) {
       snapshot.connection = ConnectionState::Connecting;
     } else if (live_connected_) {

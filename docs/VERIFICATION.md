@@ -6,7 +6,7 @@ This section gives the result of each level. The results of Level 0 and Level 1 
 
 - Level 0, automated checks: passed. Every test of the repository ran and none failed ([Run all tests](#run-all-tests) shows the totals), the layering guard, its self-test and the self-test of the timing analyzer reported OK ([The layering guard and the analyzer](#the-layering-guard-and-the-analyzer)), the plugin built with colcon and installed into the prefix ([Build the plugin and install it](#build-the-plugin-and-install-it)), and the install smoke test found the installed package and its three files ([Install smoke test](#install-smoke-test)).
 - Level 1, headless checks: passed with the installed QAROS 0.9.0-dev.3008+65dc9aeb ([SDK compatibility](SDK_COMPATIBILITY.md)): the default dry run, the dry run with trace logs and the dry run that invites a device printed the lines that the checks name, exited with 0 and changed nothing ([The default dry run](#the-default-dry-run), [The dry run with trace logs](#the-dry-run-with-trace-logs), [The dry run that invites a device](#the-dry-run-that-invites-a-device)), and the web example, which needs no QAROS, served its page with the status 200 and answered a wrong token with 404 and the root of the server with 200, and the ROS 2 example advertised its topics and printed the message that was published to it; these outputs were recorded with an earlier build of the examples and the documentation step starts no example, so they are not recorded again ([A page served and fetched](#a-page-served-and-fetched), [The token gate](#the-token-gate), [The ROS 2 bridge](#the-ros-2-bridge)).
-- Level 2, desktop checks: live checks of the authors of qar_rviz_plugin with the installed QAROS covered the join to the Hub of this PC with one click on Allow, a Visualizer that was given a receiver and then received the scene, AR panels with their dialogs, the hidden Displays panel and the AR control panel, and no crash file of the Visualizer appeared; the denial of the join, the approval timeout, a Hub that stops while the panel is connected, the pairing with the Hub of another PC, forgetting a pairing and the invitation of a device were not run live, and no session with a headset has run this release. The outputs of the steps of Level 2 below are not recorded again: they wait for the checks of a person. Earlier live sessions, held with older builds and an older runtime, are the source of the rest of this level. The logs of two earlier sessions show the connection, the invitation of one and of two Visualizers, a steady stream, the pause and the resume, streamed panels with their dialogs, AR tools of the ROS graph with 12 of the 17 templates and the generic form, hover and click events with the ray of the runtime and 21 published picks, video by both routes, a geographic anchor from a synthetic fix and a recorded bag; in those two sessions the authors reported that the three commands of the README for the recorded bag worked and gave no verdict step by step on the rest, and the other confirmations that this document reports come from earlier live sessions, held with older builds and a runtime earlier than the installed one; [What the live sessions showed](#what-the-live-sessions-showed) says which. The Visualizer crashes when the hidden Displays panel is started again, which is a defect of the Visualizer ([Known issues](#known-issues)), and the examples of the web libraries were not run against a Visualizer.
+- Level 2, desktop checks: live checks of the authors of qar_rviz_plugin with the installed QAROS covered the join to the Hub of this PC with one click on Allow, a Visualizer that was given a receiver and then received the scene, AR panels with their dialogs, the hidden Displays panel and the AR control panel, and no crash file of the Visualizer appeared; the denial of the join, the approval timeout, a Hub that stops while the panel is connected and the invitation of a device were not run live, and no session with a headset has run this release. The outputs of the steps of Level 2 below are not recorded again: they wait for the checks of a person. Earlier live sessions, held with older builds and an older runtime, are the source of the rest of this level. The logs of two earlier sessions show the connection, the invitation of one and of two Visualizers, a steady stream, the pause and the resume, streamed panels with their dialogs, AR tools of the ROS graph with 12 of the 17 templates and the generic form, hover and click events with the ray of the runtime and 21 published picks, video by both routes, a geographic anchor from a synthetic fix and a recorded bag; in those two sessions the authors reported that the three commands of the README for the recorded bag worked and gave no verdict step by step on the rest, and the other confirmations that this document reports come from earlier live sessions, held with older builds and a runtime earlier than the installed one; [What the live sessions showed](#what-the-live-sessions-showed) says which. The Visualizer crashes when the hidden Displays panel is started again, which is a defect of the Visualizer ([Known issues](#known-issues)), and the examples of the web libraries were not run against a Visualizer.
 - Level 3, device checks: not run for this release; [Device checks (Level 3)](#device-checks-level-3) says why.
 
 ## Verification levels
@@ -50,8 +50,8 @@ Preset CMake variables:
 ...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
 ...
--- qar_ogre_adapter 0.2.0: C:/qar/install/share/qar_ogre_adapter/cmake
--- qar_qt_streaming 0.2.0: C:/qar/install/share/qar_qt_streaming/cmake
+-- qar_ogre_adapter 0.2.1: C:/qar/install/share/qar_ogre_adapter/cmake
+-- qar_qt_streaming 0.2.1: C:/qar/install/share/qar_qt_streaming/cmake
 ...
 -- Configuring done (6.2s)
 -- Generating done (0.4s)
@@ -248,8 +248,7 @@ The default run shows the scene, the programs of QarOS, the overlay of the plugi
   QAR_PANEL_LIVE_STREAM    = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
-  QAR_PANEL_HUB_MODE       = (not set: the panel setting "Hub" of the QAROS Hub group decides, Automatic by default)
-  QAR_PANEL_HUB_HOST / _PORT = (not set) / (not set)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = (none - pass -InvitePeers to invite devices)
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
   QAR_PANEL_VOLUME_Y       = -1.6 (launcher default)
@@ -276,8 +275,7 @@ The default run shows the scene, the programs of QarOS, the overlay of the plugi
   qar-streaming-viz        : running (pid 46064, since 11:52:59)
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
-  Hub mode (resolved)      : local (auto: QAROS is installed on this PC; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)
-  identity file            : not present (C:\Users\<user>\AppData\Local\Quaternar\QarOS-ROS\rviz2-plugin\identity.txt): no pairing with the Hub of another PC is stored
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
@@ -320,8 +318,7 @@ With `-TraceLogs` the launcher selects the full logs that a bug report needs: Qa
   qar-streaming-viz        : running (pid 46064, since 11:52:59)
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
-  Hub mode (resolved)      : local (auto: QAROS is installed on this PC; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)
-  identity file            : not present (C:\Users\<user>\AppData\Local\Quaternar\QarOS-ROS\rviz2-plugin\identity.txt): no pairing with the Hub of another PC is stored
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
@@ -352,8 +349,7 @@ The parameter `-InvitePeers` takes entries of the form `kind:host`, separated by
   QAR_PANEL_LIVE_STREAM    = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
-  QAR_PANEL_HUB_MODE       = (not set: the panel setting "Hub" of the QAROS Hub group decides, Automatic by default)
-  QAR_PANEL_HUB_HOST / _PORT = (not set) / (not set)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = hololens:HOLOLENS-A2B3
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
   QAR_PANEL_VOLUME_Y       = -1.6 (launcher default)
@@ -380,8 +376,7 @@ The parameter `-InvitePeers` takes entries of the form `kind:host`, separated by
   qar-streaming-viz        : running (pid 46064, since 11:52:59)
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
-  Hub mode (resolved)      : local (auto: QAROS is installed on this PC; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)
-  identity file            : not present (C:\Users\<user>\AppData\Local\Quaternar\QarOS-ROS\rviz2-plugin\identity.txt): no pairing with the Hub of another PC is stored
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.

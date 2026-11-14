@@ -81,7 +81,7 @@ bool contains(const std::vector<std::string> & words, const std::string & word)
 TEST(PanelSettings, SpecTableKeysAreUniqueAndOrdered)
 {
   const std::vector<std::string> expected = {
-    "Resolution", "FPS Cap", "Hub Mode", "Hub Host", "Hub Port", "Hidden Displays On Connect",
+    "Resolution", "FPS Cap", "Hub Mode", "Hidden Displays On Connect",
     "AR Control Panel", "AR Panel Close Mode", "AR Visibility", "Web Panel Scale", "Pick Target",
     "Pick Frame", "Invite Device", "Invite Hostname"};
   std::vector<std::string> keys;
@@ -95,8 +95,6 @@ TEST(PanelSettings, SpecTableKeysAreUniqueAndOrdered)
   EXPECT_STREQ(key::kResolution, "Resolution");
   EXPECT_STREQ(key::kFpsCap, "FPS Cap");
   EXPECT_STREQ(key::kHubMode, "Hub Mode");
-  EXPECT_STREQ(key::kHubHost, "Hub Host");
-  EXPECT_STREQ(key::kHubPort, "Hub Port");
   EXPECT_STREQ(key::kHiddenDisplaysOnConnect, "Hidden Displays On Connect");
   EXPECT_STREQ(key::kArControlPanel, "AR Control Panel");
   EXPECT_STREQ(key::kArPanelCloseMode, "AR Panel Close Mode");
@@ -110,8 +108,6 @@ TEST(PanelSettings, SpecTableKeysAreUniqueAndOrdered)
   // The variable of each setting that has one.
   const std::map<std::string, std::string> variables = {
     {"Hub Mode", "QAR_PANEL_HUB_MODE"},
-    {"Hub Host", "QAR_PANEL_HUB_HOST"},
-    {"Hub Port", "QAR_PANEL_HUB_PORT"},
     {"Hidden Displays On Connect", "QAR_PANEL_HIDDEN_DISPLAYS"},
     {"AR Control Panel", "QAR_PANEL_AR_CONTROL"},
     {"AR Panel Close Mode", "QAR_PANEL_CLOSE_MODE"},
@@ -135,8 +131,8 @@ TEST(PanelSettings, SpecTableKeysAreUniqueAndOrdered)
     qar_rviz_streaming::find_setting_spec(qar_rviz_streaming::kSettingsVersionKey), nullptr);
   EXPECT_EQ(qar_rviz_streaming::find_setting_spec("Nonsense"), nullptr);
   EXPECT_EQ(spec_of("Hub Mode").kind, SettingKind::Choice);
-  EXPECT_EQ(spec_of("Hub Host").kind, SettingKind::Text);
-  EXPECT_EQ(spec_of("Hub Port").kind, SettingKind::Int);
+  EXPECT_EQ(qar_rviz_streaming::find_setting_spec("Hub Host"), nullptr);
+  EXPECT_EQ(qar_rviz_streaming::find_setting_spec("Hub Port"), nullptr);
   EXPECT_EQ(spec_of("FPS Cap").kind, SettingKind::Int);
   EXPECT_EQ(spec_of("Web Panel Scale").kind, SettingKind::Double);
 }
@@ -154,8 +150,6 @@ TEST(PanelSettings, DefaultsWhenNothingIsSavedOrSet)
   EXPECT_EQ(qar_rviz_streaming::setting_text(settings, key::kResolution), "1280x720");
   EXPECT_EQ(qar_rviz_streaming::setting_int(settings, key::kFpsCap), 60);
   EXPECT_EQ(qar_rviz_streaming::setting_text(settings, key::kHubMode), "auto");
-  EXPECT_EQ(qar_rviz_streaming::setting_text(settings, key::kHubHost), "");
-  EXPECT_EQ(qar_rviz_streaming::setting_int(settings, key::kHubPort), 0);
   EXPECT_TRUE(qar_rviz_streaming::setting_bool(settings, key::kHiddenDisplaysOnConnect));
   EXPECT_TRUE(qar_rviz_streaming::setting_bool(settings, key::kArControlPanel));
   EXPECT_EQ(qar_rviz_streaming::setting_text(settings, key::kArPanelCloseMode), "destroy");
@@ -188,8 +182,7 @@ TEST(PanelSettings, DefaultsWhenNothingIsSavedOrSet)
 TEST(PanelSettings, SavedValueWinsOverDefault)
 {
   const SettingsText saved = {
-    {"Resolution", "1920x1080"}, {"FPS Cap", "90"}, {"Hub Mode", "remote"},
-    {"Hub Host", "hub.example.org"}, {"Hub Port", "19120"},
+    {"Resolution", "1920x1080"}, {"FPS Cap", "90"}, {"Hub Mode", "local"},
     {"Hidden Displays On Connect", "false"}, {"AR Control Panel", "false"},
     {"AR Panel Close Mode", "notice"}, {"AR Visibility", "close"}, {"Web Panel Scale", "1.50"},
     {"Pick Target", "ground_plane"}, {"Pick Frame", "odom"}, {"Invite Device", "headset"},
@@ -202,8 +195,6 @@ TEST(PanelSettings, SavedValueWinsOverDefault)
     EXPECT_EQ(entry.second.value, saved.at(entry.first)) << entry.first;
   }
   EXPECT_EQ(qar_rviz_streaming::setting_int(settings, key::kFpsCap), 90);
-  EXPECT_EQ(qar_rviz_streaming::setting_int(settings, key::kHubPort), 19120);
-  EXPECT_EQ(qar_rviz_streaming::setting_text(settings, key::kHubHost), "hub.example.org");
   EXPECT_FALSE(qar_rviz_streaming::setting_bool(settings, key::kHiddenDisplaysOnConnect));
   EXPECT_DOUBLE_EQ(qar_rviz_streaming::setting_double(settings, key::kWebPanelScale), 1.5);
   EXPECT_EQ(qar_rviz_streaming::setting_text(settings, key::kInviteHostname), "HOLO-1");
@@ -212,7 +203,7 @@ TEST(PanelSettings, SavedValueWinsOverDefault)
 TEST(PanelSettings, EnvironmentWinsOverSaved)
 {
   const SettingsText saved = {
-    {"Hub Mode", "remote"}, {"Hidden Displays On Connect", "true"},
+    {"Hub Mode", "auto"}, {"Hidden Displays On Connect", "true"},
     {"AR Panel Close Mode", "notice"}, {"Web Panel Scale", "2.00"}, {"Resolution", "640x480"}};
   const EnvLookup env = env_of({
     {"QAR_PANEL_HUB_MODE", "  Local "}, {"QAR_PANEL_HIDDEN_DISPLAYS", "OFF"},
@@ -243,14 +234,14 @@ TEST(PanelSettings, EnvironmentWinsOverSaved)
 
 TEST(PanelSettings, EmptyEnvironmentValueDoesNotWin)
 {
-  const SettingsText saved = {{"Hub Mode", "remote"}};
+  const SettingsText saved = {{"Hub Mode", "local"}};
   for (const char * empty : {"", " ", "\t \r\n"}) {
     std::vector<std::string> warnings;
     const ResolvedSettings settings = resolve(
       saved, env_of({{"QAR_PANEL_HUB_MODE", empty}, {"QAR_PANEL_CLOSE_MODE", empty}}),
       &warnings);
     EXPECT_TRUE(warnings.empty()) << "an empty variable is no variable";
-    EXPECT_EQ(settings.at(key::kHubMode).value, "remote");
+    EXPECT_EQ(settings.at(key::kHubMode).value, "local");
     EXPECT_EQ(settings.at(key::kHubMode).source, SettingSource::Saved);
     EXPECT_EQ(settings.at(key::kArPanelCloseMode).source, SettingSource::Default);
     EXPECT_TRUE(settings.at(key::kHubMode).env_name.empty());
@@ -263,14 +254,13 @@ TEST(PanelSettings, InvalidEnvironmentValueIsReportedAndIgnored)
   {
     std::vector<std::string> warnings;
     const ResolvedSettings settings = resolve(
-      {{"Hub Mode", "remote"}}, env_of({{"QAR_PANEL_HUB_MODE", "xyz"}}), &warnings);
-    EXPECT_EQ(settings.at(key::kHubMode).value, "remote");
+      {{"Hub Mode", "local"}}, env_of({{"QAR_PANEL_HUB_MODE", "xyz"}}), &warnings);
+    EXPECT_EQ(settings.at(key::kHubMode).value, "local");
     EXPECT_EQ(settings.at(key::kHubMode).source, SettingSource::Saved);
     ASSERT_EQ(warnings.size(), 1u);
     EXPECT_EQ(
       warnings[0],
-      "QAR_PANEL_HUB_MODE='xyz' is not one of auto|local|remote - using the saved "
-      "value 'remote'");
+      "QAR_PANEL_HUB_MODE='xyz' is not one of auto|local - using the saved value 'local'");
   }
   // Without one: the default.
   {
@@ -282,7 +272,19 @@ TEST(PanelSettings, InvalidEnvironmentValueIsReportedAndIgnored)
     ASSERT_EQ(warnings.size(), 1u);
     EXPECT_EQ(
       warnings[0],
-      "QAR_PANEL_HUB_MODE='xyz' is not one of auto|local|remote - using the default 'auto'");
+      "QAR_PANEL_HUB_MODE='xyz' is not one of auto|local - using the default 'auto'");
+  }
+  // The pairing with the Hub of another PC is gone: "remote" is refused with a warning, and the
+  // Hub of this PC is joined.
+  {
+    std::vector<std::string> warnings;
+    const ResolvedSettings settings = resolve({}, env_of({{"QAR_PANEL_HUB_MODE", "remote"}}),
+        &warnings);
+    EXPECT_EQ(settings.at(key::kHubMode).value, "auto");
+    ASSERT_EQ(warnings.size(), 1u);
+    EXPECT_EQ(
+      warnings[0],
+      "QAR_PANEL_HUB_MODE='remote' is not one of auto|local - using the default 'auto'");
   }
   // Every kind of variable is judged by its own rule.
   {
@@ -291,10 +293,9 @@ TEST(PanelSettings, InvalidEnvironmentValueIsReportedAndIgnored)
       {}, env_of({
         {"QAR_PANEL_HIDDEN_DISPLAYS", "maybe"}, {"QAR_PANEL_AR_CONTROL", "2"},
         {"QAR_PANEL_CLOSE_MODE", "keep"}, {"QAR_PANEL_AR_VISIBILITY", "minimise"},
-        {"QAR_PANEL_WEB_SCALE", "9"}, {"QAR_PANEL_HUB_PORT", "70000"},
-        {"QAR_PANEL_HUB_HOST", "bad host"}}),
+        {"QAR_PANEL_WEB_SCALE", "9"}}),
       &warnings);
-    EXPECT_EQ(warnings.size(), 7u);
+    EXPECT_EQ(warnings.size(), 5u);
     for (const auto & entry : settings) {
       EXPECT_EQ(entry.second.source, SettingSource::Default) << entry.first;
     }
@@ -304,14 +305,6 @@ TEST(PanelSettings, InvalidEnvironmentValueIsReportedAndIgnored)
     EXPECT_TRUE(contains(
         warnings,
         "QAR_PANEL_CLOSE_MODE='keep' is not one of destroy|notice - using the default 'destroy'"));
-    EXPECT_TRUE(contains(
-        warnings,
-        "QAR_PANEL_HUB_PORT='70000' is not a whole number from 0 to 65535 - using the default "
-        "'0'"));
-    EXPECT_TRUE(contains(
-        warnings,
-        "QAR_PANEL_HUB_HOST='bad host' is not made of letters, digits and .-:_ - using the "
-        "default ''"));
   }
   // A variable that is not printable text is made printable and cut in the warning.
   {
@@ -350,16 +343,15 @@ TEST(PanelSettings, AChoiceMayTakeMoreWordsFromTheEnvironmentThanFromTheControls
 TEST(PanelSettings, InvalidSavedValueFallsBackWithWarning)
 {
   const SettingsText config = {
-    {"Resolution", "800x600"}, {"FPS Cap", "50"}, {"Hub Mode", "sideways"},
-    {"Hub Host", "bad host"}, {"Hub Port", "70000"},
-    {"Hidden Displays On Connect", "maybe"}, {"Web Panel Scale", "0.1"},
+    {"Settings Version", "4"}, {"Resolution", "800x600"}, {"FPS Cap", "50"},
+    {"Hub Mode", "sideways"}, {"Hidden Displays On Connect", "maybe"}, {"Web Panel Scale", "0.1"},
     {"Pick Frame", "bad frame"}, {"Invite Device", "phone"}, {"Pick Target", "sky"},
     {"AR Visibility", "minimise"}, {"AR Panel Close Mode", "keep"}, {"AR Control Panel", "2"},
     {"Invite Hostname", "bad_host"}};
   SettingsLoadReport report;
   const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(config, report);
   EXPECT_TRUE(parsed.empty());
-  ASSERT_EQ(report.warnings.size(), config.size());
+  ASSERT_EQ(report.warnings.size(), config.size() - 1);
   EXPECT_TRUE(contains(
       report.warnings,
       "Resolution '800x600' is not one of 640x480|1024x1024|1280x720|1600x900|1920x1080|2048x2048"
@@ -407,17 +399,17 @@ TEST(PanelSettings, UnknownKeysAreReported)
 
 TEST(PanelSettings, NewerVersionReadsKnownKeys)
 {
-  // Version 3 is the version the plugin writes, so the first newer one is 4.
+  // Version 4 is the version the plugin writes, so the first newer one is 5.
   const SettingsText config = {
-    {"Settings Version", "4"}, {"Resolution", "1920x1080"}, {"Future Key", "x"}};
+    {"Settings Version", "5"}, {"Resolution", "1920x1080"}, {"Future Key", "x"}};
   SettingsLoadReport report;
   const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(config, report);
-  EXPECT_EQ(report.version, 4);
+  EXPECT_EQ(report.version, 5);
   EXPECT_EQ(parsed, (SettingsText{{"Resolution", "1920x1080"}}));
   ASSERT_EQ(report.warnings.size(), 1u);
   EXPECT_EQ(
     report.warnings[0],
-    "settings were written by a newer plugin (version 4); unknown keys are ignored");
+    "settings were written by a newer plugin (version 5); unknown keys are ignored");
   EXPECT_TRUE(report.migrated.empty());
   EXPECT_EQ(report.unknown_keys, (std::vector<std::string>{"Future Key"}));
 }
@@ -426,10 +418,10 @@ TEST(PanelSettings, CurrentVersionIsNotNewer)
 {
   // A configuration that this plugin saved reads without a word of warning.
   const SettingsText config = {
-    {"Settings Version", "3"}, {"Resolution", "1920x1080"}, {"Future Key", "x"}};
+    {"Settings Version", "4"}, {"Resolution", "1920x1080"}, {"Future Key", "x"}};
   SettingsLoadReport report;
   const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(config, report);
-  EXPECT_EQ(report.version, 3);
+  EXPECT_EQ(report.version, 4);
   EXPECT_EQ(parsed, (SettingsText{{"Resolution", "1920x1080"}}));
   EXPECT_TRUE(report.warnings.empty());
   EXPECT_TRUE(report.migrated.empty());
@@ -478,11 +470,11 @@ TEST(PanelSettings, SaveNeverWritesEnvironmentValues)
 
   // The operator chose a Hub mode before: that choice is written, not the variable's.
   {
-    const SettingsText user = {{"Hub Mode", "remote"}, {"Resolution", "1920x1080"}};
+    const SettingsText user = {{"Hub Mode", "auto"}, {"Resolution", "1920x1080"}};
     const ResolvedSettings settings = resolve(user, env);
     ASSERT_EQ(settings.at(key::kHubMode).value, "local");
     const SettingsText written = qar_rviz_streaming::settings_to_save(user, settings);
-    EXPECT_EQ(written.at("Hub Mode"), "remote");
+    EXPECT_EQ(written.at("Hub Mode"), "auto");
     EXPECT_EQ(written.at("Resolution"), "1920x1080");
     // The operator never chose these two: they are left out, so the variable's value never
     // reaches the file.
@@ -505,7 +497,8 @@ TEST(PanelSettings, SaveNeverWritesEnvironmentValues)
   {
     const SettingsText written = qar_rviz_streaming::settings_to_save({}, resolve({}, env_of({})));
     EXPECT_EQ(written.at("Hub Mode"), "auto");
-    EXPECT_EQ(written.at("Hub Port"), "0");
+    EXPECT_EQ(written.count("Hub Port"), 0u);
+    EXPECT_EQ(written.count("Hub Host"), 0u);
     EXPECT_EQ(written.at("Hidden Displays On Connect"), "true");
     EXPECT_EQ(written.at("Web Panel Scale"), "1.00");
   }
@@ -515,8 +508,8 @@ TEST(PanelSettings, SaveWritesTheVersionKey)
 {
   const SettingsText written = qar_rviz_streaming::settings_to_save({}, resolve({}, env_of({})));
   ASSERT_EQ(written.count(qar_rviz_streaming::kSettingsVersionKey), 1u);
-  EXPECT_EQ(written.at(qar_rviz_streaming::kSettingsVersionKey), "3");
-  EXPECT_EQ(qar_rviz_streaming::kPanelSettingsVersion, 3);
+  EXPECT_EQ(written.at(qar_rviz_streaming::kSettingsVersionKey), "4");
+  EXPECT_EQ(qar_rviz_streaming::kPanelSettingsVersion, 4);
   EXPECT_STREQ(qar_rviz_streaming::kSettingsVersionKey, "Settings Version");
   EXPECT_EQ(written.size(), qar_rviz_streaming::panel_setting_specs().size() + 1);
 
@@ -680,34 +673,11 @@ TEST(PanelSettings, PickFrameValidation)
   EXPECT_EQ(canonical("Invite Hostname", "a_b"), "!not made of letters, digits and .-");
   EXPECT_EQ(canonical("Invite Hostname", "a/b"), "!not made of letters, digits and .-");
 
-  // The host of the Hub of another PC: a name or an address, 0..253 bytes of letters, digits and
-  // .-:_ (an IPv6 address has colons).
-  EXPECT_EQ(canonical("Hub Host", ""), "");
-  EXPECT_EQ(canonical("Hub Host", " hub.example.org "), "hub.example.org");
-  EXPECT_EQ(canonical("Hub Host", "192.168.1.20"), "192.168.1.20");
-  EXPECT_EQ(canonical("Hub Host", "fe80::1"), "fe80::1");
-  EXPECT_EQ(canonical("Hub Host", "my_pc"), "my_pc");
-  EXPECT_EQ(canonical("Hub Host", std::string(253, 'h')), std::string(253, 'h'));
-  EXPECT_EQ(canonical("Hub Host", std::string(254, 'h')), "!longer than 253 characters");
-  EXPECT_EQ(canonical("Hub Host", "has space"), "!not made of letters, digits and .-:_");
-  EXPECT_EQ(canonical("Hub Host", "a/b"), "!not made of letters, digits and .-:_");
-
-  // The port: a whole number from 0 (unset) to 65535.
-  const std::string port_range = "!not a whole number from 0 to 65535";
-  EXPECT_EQ(canonical("Hub Port", "0"), "0");
-  EXPECT_EQ(canonical("Hub Port", "19120"), "19120");
-  EXPECT_EQ(canonical("Hub Port", " 65535 "), "65535");
-  EXPECT_EQ(canonical("Hub Port", "007"), "7");
-  EXPECT_EQ(canonical("Hub Port", "65536"), port_range);
-  EXPECT_EQ(canonical("Hub Port", "-1"), port_range);
-  EXPECT_EQ(canonical("Hub Port", "1.5"), port_range);
-  EXPECT_EQ(canonical("Hub Port", ""), port_range);
-  EXPECT_EQ(canonical("Hub Port", "abc"), port_range);
-
-  // The Hub mode is a list of words, case-insensitive.
-  EXPECT_EQ(canonical("Hub Mode", " Remote "), "remote");
+  // The Hub mode is a list of words, case-insensitive; "remote" is no longer one of them.
+  EXPECT_EQ(canonical("Hub Mode", " Local "), "local");
   EXPECT_EQ(canonical("Hub Mode", "AUTO"), "auto");
-  EXPECT_EQ(canonical("Hub Mode", "both"), "!not one of auto|local|remote");
+  EXPECT_EQ(canonical("Hub Mode", "remote"), "!not one of auto|local");
+  EXPECT_EQ(canonical("Hub Mode", "both"), "!not one of auto|local");
 
   // The device kind and the Int setting are lists of words and numbers.
   EXPECT_EQ(canonical("Invite Device", "HoloLens"), "hololens");
@@ -849,16 +819,16 @@ TEST(PanelSettings, VersionOneConfigIsMigratedToTheCurrentKeys)
   EXPECT_EQ(settings.at(key::kHubMode).source, SettingSource::Default);
   EXPECT_TRUE(qar_rviz_streaming::wants_default_dock_size(report));
 
-  // Saving it writes version 3 and the Hub keys with their defaults; loading that asks no more
-  // and changes nothing.
+  // Saving it writes version 4 and the Hub key with its default; loading that asks no more and
+  // changes nothing.
   const SettingsText saved = qar_rviz_streaming::settings_to_save(parsed, settings);
-  EXPECT_EQ(saved.at("Settings Version"), "3");
+  EXPECT_EQ(saved.at("Settings Version"), "4");
   EXPECT_EQ(saved.count("Peer Admission"), 0u);
   EXPECT_EQ(saved.at("Hub Mode"), "auto");
   EXPECT_EQ(saved.at("Invite Device"), "headset");
   SettingsLoadReport again;
   const SettingsText reread = qar_rviz_streaming::parse_saved_settings(saved, again);
-  EXPECT_EQ(again.version, 3);
+  EXPECT_EQ(again.version, 4);
   EXPECT_TRUE(again.warnings.empty());
   EXPECT_TRUE(again.migrated.empty());
   EXPECT_TRUE(again.unknown_keys.empty());
@@ -892,18 +862,61 @@ TEST(PanelSettings, VersionTwoConfigIsMigratedToo)
   }
 }
 
-TEST(PanelSettings, CurrentVersionIsNotMigrated)
+TEST(PanelSettings, VersionThreeConfigLosesThePairingWithAnotherPc)
 {
-  // From version 3 on, a Peer Admission key is an unknown key and a removed kind is a rejected
-  // value: the migration reads only what older plugins wrote.
+  // Version 3 still had the Hub of another PC: "remote" is read as "local" and the host and the
+  // port are dropped, each with a sentence that names the member Hub as the way to that Hub.
   SettingsLoadReport report;
   const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(
-    {{"Settings Version", "3"}, {"Peer Admission", "new"}, {"Invite Device", "quest"}}, report);
+    {{"Settings Version", "3"}, {"Hub Mode", "Remote"}, {"Hub Host", "hub.example.org"},
+      {"Hub Port", "19120"}, {"Peer Admission", "new"}}, report);
+  EXPECT_EQ(parsed, (SettingsText{{"Hub Mode", "local"}}));
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_EQ(report.unknown_keys, (std::vector<std::string>{"Peer Admission"}))
+    << "only the migration of version 3 runs";
+  ASSERT_EQ(report.migrated.size(), 3u);
+  EXPECT_EQ(
+    report.migrated[0],
+    "Hub Mode 'remote' (pairing with the Hub of another PC) is no longer supported by QAROS; it "
+    "is read as 'local'. To reach the Hub of another PC, make the Hub of this PC a member of it");
+  EXPECT_EQ(
+    report.migrated[1],
+    "Hub Host 'hub.example.org' has no meaning without the pairing with another PC and is not "
+    "kept");
+  EXPECT_EQ(
+    report.migrated[2],
+    "Hub Port '19120' has no meaning without the pairing with another PC and is not kept");
+
+  // Version 1 and 2 configurations get the same treatment after their own migration.
+  SettingsLoadReport old;
+  const SettingsText parsed_old = qar_rviz_streaming::parse_saved_settings(
+    {{"Settings Version", "2"}, {"Hub Mode", "remote"}, {"Peer Admission", "new"}}, old);
+  EXPECT_EQ(parsed_old, (SettingsText{{"Hub Mode", "local"}}));
+  ASSERT_EQ(old.migrated.size(), 2u);
+  EXPECT_NE(old.migrated[1].find("Hub Mode 'remote'"), std::string::npos);
+
+  // A configuration with only the dropped keys is still ours.
+  SettingsLoadReport bare;
+  qar_rviz_streaming::parse_saved_settings({{"Hub Host", "hub"}}, bare);
+  EXPECT_EQ(bare.version, 1);
+}
+
+TEST(PanelSettings, CurrentVersionIsNotMigrated)
+{
+  // From version 4 on, a Peer Admission or Hub Host key is an unknown key and a removed word is
+  // a rejected value: the migration reads only what older plugins wrote.
+  SettingsLoadReport report;
+  const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(
+    {{"Settings Version", "4"}, {"Peer Admission", "new"}, {"Invite Device", "quest"},
+      {"Hub Mode", "remote"}, {"Hub Host", "hub"}}, report);
   EXPECT_TRUE(parsed.empty());
   EXPECT_TRUE(report.migrated.empty());
-  EXPECT_EQ(report.unknown_keys, (std::vector<std::string>{"Peer Admission"}));
-  ASSERT_EQ(report.warnings.size(), 1u);
-  EXPECT_NE(report.warnings[0].find("Invite Device 'quest' is not one of hololens|headset"),
+  EXPECT_EQ(report.unknown_keys, (std::vector<std::string>{"Hub Host", "Peer Admission"}));
+  ASSERT_EQ(report.warnings.size(), 2u);
+  EXPECT_TRUE(contains(
+      report.warnings,
+      "Hub Mode 'remote' is not one of auto|local - using the default 'auto' instead"));
+  EXPECT_NE(report.warnings[1].find("Invite Device 'quest' is not one of hololens|headset"),
     std::string::npos);
 }
 
@@ -912,7 +925,7 @@ TEST(PanelSettings, TheEnvironmentVariablesThatHaveNoEffectAreNamedOnce)
   const std::vector<std::string> expected = {
     "QAR_PANEL_LAUNCHER_CONFIG", "QAR_PANEL_VISUALIZER_GUID", "QAR_PANEL_VISUALIZERS",
     "QAR_PANEL_PEER_ADMISSION", "QAR_PANEL_PEER_SETTLE_MS", "QAR_PANEL_PEER_NAME_FILTER",
-    "QAR_RUNTIME_BINARIES_DIR"};
+    "QAR_RUNTIME_BINARIES_DIR", "QAR_PANEL_HUB_HOST", "QAR_PANEL_HUB_PORT"};
   EXPECT_EQ(qar_rviz_streaming::removed_environment_variables(), expected);
 
   // None set: nothing to say. A variable that is set, even empty, is named.
@@ -960,7 +973,8 @@ TEST(PanelSettings, DefaultDockSizeIsWantedBelowVersionTwo)
     {"version 2", {{"Settings Version", "2"}, {"FPS Cap", "30"}}, 2, false},
     {"version 2, no other key", {{"Settings Version", "2"}}, 2, false},
     {"version 3", {{"Settings Version", "3"}, {"FPS Cap", "30"}}, 3, false},
-    {"version 4, newer", {{"Settings Version", "4"}, {"FPS Cap", "30"}}, 4, false},
+    {"version 4", {{"Settings Version", "4"}, {"FPS Cap", "30"}}, 4, false},
+    {"version 5, newer", {{"Settings Version", "5"}, {"FPS Cap", "30"}}, 5, false},
     {"version 99", {{"Settings Version", "99"}}, 99, false},
     {"version with white space", {{"Settings Version", " 2 "}}, 2, false},
   };

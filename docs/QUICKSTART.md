@@ -30,7 +30,7 @@ New-Item -ItemType Directory -Force -Path $layout.QAR_ROOT, $layout.QAR_DEPS_ROO
 2. Clone this repository and go to the folder of the clone; the next steps run there until a step names another folder ([Python environment](INSTALL.md#python-environment)).
 
 ```powershell
-git clone https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
+git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
 ```
 ```text
 Cloning into 'C:\qar\src\qar_rviz_plugin'...
@@ -394,8 +394,7 @@ Overlay (dot-source it): C:\qar\install\local_setup.ps1
   QAR_PANEL_LIVE_STREAM    = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
-  QAR_PANEL_HUB_MODE       = (not set: the panel setting "Hub" of the QAROS Hub group decides, Automatic by default)
-  QAR_PANEL_HUB_HOST / _PORT = (not set) / (not set)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = (none - pass -InvitePeers to invite devices)
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
   QAR_PANEL_VOLUME_Y       = -1.6 (launcher default)
@@ -422,8 +421,7 @@ Overlay (dot-source it): C:\qar\install\local_setup.ps1
   qar-streaming-viz        : running (pid 46064, since 11:52:59)
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
-  Hub mode (resolved)      : local (auto: QAROS is installed on this PC; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)
-  identity file            : not present (C:\Users\<user>\AppData\Local\Quaternar\QarOS-ROS\rviz2-plugin\identity.txt): no pairing with the Hub of another PC is stored
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
@@ -447,7 +445,7 @@ To actually run the interactive session, re-invoke with -Confirm (opens windows)
 .\scripts\run_live_rviz_stream_real.ps1 -Confirm
 ```
 
-11. Join the QAROS Hub. Start QAROS from the Start menu and open a Visualizer window from it; click `Add receiver` in the Visualizer if it has none. In RViz open the tab `Connection` of the panel `"Qar Streaming"` and press `"Connect to QarOS"`. The first time, QAROS asks in a window of its own whether `rviz2` may join: click Allow. The scene of RViz then appears in the Visualizer ([Connect to QarOS](GETTING_STARTED.md#connect-to-qaros), [See the scene in the Visualizer](GETTING_STARTED.md#see-the-scene-in-the-visualizer)). A Hub on another PC needs `"Another PC (pairing code)"` in the group `"QAROS Hub"`, with its host, its port and the pairing code that the Hub offers ([Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/)).
+11. Join the QAROS Hub. Start QAROS from the Start menu and open a Visualizer window from it; click `Add receiver` in the Visualizer if it has none. In RViz open the tab `Connection` of the panel `"Qar Streaming"` and press `"Connect to QarOS"`. The first time, QAROS asks in a window of its own whether `rviz2` may join: click Allow. The scene of RViz then appears in the Visualizer ([Connect to QarOS](GETTING_STARTED.md#connect-to-qaros), [See the scene in the Visualizer](GETTING_STARTED.md#see-the-scene-in-the-visualizer)). The plugin joins only the Hub of this PC; to reach the Hub of another PC, make the Hub of this PC a member of it ([Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/)).
 
 [Getting started](GETTING_STARTED.md) goes on from here: it streams a panel and clicks it in AR, exposes a ROS 2 topic as an AR tool, shows a video, picks a point and explains how to stop and clean up. [Try the examples](#try-the-examples) runs a synthetic point cloud, a video and two recorded bags in the session that you have open by then.
 

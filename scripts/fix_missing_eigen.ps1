@@ -92,7 +92,7 @@ function Invoke-Tar([string[]]$Arguments) {
     $saved = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $output = & tar @Arguments 2>&1
+        $output = & $script:tar.Exe @($script:tar.Prefix + $Arguments) 2>&1
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $saved
@@ -131,7 +131,8 @@ if (-not $headersPresent) {
         $BuildRoot = Join-Path $DepsRoot "build_eigen"
         $downloads = Join-Path $DepsRoot "downloads"
         New-Item -ItemType Directory -Force -Path $BuildRoot, $downloads | Out-Null
-        if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
+        $script:tar = Get-QarTar
+        if (-not $script:tar) {
             throw "tar not found on PATH (see docs/INSTALL.md, section 'Toolchain')."
         }
 

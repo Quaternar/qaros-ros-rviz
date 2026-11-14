@@ -12,15 +12,12 @@
     The producer is RViz2 loading the QarStreamingPanel in QAR_PANEL_LIVE_STREAM mode (the plugin
     built by build_plugin.ps1). The panel joins the QAROS Hub when you press Connect in its
     Connection tab. The plugin loads the installed QAROS library itself (qar_library_load(NULL):
-    the installation that the registry names, or the folder of QAROS_RUNTIME_DIR) and joins one of
-    two Hubs:
-      - local: the Hub of this PC. QAROS asks once, in its own window, whether rviz2 may join
-        (click Allow). If no Hub is running, the plugin starts QAROS when you press Connect.
-      - remote: the Hub of another PC. You type its host, its onboarding port and the pairing code
-        that its Visualizer shows; the pairing is stored for the next start.
-    -HubMode auto (the default) takes remote when a pairing with another Hub is stored, else local
-    when QAROS is installed on this PC. The script starts neither the Hub nor a Visualizer: open a
-    Visualizer window from QAROS yourself, and the panel streams to every target that joins.
+    the installation that the registry names, or the folder of QAROS_RUNTIME_DIR) and joins the
+    Hub of this PC as a local app. QAROS asks once, in its own window, whether rviz2 may join
+    (click Allow). If no Hub is running, the plugin starts QAROS when you press Connect. The Hub
+    of another PC is reached by making the Hub of this PC a member of it; the plugin has no
+    pairing of its own. The script starts neither the Hub nor a Visualizer: open a Visualizer
+    window from QAROS yourself, and the panel streams to every target that joins.
 
     !!! WITHOUT -Confirm NOTHING IS STARTED, CHANGED OR STOPPED: no window, no registry write,
         no process stop, no log rotation, no Fast-DDS shared-memory clean-up. The script prints
@@ -101,8 +98,8 @@
                          Default: the InstallFolder that the QAROS installer records in
                          HKLM\SOFTWARE\Quaternar\QAROS, else the environment variable QAR_SDK_ROOT.
                          Used for the checks and the plan only: the plugin loads the installed QAROS
-                         itself. Optional: without an installation only a Hub of another PC can be
-                         joined.
+                         itself. Optional for the plan: without an installation the panel cannot
+                         connect.
 .PARAMETER Prefix        Install prefix that holds the plugin (the folder with
                          local_setup.ps1). Default: the environment variable QAR_PREFIX.
                          Required. Without -Confirm a missing overlay is only reported.
@@ -116,19 +113,13 @@
                          `kind:hostname` entries. Kinds: hololens, headset. Both need a hostname.
                          Example:
                            -InvitePeers hololens:HOLOLENS-A2B3,headset:HEADSET-C4D5
-                         Only the Hub of this PC (local mode) invites devices; a Hub of another PC
-                         refuses, and the panel greys the invites out. A device that fails to
-                         invite is logged and skipped, never fatal. Exported as
+                         A device that fails to invite is logged and skipped, never fatal.
+                         Exported as
                          QAR_PANEL_INVITE_PEERS.
-.PARAMETER HubMode       Which Hub the panel joins: auto (a stored pairing with another Hub, else the
-                         installed QAROS of this PC), local (this PC) or remote (another PC).
-                         Exported as QAR_PANEL_HUB_MODE, which wins over the panel setting "Hub
-                         Connection". Without the parameter the variable is left as it is.
-.PARAMETER HubHost       Host name or address of the Hub of another PC, prefilled in the panel
-                         (QAR_PANEL_HUB_HOST). The pairing code is never a parameter: type it in
-                         the panel.
-.PARAMETER HubPort       Onboarding port of that Hub, prefilled in the panel (QAR_PANEL_HUB_PORT).
-                         The Visualizer of that PC shows it with the pairing code.
+.PARAMETER HubMode       auto or local, kept for older command lines: both join the Hub of this PC.
+                         Exported as QAR_PANEL_HUB_MODE. Without the parameter the variable is left
+                         as it is. The pairing with the Hub of another PC (remote, -HubHost,
+                         -HubPort) is gone: make the Hub of this PC a member of that Hub instead.
 .PARAMETER RuntimeDir    Folder that holds another QAROS runtime for the library lookup. Exported as
                          QAROS_RUNTIME_DIR. Not set unless you pass it.
 .PARAMETER TraceLogs     Collect FULL logs (what a bug report needs): QAR_LOG_SEVERITY=trace,
@@ -209,11 +200,8 @@ param(
     [string]$Ros2Root = "",
     [string]$Scene = "",
     [string[]]$InvitePeers = @(),
-    [ValidateSet('auto', 'local', 'remote')]
+    [ValidateSet('auto', 'local')]
     [string]$HubMode = "",
-    [string]$HubHost = "",
-    [ValidateRange(0, 65535)]
-    [int]$HubPort = 0,
     [string]$RuntimeDir = "",
     [switch]$TraceLogs,
     [switch]$KeepLogEnv,
@@ -255,8 +243,8 @@ try {
 . (Join-Path $PSScriptRoot "qar_locations.ps1")
 # The installed QAROS is recorded in the registry by its installer (machine scope). -SdkRoot wins,
 # then the registry, then QAR_SDK_ROOT. The folder is used for the checks and the plan only: the
-# plugin loads the installed QAROS library itself. No installation is not an error here, because a
-# Hub of another PC can be joined without one.
+# plugin loads the installed QAROS library itself. No installation is not an error here: the plan
+# says that the panel cannot connect without one.
 $qarosKey = 'HKLM:\SOFTWARE\Quaternar\QAROS'
 function Get-QarosInstall {
     try {
@@ -405,15 +393,13 @@ if (-not [string]::IsNullOrWhiteSpace($RuntimeDir)) {
     }
     $env:QAROS_RUNTIME_DIR = $runtimeDirFull
 }
-# The Hub the panel joins. The parameters are exported only when they are given; the panel setting
-# "Hub" of the QAROS Hub group decides otherwise, and a variable wins over that setting.
+# The panel joins the Hub of this PC. -HubMode is exported only when it is given.
 if ($HubMode) { $env:QAR_PANEL_HUB_MODE = $HubMode }
-if ($HubHost) { $env:QAR_PANEL_HUB_HOST = $HubHost }
-if ($HubPort -gt 0) { $env:QAR_PANEL_HUB_PORT = "$HubPort" }
 # Variables that this QAROS does not read: the panel logs each one once.
 foreach ($removedVar in 'QAR_RUNTIME_BINARIES_DIR', 'QAR_PANEL_VISUALIZERS', 'QAR_PANEL_VISUALIZER_GUID',
         'QAR_PANEL_LAUNCHER_CONFIG', 'QAR_PANEL_PEER_ADMISSION', 'QAR_PANEL_PEER_SETTLE_MS',
-        'QAR_PANEL_PEER_NAME_FILTER') {
+        'QAR_PANEL_PEER_NAME_FILTER', 'QAR_PANEL_HUB_HOST', 'QAR_PANEL_HUB_PORT',
+        'QAR_PANEL_IDENTITY_DIR') {
     if ([Environment]::GetEnvironmentVariable($removedVar)) {
         Write-Warning "$removedVar is set in this shell and has no effect with this QAROS."
     }
@@ -625,8 +611,7 @@ if (-not $env:QAR_SCENE_LIGHT) { $env:QAR_SCENE_LIGHT = "both" }
 # Targets. The panel streams to every TARGET of the Hub (a headset, or a Visualizer window that you
 # open in QAROS), up to QAR_PANEL_MAX_PEERS streams (default 8). Nothing here starts a Visualizer.
 #   QAR_PANEL_INVITE_PEERS  devices invited right after the panel has joined, e.g.
-#     "hololens:HOLOLENS-A2B3,headset:HEADSET-C4D5". Only the Hub of this PC (local mode) invites
-#     devices; the Hub of another PC refuses.
+#     "hololens:HOLOLENS-A2B3,headset:HEADSET-C4D5".
 $InvitePeers = @($InvitePeers | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($entry in $InvitePeers) {
     $inviteKind, $inviteHost = $entry -split ':', 2
@@ -638,41 +623,6 @@ if ($InvitePeers.Count -gt 0 -and -not $env:QAR_PANEL_INVITE_PEERS) {
     $env:QAR_PANEL_INVITE_PEERS = ($InvitePeers -join ',')
 }
 
-# Which Hub the panel will join (the same rule as the panel's own "auto": a stored pairing with
-# another Hub first, then an installed QAROS, else a Hub of another PC). The identity file only
-# exists after a pairing with another PC's Hub; only its host and port are read, never its id.
-$identityBase = if ($env:QAR_PANEL_IDENTITY_DIR) { $env:QAR_PANEL_IDENTITY_DIR } else { Join-Path $env:LOCALAPPDATA 'Quaternar\QarOS-ROS' }
-$identityLeaf = 'rviz2-plugin'
-if ($env:QAR_PANEL_INSTANCE) { $identityLeaf += '.' + ($env:QAR_PANEL_INSTANCE -replace '[^A-Za-z0-9_-]', '-') }
-$identityFile = Join-Path (Join-Path $identityBase $identityLeaf) 'identity.txt'
-$identityPresent = Test-Path -LiteralPath $identityFile -PathType Leaf
-$identityHub = $null
-if ($identityPresent) {
-    $idHost = $null
-    $idPort = $null
-    foreach ($idLine in @(Get-Content -LiteralPath $identityFile -ErrorAction SilentlyContinue)) {
-        if ($idLine -match '^hub_host=(.+)$') { $idHost = $Matches[1].Trim() }
-        elseif ($idLine -match '^hub_port=(\d+)$') { $idPort = $Matches[1] }
-    }
-    $identityHub = if ($idHost -and $idPort) { "${idHost}:$idPort" } else { '(file unreadable)' }
-}
-$hubModeAsked = 'auto'
-$hubModeAskedBy = 'default'
-if ($HubMode) { $hubModeAsked = $HubMode; $hubModeAskedBy = '-HubMode' }
-elseif ($env:QAR_PANEL_HUB_MODE -match '^(auto|local|remote)$') { $hubModeAsked = $Matches[1]; $hubModeAskedBy = 'environment' }
-if ($hubModeAsked -ne 'auto') {
-    $hubModeResolved = $hubModeAsked
-    $hubModeWhy = "asked for by $hubModeAskedBy"
-} elseif ($identityPresent) {
-    $hubModeResolved = 'remote'
-    $hubModeWhy = 'auto: a pairing with the Hub of another PC is stored'
-} elseif ($qarosInstall) {
-    $hubModeResolved = 'local'
-    $hubModeWhy = 'auto: QAROS is installed on this PC'
-} else {
-    $hubModeResolved = 'remote'
-    $hubModeWhy = 'auto: QAROS is not installed on this PC'
-}
 
 # Start position for the desktop Visualizer.
 #   QAR_PANEL_FIXED_POSES  room | ground. The docks, the panel itself, the video panels and the
@@ -715,7 +665,7 @@ if (-not $pyExe) {
 
 Write-Host "=== RViz -> QAROS Hub live stream ===" -ForegroundColor Magenta
 Write-Host "  scene            : $Scene$(if (Test-Path $Scene) { '' } else { '  (NOT FOUND)' })"
-$sdkShown = if ($SdkRoot) { "$SdkRoot (from $sdkRootSource)" } else { '(none found: only the Hub of another PC can be joined)' }
+$sdkShown = if ($SdkRoot) { "$SdkRoot (from $sdkRootSource)" } else { '(none found: the panel cannot connect)' }
 Write-Host "  QAROS install    : $sdkShown"
 if ($sdkProblem) { Write-Host "  QAROS install note: $sdkProblem" -ForegroundColor Yellow }
 $runtimeDirShown = if ($runtimeDirFull) { $runtimeDirFull } else { '(not set: the plugin uses the installed QAROS)' }
@@ -723,11 +673,8 @@ Write-Host "  QAROS_RUNTIME_DIR        = $runtimeDirShown"
 Write-Host "  QAR_PANEL_LIVE_STREAM    = 1"
 Write-Host "  FASTRTPS_DEFAULT_PROFILES_FILE = $ddsProfileNote"
 Write-Host "  QAR_SCENE_LIGHT          = $env:QAR_SCENE_LIGHT (headlight: $(if ($env:QAR_SCENE_LIGHT_HEADLIGHT -eq 'keep') {'kept'} else {'suppressed while streaming'}))"
-$hubVarShown = if ($env:QAR_PANEL_HUB_MODE) { $env:QAR_PANEL_HUB_MODE } else { '(not set: the panel setting "Hub" of the QAROS Hub group decides, Automatic by default)' }
+$hubVarShown = if ($env:QAR_PANEL_HUB_MODE) { $env:QAR_PANEL_HUB_MODE } else { '(not set: the Hub of this PC)' }
 Write-Host "  QAR_PANEL_HUB_MODE       = $hubVarShown"
-$hubHostShown = if ($env:QAR_PANEL_HUB_HOST) { $env:QAR_PANEL_HUB_HOST } else { '(not set)' }
-$hubPortShown = if ($env:QAR_PANEL_HUB_PORT) { $env:QAR_PANEL_HUB_PORT } else { '(not set)' }
-Write-Host "  QAR_PANEL_HUB_HOST / _PORT = $hubHostShown / $hubPortShown"
 Write-Host "  QAR_PANEL_INVITE_PEERS   = $(if ($env:QAR_PANEL_INVITE_PEERS) { $env:QAR_PANEL_INVITE_PEERS } else { '(none - pass -InvitePeers to invite devices)' })"
 Write-Host "  QAR_PANEL_FIXED_POSES    = $env:QAR_PANEL_FIXED_POSES ($fixedPosesSource)"
 Write-Host "  QAR_PANEL_VOLUME_Y       = $env:QAR_PANEL_VOLUME_Y ($volumeYSource)"
@@ -1139,7 +1086,7 @@ function Show-QarosState {
         Write-Host ("  installed QAROS          : {0} {1} (C API {2}, scope {3}) at {4}" -f $qarosInstall.Version,
             $qarosInstall.Flavor, $qarosInstall.CApi, $qarosInstall.Scope, $qarosInstall.InstallFolder)
     } else {
-        Write-Host "  installed QAROS          : none ($qarosKey has no InstallFolder): only the Hub of another PC can be joined" -ForegroundColor Yellow
+        Write-Host "  installed QAROS          : none ($qarosKey has no InstallFolder): the panel cannot connect" -ForegroundColor Yellow
     }
     foreach ($name in 'qaros-hub-service', 'qar-runtime-launcher', 'qar-streaming-viz') {
         Write-Host ("  {0,-24} : {1}" -f $name, (Get-QarosProcessText $name))
@@ -1161,29 +1108,13 @@ function Show-QarosState {
     } else {
         Write-Host "  Hub endpoint file        : not found ($endpointFile): no Hub has started on this PC"
     }
-    Write-Host "  Hub mode (resolved)      : $hubModeResolved ($hubModeWhy; with no variable and no parameter the panel setting 'Hub' of the QAROS Hub group decides)"
-    $identityShown = if ($identityPresent) {
-        "present, paired with the Hub at $identityHub ($identityFile)"
-    } else {
-        "not present ($identityFile): no pairing with the Hub of another PC is stored"
-    }
-    Write-Host "  identity file            : $identityShown"
+    Write-Host "  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)"
     Write-Host "  --- what you will have to do ---"
-    if ($hubModeResolved -eq 'local') {
-        Write-Host "  Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow."
-        if (-not $hubRunning) {
-            Write-Host "  No Hub service runs now: the plugin will start QAROS when you press Connect."
-        }
-        Write-Host "  Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins."
-    } else {
-        $remoteHub = if ($identityPresent) { $identityHub } elseif ($env:QAR_PANEL_HUB_HOST) { "$($env:QAR_PANEL_HUB_HOST):$($env:QAR_PANEL_HUB_PORT)" } else { 'the Hub of the other PC' }
-        Write-Host "  Press Connect in the Connection tab of the 'Qar Streaming' panel, then type the host, the onboarding port and the pairing code that $remoteHub shows"
-        Write-Host "  (see the QAROS documentation for where that Hub shows the code for a new device). The code works once;"
-        Write-Host "  the pairing is stored, so the next start joins without a code."
-        if ($InvitePeers.Count -gt 0) {
-            Write-Host "  -InvitePeers is set, but only the Hub of this PC (local mode) invites devices: a Hub of another PC refuses." -ForegroundColor Yellow
-        }
+    Write-Host "  Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow."
+    if (-not $hubRunning) {
+        Write-Host "  No Hub service runs now: the plugin will start QAROS when you press Connect."
     }
+    Write-Host "  Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins."
 }
 
 Show-QarosState
@@ -1294,11 +1225,7 @@ $rvizStarted = $true
 Write-Host "rviz2 PID=$($rviz.Id)."
 Write-Host ""
 Write-Host "In the RViz 'Qar Streaming' panel open the Connection tab and press Connect."
-if ($hubModeResolved -eq 'local') {
-    Write-Host "Local Hub: click Allow in the QAROS window if it asks. Open a Visualizer window from QAROS, or put on a headset."
-} else {
-    Write-Host "Remote Hub: type the host, the onboarding port and the pairing code that Hub shows."
-}
+Write-Host "Click Allow in the QAROS window if it asks. Open a Visualizer window from QAROS, or put on a headset."
 Write-Host ""
 Write-Host "  RViz stdout : $outLog" -ForegroundColor Cyan
 Write-Host "  RViz stderr : $errLog   <- [qar-panel] HB + AR VIDEO lines$(if ($env:QAR_ADAPTER_TRACE) { ', adapter trace' })" -ForegroundColor Cyan

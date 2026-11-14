@@ -3,7 +3,8 @@
 #
 # Build services for the repositories that build against the ROS 2 Humble distribution:
 # the distribution on CMAKE_PREFIX_PATH, the ament environment of a plain shell, and the
-# upstream QarOS integration packages (an installed package, or a source checkout).
+# upstream QarOS integration packages (an installed package, or a source checkout), and the QarOS
+# headers from a checkout of the public qaros repository (the git submodule external/qaros).
 # QarBuildSupport.cmake includes this file when it sits beside it; the helpers it uses
 # (qar_resolve_location, qar_use_qt) come from that file.
 
@@ -12,14 +13,21 @@ include_guard(GLOBAL)
 # Qt for the RViz build. RViz 2 of the ROS 2 Humble distribution is built against Qt 5.15, and a
 # plugin must run on the same Qt, so this pins Qt 5 and requires QAR_QT_ROOT (the kit folder).
 # The arguments are those of qar_use_qt (OPTIONAL, COMPONENTS).
+# On Linux the distribution uses the Qt 5 of the system packages, so QAR_QT_ROOT is optional there.
 macro(qar_use_qt5)
-  qar_use_qt(MAJOR 5 ROOT_REQUIRED WHAT "Qt 5.15.2 (msvc2019_64)" ${ARGN})
+  if(WIN32)
+    qar_use_qt(MAJOR 5 ROOT_REQUIRED WHAT "Qt 5.15.2 (msvc2019_64)" ${ARGN})
+  else()
+    qar_use_qt(MAJOR 5 WHAT "Qt 5.15" ${ARGN})
+  endif()
 endmacro()
 
 # The ROS 2 Humble distribution on CMAKE_PREFIX_PATH (Ogre comes from its rviz_ogre_vendor).
 macro(qar_use_ros2_distro)
+  # The setup script of the distribution: local_setup.bat on Windows, setup.sh on Linux
+  # (/opt/ros/<distro>).
   qar_resolve_location(QAR_ROS2_INSTALL_ROOT ENV ROS2_INSTALL_ROOT REQUIRED
-    WHAT "ROS 2 Humble distribution (ros2-windows)" MARKER "local_setup.bat")
+    WHAT "ROS 2 distribution" MARKER "local_setup.bat" "setup.sh")
   list(PREPEND CMAKE_PREFIX_PATH "${QAR_ROS2_INSTALL_ROOT}")
   list(REMOVE_DUPLICATES CMAKE_PREFIX_PATH)
   message(STATUS "ROS 2 distribution: ${QAR_ROS2_INSTALL_ROOT}")
@@ -36,6 +44,103 @@ function(qar_use_ament_environment)
   set(ENV{AMENT_PREFIX_PATH} "${QAR_ROS2_INSTALL_ROOT}${_sep}$ENV{AMENT_PREFIX_PATH}")
   if(EXISTS "${QAR_ROS2_INSTALL_ROOT}/Lib/site-packages")
     set(ENV{PYTHONPATH} "${QAR_ROS2_INSTALL_ROOT}/Lib/site-packages${_sep}$ENV{PYTHONPATH}")
+  endif()
+endfunction()
+
+# qar_add_qaros_headers(<qaros checkout>)
+# The QarOS headers from a checkout of the public qaros repository (in this repository the git
+# submodule external/qaros): the interface targets qar-streaming-c-headers (qar_streaming.h) and
+# qar-streaming-cpp (the C++17 headers over it), defined by the checkout's own CMake files. Only
+# the header targets are added; the examples of the checkout are not built. The first call wins:
+# a later call, for example from the source mode of an upstream package, keeps those targets.
+function(qar_add_qaros_headers dir)
+  if(TARGET qar-streaming-cpp)
+    return()
+  endif()
+  file(TO_CMAKE_PATH "${dir}" dir)
+  if(NOT EXISTS "${dir}/qar-streaming-c/include/qar_streaming.h"
+      OR NOT EXISTS "${dir}/qar-streaming-cpp/CMakeLists.txt")
+    message(FATAL_ERROR
+      "The qaros checkout ${dir} has no qar-streaming-c/include/qar_streaming.h or no "
+      "qar-streaming-cpp/CMakeLists.txt. Fetch the submodule with "
+      "'git submodule update --init external/qaros' (or clone with --recurse-submodules), "
+      "or set -DQAROS_SOURCE_DIR=<qaros checkout>.")
+  endif()
+  # The header targets need no C language, and the examples of qaros are opt-in
+  # (QAROS_BUILD_EXAMPLES, OFF when qaros is added as a subdirectory).
+  add_subdirectory("${dir}/qar-streaming-c" "${CMAKE_BINARY_DIR}/_qaros/qar-streaming-c" EXCLUDE_FROM_ALL)
+  add_subdirectory("${dir}/qar-streaming-cpp" "${CMAKE_BINARY_DIR}/_qaros/qar-streaming-cpp" EXCLUDE_FROM_ALL)
+  set_property(GLOBAL PROPERTY QAR_QAROS_HEADERS_DIR "${dir}")
+  message(STATUS "qaros headers: ${dir}")
+endfunction()
+
+# qar_use_qaros_submodule(<repository root>)
+# The qaros submodule of this repository, <root>/external/qaros, or -DQAROS_SOURCE_DIR=<checkout>:
+# its header targets (qar_add_qaros_headers), defined before the upstream packages so that a source
+# checkout of them compiles against the same qaros commit.
+macro(qar_use_qaros_submodule _qus_root)
+  option(QAR_QAROS_HEADER_CHECK
+    "Fail when an installed upstream package carries QarOS headers of another qaros commit" ON)
+  set(QAROS_SOURCE_DIR "${_qus_root}/external/qaros" CACHE PATH
+    "Checkout of the public qaros repository (the git submodule external/qaros)")
+  qar_add_qaros_headers("${QAROS_SOURCE_DIR}")
+endmacro()
+
+# An installed upstream package carries its own copy of the QarOS headers; it must be the copy of
+# the qaros commit of this build, or the installed libraries and this build would disagree on the
+# C API. Compares qar_streaming.h and the qar_streaming_cpp/ headers found in the include folders
+# of <imported target> with those of qar_add_qaros_headers. -DQAR_QAROS_HEADER_CHECK=OFF turns a
+# difference into a warning.
+function(_qar_check_installed_qaros_headers pkg target)
+  get_property(_qaros GLOBAL PROPERTY QAR_QAROS_HEADERS_DIR)
+  if(NOT _qaros OR NOT TARGET ${target})
+    return()
+  endif()
+  get_target_property(_dirs ${target} INTERFACE_INCLUDE_DIRECTORIES)
+  if(NOT _dirs)
+    return()
+  endif()
+  set(_pairs)
+  foreach(_d IN LISTS _dirs)
+    if(_d MATCHES "^\\$<")
+      continue()
+    endif()
+    if(EXISTS "${_d}/qar_streaming.h")
+      list(APPEND _pairs "${_d}/qar_streaming.h|${_qaros}/qar-streaming-c/include/qar_streaming.h")
+    endif()
+    if(IS_DIRECTORY "${_d}/qar_streaming_cpp")
+      file(GLOB_RECURSE _cpp RELATIVE "${_d}" "${_d}/qar_streaming_cpp/*")
+      foreach(_f IN LISTS _cpp)
+        list(APPEND _pairs "${_d}/${_f}|${_qaros}/qar-streaming-cpp/include/${_f}")
+      endforeach()
+    endif()
+  endforeach()
+  set(_differ)
+  foreach(_p IN LISTS _pairs)
+    string(REPLACE "|" ";" _p "${_p}")
+    list(GET _p 0 _installed)
+    list(GET _p 1 _ours)
+    if(NOT EXISTS "${_ours}")
+      list(APPEND _differ "${_installed} (not in ${_qaros})")
+      continue()
+    endif()
+    file(SHA256 "${_installed}" _h1)
+    file(SHA256 "${_ours}" _h2)
+    if(NOT _h1 STREQUAL _h2)
+      list(APPEND _differ "${_installed}")
+    endif()
+  endforeach()
+  if(_differ)
+    list(JOIN _differ "\n  " _text)
+    set(_msg "The installed ${pkg} carries QarOS headers of another qaros commit than ${_qaros}:\n"
+      "  ${_text}\nRebuild and reinstall ${pkg} from a checkout whose qaros submodule is at the "
+      "same commit as this repository's external/qaros, or configure with "
+      "-DQAR_QAROS_HEADER_CHECK=OFF to build anyway.")
+    if(QAR_QAROS_HEADER_CHECK)
+      message(FATAL_ERROR ${_msg})
+    else()
+      message(WARNING ${_msg})
+    endif()
   endif()
 endfunction()
 
@@ -63,10 +168,20 @@ function(_qar_add_upstream_sources pkg dir version)
   if(NOT EXISTS "${dir}/CMakeLists.txt")
     message(FATAL_ERROR "${_upper}_SOURCE_DIR: ${dir} is not a source checkout (no CMakeLists.txt).")
   endif()
-  # The checkout's top-level project() version must have the requested major.minor.
-  file(READ "${dir}/CMakeLists.txt" _top)
-  if(_top MATCHES "project\\([^)]*VERSION[ \t\r\n]+([0-9]+\\.[0-9]+)")
-    set(_have "${CMAKE_MATCH_1}")
+  # The checkout's version (its VERSION file, else the version of its top-level project()) must
+  # have the requested major.minor.
+  set(_have "")
+  if(EXISTS "${dir}/VERSION")
+    file(STRINGS "${dir}/VERSION" _have LIMIT_COUNT 1)
+    string(STRIP "${_have}" _have)
+    string(REGEX MATCH "^[0-9]+\\.[0-9]+" _have "${_have}")
+  else()
+    file(READ "${dir}/CMakeLists.txt" _top)
+    if(_top MATCHES "project\\([^)]*VERSION[ \t\r\n]+([0-9]+\\.[0-9]+)")
+      set(_have "${CMAKE_MATCH_1}")
+    endif()
+  endif()
+  if(NOT _have STREQUAL "")
     string(REGEX MATCH "^[0-9]+\\.[0-9]+" _want "${version}")
     if(NOT _have STREQUAL _want)
       message(FATAL_ERROR "${_upper}_SOURCE_DIR: ${dir} is version ${_have}, this build needs ${_want}.")
@@ -85,18 +200,36 @@ function(_qar_add_upstream_sources pkg dir version)
         list(APPEND _modules qar_ogre_streaming)
       endif()
     endforeach()
+    # The QarOS headers of the checkout are those of the qaros checkout of this build (by default
+    # the submodule external/qaros of the consuming repository; its own submodule otherwise): a
+    # checkout that links the target qar-streaming-cpp finds the one defined here, and an older
+    # checkout reads the C header folder from QAR_VENDOR_INCLUDE_DIR.
+    if("${QAROS_SOURCE_DIR}" STREQUAL "")
+      set(QAROS_SOURCE_DIR "${dir}/external/qaros" CACHE PATH
+        "Checkout of the public qaros repository (the git submodule external/qaros)" FORCE)
+    endif()
+    qar_add_qaros_headers("${QAROS_SOURCE_DIR}")
+    get_property(_qaros GLOBAL PROPERTY QAR_QAROS_HEADERS_DIR)
     if("${QAR_VENDOR_INCLUDE_DIR}" STREQUAL "")
-      set(QAR_VENDOR_INCLUDE_DIR "${dir}/third_party/qar/include" CACHE PATH
-        "Folder with the vendored qar_streaming.h" FORCE)
+      set(QAR_VENDOR_INCLUDE_DIR "${_qaros}/qar-streaming-c/include" CACHE PATH
+        "Folder with qar_streaming.h (the qar-streaming-c headers of the qaros checkout)" FORCE)
     endif()
   elseif(pkg STREQUAL "qar_qt_streaming")
-    # The consumers here (the RViz plugin) use the seam and the Qt core; the backend over the QarOS C++
-    # SDK is left out, so no SDK headers are needed to build from source.
+    # The consumers here (the RViz plugin) use the seam and the Qt core. The backend over the QarOS
+    # C++ SDK (the component qaros) is built only when asked for, against the targets
+    # qar-streaming-cpp and qar-streaming-c-headers of the qaros checkout of this build.
     if("qaros" IN_LIST _components)
-      message(FATAL_ERROR "${_upper}_SOURCE_DIR: the component qaros is not available in source mode; "
-        "use an installed qar_qt_streaming package for it.")
+      if(NOT TARGET qar-streaming-cpp)
+        message(FATAL_ERROR "${_upper}_SOURCE_DIR: the component qaros needs the qaros headers; "
+          "call qar_use_qaros_submodule() first.")
+      endif()
+      set(QAR_QT_STREAMING_WITH_QAROS ON)
+      if("${QAR_QT_STREAMING_SDK_DEFINES}" STREQUAL "")
+        set(QAR_QT_STREAMING_SDK_DEFINES "QAR_ENABLE_DYNAMIC_LOADING")
+      endif()
+    else()
+      set(QAR_QT_STREAMING_WITH_QAROS OFF)
     endif()
-    set(QAR_QT_STREAMING_WITH_QAROS OFF)
     set(_modules qar_qt_streaming)
   else()
     message(FATAL_ERROR "qar_find_upstream: unknown package ${pkg}")
@@ -143,5 +276,10 @@ macro(qar_find_upstream _qfu_pkg)
         "-D${_qfu_upper}_SOURCE_DIR=<folder>.")
     endif()
     message(STATUS "${_qfu_pkg} ${${_qfu_pkg}_VERSION}: ${${_qfu_pkg}_DIR}")
+    if(_qfu_pkg STREQUAL "qar_ogre_adapter")
+      _qar_check_installed_qaros_headers(${_qfu_pkg} qar_ogre_adapter::qar_ar_core)
+    elseif(_qfu_pkg STREQUAL "qar_qt_streaming")
+      _qar_check_installed_qaros_headers(${_qfu_pkg} qar_qt_streaming_sdk)
+    endif()
   endif()
 endmacro()

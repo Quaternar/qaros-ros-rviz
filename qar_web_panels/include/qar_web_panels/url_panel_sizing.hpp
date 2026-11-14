@@ -135,7 +135,7 @@
 ///
 /// ## `content_scale`
 ///
-/// The vendored SDK header (`third_party/qar/include/qar_streaming.h`) documents
+/// The QarOS C header (`external/qaros/qar-streaming-c/include/qar_streaming.h`) documents
 /// it: *"Content-space-per-panel-space zoom of the rendered raster. 1.0 fits the
 /// content across the full panel surface, 2.0 shows it at twice the size so only
 /// half of it fits, and 0.5 shows it at half size."*

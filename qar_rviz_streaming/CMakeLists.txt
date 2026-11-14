@@ -13,7 +13,10 @@
 # This package MAY include rviz/Qt/ament; qar_ogre_streaming may NOT.
 
 cmake_minimum_required(VERSION 3.8)
-project(qar_rviz_streaming VERSION 0.2.0 LANGUAGES CXX)
+# The version comes from the file VERSION at the repository root and git
+# (cmake/QarRvizVersion.cmake), and package.xml must carry the same X.Y.Z.
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/QarRvizVersion.cmake")
+project(qar_rviz_streaming VERSION ${QAR_RVIZ_PLUGIN_VERSION_CORE} LANGUAGES CXX)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
@@ -53,15 +56,38 @@ find_package(ament_index_cpp REQUIRED)
 # cmake/QarBuildSupport.cmake). The web libraries qar_ui_model, qar_ros_ui and qar_web_panels
 # are part of this repository and are built from its tree, and so is qar_capi_panels, the
 # QarOS C API behind the panel interfaces of qar_qt_streaming. QAR_REPO_ROOT also locates
-# third_party/stb below.
+# third_party/stb below and the qaros submodule external/qaros, whose QarOS C and C++ headers
+# (qar-streaming-c, qar-streaming-cpp) are those of this build.
 # ---------------------------------------------------------------------------
 get_filename_component(QAR_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 include("${QAR_REPO_ROOT}/cmake/QarBuildSupport.cmake")
 include("${QAR_REPO_ROOT}/cmake/QarRosBuildSupport.cmake")
+qar_use_qaros_submodule("${QAR_REPO_ROOT}")
 
-qar_find_upstream(qar_ogre_adapter VERSION 0.2.0
+# The SHA-256 of the QarOS C header this plugin is compiled against, installed as
+# share/qar_rviz_streaming/qar_streaming_h.sha256. scripts/register-qaros-plugin.* and
+# scripts/package-release.* read it, so the registration and the release manifest name the C API
+# of the build and not the one of a later checkout. Configuring again when the header changes.
+set(_qar_c_header "${QAROS_SOURCE_DIR}/qar-streaming-c/include/qar_streaming.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_qar_c_header}")
+file(SHA256 "${_qar_c_header}" QAR_C_API_HEADER_SHA256)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qar_streaming_h.sha256" "${QAR_C_API_HEADER_SHA256}\n")
+message(STATUS "QarOS C API header SHA-256: ${QAR_C_API_HEADER_SHA256}")
+
+# The version of this build and the QAROS version whose C API header it was compiled against
+# (the VERSION file of the qaros checkout), installed as share/qar_rviz_streaming/plugin_version
+# and share/qar_rviz_streaming/qaros_version for scripts/register-qaros-plugin.* and
+# scripts/package-release.* (min_qaros_version of the release manifest).
+file(STRINGS "${QAROS_SOURCE_DIR}/VERSION" QAR_QAROS_VERSION LIMIT_COUNT 1)
+string(STRIP "${QAR_QAROS_VERSION}" QAR_QAROS_VERSION)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${QAROS_SOURCE_DIR}/VERSION")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/plugin_version" "${QAR_RVIZ_PLUGIN_VERSION_RESOLVED}\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qaros_version" "${QAR_QAROS_VERSION}\n")
+message(STATUS "qar_rviz_streaming ${QAR_RVIZ_PLUGIN_VERSION_RESOLVED}, built against the C API of QAROS ${QAR_QAROS_VERSION}")
+
+qar_find_upstream(qar_ogre_adapter VERSION 0.2.1
   COMPONENTS qar_ar_core qar_ogre_streaming capi session render url gestures)
-qar_find_upstream(qar_qt_streaming VERSION 0.2.0 COMPONENTS seam qar_qt_streaming)
+qar_find_upstream(qar_qt_streaming VERSION 0.2.1 COMPONENTS seam qar_qt_streaming)
 add_subdirectory("${QAR_REPO_ROOT}/qar_ui_model" "${CMAKE_BINARY_DIR}/qar_ui_model")
 add_subdirectory("${QAR_REPO_ROOT}/qar_ros_ui" "${CMAKE_BINARY_DIR}/qar_ros_ui")
 find_package(Qt5 REQUIRED COMPONENTS Network WebSockets)
@@ -164,6 +190,9 @@ target_include_directories(qar_rviz_streaming PRIVATE
 # (Q_OBJECT/Q_SLOTS/Q_SIGNALS/Q_EMIT), which our code and the rviz_common public
 # headers already use.
 target_compile_definitions(qar_rviz_streaming PRIVATE QT_NO_KEYWORDS)
+# The version the panel logs and tells the QAROS Hub as its app version.
+target_compile_definitions(qar_rviz_streaming PRIVATE
+  QAR_RVIZ_PLUGIN_VERSION="${QAR_RVIZ_PLUGIN_VERSION_RESOLVED}")
 
 # ...except in ONE translation unit. hidden_rviz_panel.cpp needs
 # rviz_common/visualization_frame.hpp, which includes rviz_rendering/render_window.hpp,
@@ -225,7 +254,8 @@ install(TARGETS qar_rviz_streaming
 install(DIRECTORY include/
   DESTINATION include
 )
-install(FILES plugin_description.xml
+install(FILES plugin_description.xml "${CMAKE_CURRENT_BINARY_DIR}/qar_streaming_h.sha256"
+  "${CMAKE_CURRENT_BINARY_DIR}/plugin_version" "${CMAKE_CURRENT_BINARY_DIR}/qaros_version"
   DESTINATION share/${PROJECT_NAME}
 )
 install(DIRECTORY config
