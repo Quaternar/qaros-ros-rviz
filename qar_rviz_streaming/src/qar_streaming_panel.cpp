@@ -65,6 +65,7 @@
 #include <QTextStream>
 #include <QThread>
 #include <QTimer>
+#include <optional>
 #include <QTreeView>
 #include <QVariant>
 #include <QVBoxLayout>
@@ -2372,6 +2373,10 @@ void QarStreamingPanel::onInitialize()
   // scene per peer and submits through the QAR C API. The offline preview path
   // is untouched.
   live_stream_mode_ = !qEnvironmentVariable("QAR_PANEL_LIVE_STREAM").isEmpty();
+  if (!live_stream_mode_ && !qEnvironmentVariable("QAR_PANEL_AUTO_CONNECT").trimmed().isEmpty()) {
+    appendLog(
+      "QAR_PANEL_AUTO_CONNECT has no effect without QAR_PANEL_LIVE_STREAM (offline preview).");
+  }
   if (live_stream_mode_) {
     // This makes the panel LIVE-CAPABLE but does NOT connect. The join to the QAROS Hub starts
     // from the "Connect to QarOS" button (onStartQar): the session owner loads the QAROS runtime
@@ -2385,6 +2390,7 @@ void QarStreamingPanel::onInitialize()
     // Relabel the runtime controls so the live connection is discoverable (buildUi
     // runs before onInitialize, so live_stream_mode_ isn't known there).
     if (start_qar_button_ != nullptr) { start_qar_button_->setText("Connect to QarOS"); }
+    scheduleAutoConnect();
     if (stop_qar_button_ != nullptr) { stop_qar_button_->setText("Disconnect (pause)"); }
     // A QarOS session has no simulated peers by default: "Invite peer" invites a physical
     // client head, a real device, into the running session. Its group (the device selector, the
@@ -2641,6 +2647,31 @@ void QarStreamingPanel::on_message(
 // ---------------------------------------------------------------------------
 // Slots
 // ---------------------------------------------------------------------------
+void QarStreamingPanel::scheduleAutoConnect()
+{
+  // QAR_PANEL_AUTO_CONNECT=1 (QAROS sets it when it launches RViz) presses "Connect to QarOS"
+  // once, after the panel and its saved configuration are loaded. It is tried once: a failed join
+  // shows its failure and waits for the operator, like any other failed connect.
+  std::string warning;
+  const bool wanted = auto_connect_requested(
+    [](const char * name) -> std::optional<std::string> {
+      const QByteArray value = qgetenv(name);
+      if (value.isNull()) {return std::nullopt;}
+      return std::string(value.constData());
+    }, warning);
+  if (!warning.empty()) {
+    appendLog(QString("LIVE: WARNING: %1.").arg(QString::fromStdString(warning)));
+  }
+  if (!wanted) {return;}
+  appendLog(
+    "LIVE: QAR_PANEL_AUTO_CONNECT is on: connecting to QarOS by itself once the panel has "
+    "loaded.");
+  QTimer::singleShot(
+    500, this, [this]() {
+      if (connection_phase_ == ConnectionPhase::Idle) {onStartQar();}
+    });
+}
+
 void QarStreamingPanel::onStartQar()
 {
   // LIVE: "Connect to QarOS" connects to the real QarOS runtime and begins streaming.

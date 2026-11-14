@@ -200,6 +200,32 @@ TEST(PanelSettings, SavedValueWinsOverDefault)
   EXPECT_EQ(qar_rviz_streaming::setting_text(settings, key::kInviteHostname), "HOLO-1");
 }
 
+TEST(PanelSettings, AutoConnectVariable)
+{
+  std::string warning;
+  EXPECT_FALSE(qar_rviz_streaming::auto_connect_requested(env_of({}), warning));
+  EXPECT_TRUE(warning.empty());
+  for (const char * word : {"1", "true", " ON ", "Yes"}) {
+    EXPECT_TRUE(
+      qar_rviz_streaming::auto_connect_requested(
+        env_of({{"QAR_PANEL_AUTO_CONNECT", word}}), warning)) << word;
+    EXPECT_TRUE(warning.empty()) << word;
+  }
+  for (const char * word : {"0", "false", "off", "no", "", "  "}) {
+    EXPECT_FALSE(
+      qar_rviz_streaming::auto_connect_requested(
+        env_of({{"QAR_PANEL_AUTO_CONNECT", word}}), warning)) << word;
+    EXPECT_TRUE(warning.empty()) << word;
+  }
+  EXPECT_FALSE(
+    qar_rviz_streaming::auto_connect_requested(
+      env_of({{"QAR_PANEL_AUTO_CONNECT", "maybe"}}), warning));
+  EXPECT_EQ(
+    warning,
+    "QAR_PANEL_AUTO_CONNECT='maybe' is not one of on|off|1|0|true|false|yes|no - not connecting by "
+    "itself");
+}
+
 TEST(PanelSettings, EnvironmentWinsOverSaved)
 {
   const SettingsText saved = {

@@ -152,7 +152,7 @@ Set-Content -Path $bundle -Value $pem -Encoding ascii
 
 ### RViz exits at start and Qt complains that no application exists
 
-**Symptom.** `rviz2.exe` exits at once and a message says that the QApplication object must be instantiated first. **Cause.** RViz imports Qt DLLs whose names carry the suffix _conda; copies under those names load a second Qt core into the process. **Fix.** Run `scripts\fix_qt_conda_imports.ps1` once, and again after any new extraction of the distribution; never create copies of the Qt DLLs under the suffixed names.
+**Symptom.** `rviz2.exe` exits at once and a message says that the QApplication object must be instantiated first. **Cause.** RViz imports Qt DLLs whose names carry the suffix _conda; copies under those names load a second Qt core into the process. **Fix.** Run `scripts\fix_qt_conda_imports.ps1` once, and again after any new extraction of the distribution; never create copies of the Qt DLLs under the suffixed names. When QAROS launches RViz (tile "ROS 2 Rviz"), it supplies Qt to `rviz2` itself, from `QAR_QT_ROOT`, `Qt5_DIR`/`Qt6_DIR`/`QTDIR`, a `qt` folder beside the ROS root, pixi or `C:\Qt`, in that order; if RViz exits there, set `QAR_QT_ROOT` to the Qt 5.15.2 kit.
 
 ### The plugin cannot be rebuilt because its DLL is in use
 
