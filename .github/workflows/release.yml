@@ -15,6 +15,10 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # A pull request into main builds and packages every target as workflow artifacts (version
+  # 0.0.0-pr.<number>) and never publishes a release.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -59,8 +63,11 @@ jobs:
           EVENT: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
           REF_NAME: ${{ github.ref_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ "$EVENT" = workflow_dispatch ]; then v="$INPUT_VERSION"; else v="$REF_NAME"; fi
+          if [ "$EVENT" = workflow_dispatch ]; then v="$INPUT_VERSION";
+          elif [ "$EVENT" = pull_request ]; then v="0.0.0-pr.$PR_NUMBER";
+          else v="$REF_NAME"; fi
           v="${v#v}"
           if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]]; then
             echo "::error::'$v' is not a release version like 0.9.0 (tags are v<QAROS version>)"
