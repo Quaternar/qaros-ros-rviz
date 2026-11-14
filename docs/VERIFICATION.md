@@ -50,8 +50,8 @@ Preset CMake variables:
 ...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
 ...
--- qar_ogre_adapter 0.3.0: C:/qar/install/share/qar_ogre_adapter/cmake
--- qar_qt_streaming 0.3.0: C:/qar/install/share/qar_qt_streaming/cmake
+-- qar_ogre_adapter 0.2.1: C:/qar/install/share/qar_ogre_adapter/cmake
+-- qar_qt_streaming 0.2.1: C:/qar/install/share/qar_qt_streaming/cmake
 ...
 -- Configuring done (6.2s)
 -- Generating done (0.4s)

@@ -206,20 +206,21 @@ function Expand-WithPython([string]$PythonExe, [string]$Package, [string]$OutDir
 # Unpacks the two DLLs with tar: first the ZIP file, then the Zstandard archive inside it.
 # Returns $null on success, otherwise the text of the problem.
 function Expand-WithTar([string]$Package, [string]$OutDir) {
-    if (-not (Get-Command tar -ErrorAction SilentlyContinue)) { return "tar was not found on PATH" }
+    $tar = Get-QarTar
+    if (-not $tar) { return "tar was not found on PATH" }
     $outer = Join-Path $BuildRoot "package"
     $files = Join-Path $BuildRoot "files"
     foreach ($folder in $outer, $files) {
         if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force }
         New-Item -ItemType Directory -Force -Path $folder | Out-Null
     }
-    $code = Invoke-Native "tar" @("-xf", $Package, "-C", $outer)
+    $code = Invoke-Native $tar.Exe ($tar.Prefix + @("-xf", $Package, "-C", $outer))
     if ($code -ne 0) {
         return "tar could not read the package (status ${code}): $script:nativeText"
     }
     $inner = @(Get-ChildItem -LiteralPath $outer -Filter "pkg-*.tar.zst" -File)
     if ($inner.Count -ne 1) { return "the package does not hold exactly one pkg-*.tar.zst" }
-    $code = Invoke-Native "tar" (@("-xf", $inner[0].FullName, "-C", $files) + $members)
+    $code = Invoke-Native $tar.Exe ($tar.Prefix + @("-xf", $inner[0].FullName, "-C", $files) + $members)
     if ($code -ne 0) {
         return "tar could not read the archive (status ${code}): $script:nativeText"
     }

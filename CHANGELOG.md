@@ -19,7 +19,7 @@ written and how a version is released is in [AGENTS.md](AGENTS.md).
 - `QAR_PANEL_HUB_HOST` and `QAR_PANEL_HUB_PORT` only log that they have no effect, and `QAR_PANEL_IDENTITY_DIR` is gone ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
 - The launcher parameters `-HubHost` and `-HubPort`, the value `remote` of `-HubMode`, and the example options `--hub`, `--code` and `--forget` are removed ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
 - The QarOS C and C++ headers come from the public qaros repository, the git submodule `external/qaros`: clone with `--recurse-submodules`; configuring stops when an installed upstream package carries headers of another qaros commit (`QAR_QAROS_HEADER_CHECK`) ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
-- The plugin builds against qar_ogre_adapter 0.3.0 and qar_qt_streaming 0.3.0: install those versions of qaros-ogre and qaros-qt ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
+- The plugin builds against qar_ogre_adapter 0.2.1 and qar_qt_streaming 0.2.1: install those versions of qaros-ogre and qaros-qt ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
 - Release tags are the plugin's own version `vX.Y.Z` (was the QAROS version), assets are named `qar_rviz_streaming-<plugin version>-<distro>-<platform>.zip`, and `manifest.json` names each zip's minimum QAROS version in `min_qaros_version` ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
 
 ### Features
@@ -37,6 +37,10 @@ written and how a version is released is in [AGENTS.md](AGENTS.md).
 - The environment variable `QAR_VS_VERSION` (`2019`, the default, or `2022`) selects the Visual Studio of the scripts and the repairs ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
 - Troubleshooting section "A broken ROS 2 distribution" maps the known gaps of the Windows Humble binary release to the repair scripts ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
 - The ROS 2 root check accepts `setup.sh` (Linux) besides `local_setup.bat`, and `QAR_QT_ROOT` is optional on Linux ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
+
+### Bug fixes
+
+- The repair scripts (`fix_missing_eigen.ps1`, `fix_missing_openssl_dll.ps1`, `fix_missing_tinyxml_dll.ps1`, `fix_missing_vendor_dlls.ps1`) unpack with the tar of Windows, so a GNU tar first on `PATH` (the one of Git) no longer hangs on a `C:\` archive path ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
 
 ## [0.2.0] - 2026-11-13
 

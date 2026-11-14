@@ -377,7 +377,7 @@ The file has this form; [ros-plugins.schema.json](ros-plugins.schema.json) is it
       "source": "local",
       "ros_root": "C:\\qar\\deps\\ros2_humble\\ros2-windows",
       "prefix": "C:\\qar\\install",
-      "plugin_version": "0.3.0-dev.4+1a2b3c4d",
+      "plugin_version": "0.2.1-dev.4+1a2b3c4d",
       "c_api_header_sha256": "94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762",
       "registered_at": "2026-11-14T03:10:39Z"
     }
@@ -393,7 +393,7 @@ The file has this form; [ros-plugins.schema.json](ros-plugins.schema.json) is it
 | `source` | `local` for a build registered by the script, `prebuilt` for a release asset that QAROS unpacked. A `local` record wins over a `prebuilt` one for the same distribution and platform. |
 | `ros_root` | The ROS 2 root that QAROS sources before the overlay. |
 | `prefix` | The overlay prefix that holds the plugin; QAROS sources its `local_setup` script and starts `rviz2 -d <prefix>/share/qar_rviz_streaming/config/qar_streaming_dev.rviz`. |
-| `plugin_version` | The version of the installed build: `share/qar_rviz_streaming/plugin_version`, which the build installs (for example `0.3.0-dev.4+1a2b3c4d`), else the `X.Y.Z` of its `package.xml`; for a `prebuilt` record the release version. |
+| `plugin_version` | The version of the installed build: `share/qar_rviz_streaming/plugin_version`, which the build installs (for example `0.2.1-dev.4+1a2b3c4d`), else the `X.Y.Z` of its `package.xml`; for a `prebuilt` record the release version. |
 | `c_api_header_sha256` | The SHA-256 of `qar_streaming.h` the plugin was compiled against; QAROS compares it with its runtime and reports a mismatch as incompatible. |
 | `registered_at` | The UTC time of the registration. |
 | `qaros_version` | Only in `prebuilt` records, written by QAROS. |
@@ -414,18 +414,18 @@ Each job runs `scripts\package-release.ps1` or `scripts/package-release.sh` on i
 ```json
 {
   "version": 1,
-  "release": "0.3.0",
-  "plugin_version": "0.3.0",
+  "release": "0.2.1",
+  "plugin_version": "0.2.1",
   "package": "qar_rviz_streaming",
   "assets": [
     {
-      "name": "qar_rviz_streaming-0.3.0-humble-windows-x64.zip",
+      "name": "qar_rviz_streaming-0.2.1-humble-windows-x64.zip",
       "sha256": "<SHA-256 of the zip>",
       "size": 2118801,
       "distro": "humble",
       "platform": "windows-x64",
       "qt_major": 5,
-      "plugin_version": "0.3.0",
+      "plugin_version": "0.2.1",
       "c_api_header_sha256": "94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762",
       "min_qaros_version": "0.9.0"
     }

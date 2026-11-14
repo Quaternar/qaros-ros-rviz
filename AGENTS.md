@@ -45,10 +45,10 @@ configure stops when they differ. The full version of a build is derived, never 
 
 | HEAD | Version | Example |
 |---|---|---|
-| tagged `vX.Y.Z` | `X.Y.Z` | `0.3.0` |
-| tagged `vX.Y.Z-rc.N` | `X.Y.Z-rc.N` | `0.3.0-rc.1` |
-| any other commit | `X.Y.Z-dev.<commits since the last v* tag>+<short sha>` | `0.3.0-dev.4+1a2b3c4d` |
-| pull request build of the release workflow | `X.Y.Z-pr.<number>` | `0.3.0-pr.5` |
+| tagged `vX.Y.Z` | `X.Y.Z` | `0.2.1` |
+| tagged `vX.Y.Z-rc.N` | `X.Y.Z-rc.N` | `0.2.1-rc.1` |
+| any other commit | `X.Y.Z-dev.<commits since the last v* tag>+<short sha>` | `0.2.1-dev.4+1a2b3c4d` |
+| pull request build of the release workflow | `X.Y.Z-pr.<number>` | `0.2.1-pr.5` |
 
 - The panel logs that version and tells it to the QAROS Hub as its app version; the build installs
   it as `share/qar_rviz_streaming/plugin_version`, which the register scripts record.

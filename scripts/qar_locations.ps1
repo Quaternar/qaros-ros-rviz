@@ -81,6 +81,29 @@ function Resolve-QarLocation {
     return $full
 }
 
+# The tar the repair scripts unpack with: @{ Exe = <path>; Prefix = <arguments that go first> }, or
+# $null when there is none. On Windows it is the bsdtar of Windows, System32\tar.exe: a GNU tar
+# first on PATH (the tar of Git, as on the GitHub runners) reads C:\... as host:path, a remote
+# archive over rsh, and hangs. Without System32\tar.exe it is the tar on PATH, with --force-local
+# for a GNU tar so that it reads the name as a local file.
+function Get-QarTar {
+    $onWindows = $env:OS -eq 'Windows_NT'
+    if ($onWindows -and -not [string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+        $bsdtar = Join-Path $env:SystemRoot 'System32\tar.exe'
+        if (Test-Path -LiteralPath $bsdtar -PathType Leaf) { return @{ Exe = $bsdtar; Prefix = @() } }
+    }
+    $cmd = Get-Command tar -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $cmd) { return $null }
+    $prefix = @()
+    if ($onWindows) {
+        $saved = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $about = (& $cmd.Source --version 2>&1 | Out-String) } finally { $ErrorActionPreference = $saved }
+        if ($about -match 'GNU tar') { $prefix = @('--force-local') }
+    }
+    return @{ Exe = $cmd.Source; Prefix = $prefix }
+}
+
 # The Visual Studio version of the build: 2019 (MSVC v142, the toolset of the ROS 2 Humble Windows
 # distribution, the default) or 2022 (MSVC v143, which links against v142 binaries and is what
 # hosted CI machines have). The environment variable QAR_VS_VERSION selects it.

@@ -256,7 +256,7 @@ if (-not (Test-RosRoot $rootFull)) {
 
 # --- Plugin version and C API header hash -------------------------------------------
 # The full version the build installs (share\<package>\plugin_version, for example
-# 0.3.0-dev.4+1a2b3c4d), else the X.Y.Z of package.xml (a build made before the stamp existed).
+# 0.2.1-dev.4+1a2b3c4d), else the X.Y.Z of package.xml (a build made before the stamp existed).
 $versionStamp = Join-Path $prefixFull "share\$Package\plugin_version"
 $pluginVersion = $null
 if (Test-Path -LiteralPath $versionStamp -PathType Leaf) {

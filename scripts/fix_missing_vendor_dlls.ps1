@@ -109,7 +109,9 @@ function Get-AndExtract($url, $archiveName, $extractedDirName) {
     $destPath = Join-Path $BuildRoot $extractedDirName
     if (-not (Test-Path $destPath)) {
         Write-Host "Extracting $archiveName"
-        tar -xzf $archivePath -C $BuildRoot
+        $tar = Get-QarTar
+        if (-not $tar) { throw "tar not found on PATH (see docs/INSTALL.md, section 'Toolchain')." }
+        & $tar.Exe @($tar.Prefix + @('-xzf', $archivePath, '-C', $BuildRoot))
         if ($LASTEXITCODE -ne 0) {
             # a later run must find neither an unreadable archive nor a partly unpacked folder
             Remove-Item -LiteralPath $destPath -Recurse -Force -ErrorAction SilentlyContinue

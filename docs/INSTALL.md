@@ -660,7 +660,7 @@ usage: ros2 [-h] [--use-python-default-buffering]
 
 Build and install the two repositories one after the other into the prefix `QAR_PREFIX`, in either order, because they do not depend on each other; the plugin needs both, and it finds the components `qar_ar_core`, `qar_ogre_streaming`, `capi`, `session`, `render`, `url` and `gestures` of `qar_ogre_adapter` and the components `seam` and `qar_qt_streaming` of `qar_qt_streaming`. It does not use the component `qaros` of `qar_qt_streaming`: the module `qar_capi_panels` of this repository is the backend of the panels, so the plugin works on the session of the session owner.
 
-### qar_ogre_adapter 0.3.0
+### qar_ogre_adapter 0.2.1
 
 qar_ogre_adapter is the QarOS integration layer. It renders an Ogre scene for each eye into OpenGL textures and streams them to QarOS, and it holds the adapter for the QarOS C API (session, peers, URL panels and gestures) that the plugin repository builds on. It also carries the C header of the QarOS SDK that the plugin repository compiles against.
 
@@ -749,7 +749,7 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterConfigVersion.cmake
 ```
 
-### qar_qt_streaming 0.3.0
+### qar_qt_streaming 0.2.1
 
 qar_qt_streaming turns Qt widgets into QarOS AR GUI panels: it captures a widget off screen, streams it as a panel and feeds AR touch input back to the widget. It needs Qt and the headers of the QarOS C++ SDK, and nothing of the other repositories of this stack.
 
@@ -859,8 +859,8 @@ Preset CMake variables:
 ...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
 ...
--- qar_ogre_adapter 0.3.0: C:/qar/install/share/qar_ogre_adapter/cmake
--- qar_qt_streaming 0.3.0: C:/qar/install/share/qar_qt_streaming/cmake
+-- qar_ogre_adapter 0.2.1: C:/qar/install/share/qar_ogre_adapter/cmake
+-- qar_qt_streaming 0.2.1: C:/qar/install/share/qar_qt_streaming/cmake
 ...
 -- Configuring done (6.2s)
 -- Generating done (0.4s)
@@ -1030,7 +1030,7 @@ QAROS starts RViz2 with this plugin from the "ROS 2 Rviz" source application of 
 Added the local record for humble / windows-x64 in C:\Users\<user>\AppData\Roaming\Quaternar\ros-plugins.json
   ROS 2 root     : C:\qar\deps\ros2_humble\ros2-windows
   prefix         : C:\qar\install
-  plugin version : 0.3.0
+  plugin version : 0.2.1
   C API SHA-256  : 94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762
                    (from C:\qar\install\share\qar_rviz_streaming\qar_streaming_h.sha256)
 ```

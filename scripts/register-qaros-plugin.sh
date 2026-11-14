@@ -217,7 +217,7 @@ is_ros_root "$root_abs" || die "$root_abs (from $root_from) is not a ROS 2 root 
 
 # --- Plugin version and C API header hash -----------------------------------------------------
 # The full version the build installs (share/<package>/plugin_version, for example
-# 0.3.0-dev.4+1a2b3c4d), else the X.Y.Z of package.xml (a build made before the stamp existed).
+# 0.2.1-dev.4+1a2b3c4d), else the X.Y.Z of package.xml (a build made before the stamp existed).
 plugin_version=""
 [ -f "$prefix_abs/share/$PACKAGE/plugin_version" ] &&
   plugin_version="$(head -n1 "$prefix_abs/share/$PACKAGE/plugin_version" | tr -d '[:space:]')"

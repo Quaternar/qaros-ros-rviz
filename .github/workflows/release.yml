@@ -53,8 +53,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  QAROS_OGRE_REF: ${{ inputs.qaros_ogre_ref || '64454e2dce72a8111b477dbc8e477b48f759eb8e' }}
-  QAROS_QT_REF: ${{ inputs.qaros_qt_ref || '68a9513217e0d0035f2fd2c0d962092bf59569b2' }}
+  QAROS_OGRE_REF: ${{ inputs.qaros_ogre_ref || 'bc75c0ca0e11582dd81f877c7488e38559d5fb16' }}
+  QAROS_QT_REF: ${{ inputs.qaros_qt_ref || '0430d447d0092672636f82f05a0269a998db4631' }}
   # The build needs no Git LFS file of the qaros submodule (images of its documentation).
   GIT_LFS_SKIP_SMUDGE: '1'
 
@@ -62,6 +62,7 @@ jobs:
   version:
     name: Release version
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
@@ -104,6 +105,7 @@ jobs:
   script-tests:
     name: Script tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -126,6 +128,8 @@ jobs:
     name: Build ${{ matrix.distro }} ${{ matrix.platform }}
     needs: [version, script-tests]
     runs-on: windows-2022
+    # A hang (such as a tar that waits forever) must not hold the run for hours.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -226,6 +230,7 @@ jobs:
     # manifest.json (QAROS then reports no prebuilt plugin for that distribution), and stays red.
     if: ${{ !cancelled() && needs.version.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:

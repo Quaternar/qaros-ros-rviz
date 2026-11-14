@@ -85,9 +85,9 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/plugin_version" "${QAR_RVIZ_PLUGIN_VERSI
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qaros_version" "${QAR_QAROS_VERSION}\n")
 message(STATUS "qar_rviz_streaming ${QAR_RVIZ_PLUGIN_VERSION_RESOLVED}, built against the C API of QAROS ${QAR_QAROS_VERSION}")
 
-qar_find_upstream(qar_ogre_adapter VERSION 0.3.0
+qar_find_upstream(qar_ogre_adapter VERSION 0.2.1
   COMPONENTS qar_ar_core qar_ogre_streaming capi session render url gestures)
-qar_find_upstream(qar_qt_streaming VERSION 0.3.0 COMPONENTS seam qar_qt_streaming)
+qar_find_upstream(qar_qt_streaming VERSION 0.2.1 COMPONENTS seam qar_qt_streaming)
 add_subdirectory("${QAR_REPO_ROOT}/qar_ui_model" "${CMAKE_BINARY_DIR}/qar_ui_model")
 add_subdirectory("${QAR_REPO_ROOT}/qar_ros_ui" "${CMAKE_BINARY_DIR}/qar_ros_ui")
 find_package(Qt5 REQUIRED COMPONENTS Network WebSockets)
