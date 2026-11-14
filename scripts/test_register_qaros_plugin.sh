@@ -49,6 +49,13 @@ check 'plugin version' '[ "$(q "doc[\"plugins\"][0][\"plugin_version\"]")" = 9.8
 check 'hash from the stamp' '[ "$(q "doc[\"plugins\"][0][\"c_api_header_sha256\"]")" = $HASH ]'
 check 'timestamp' '[[ "$(q "doc[\"plugins\"][0][\"registered_at\"]")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$ ]]'
 
+# The full version the build installs wins over package.xml.
+mkfile "$prefix/share/qar_rviz_streaming/plugin_version" '9.8.7-dev.3+1a2b3c4d'
+run --prefix "$prefix" --ros-root "$ros"
+check 'register with a version stamp exits 0' '[ $code -eq 0 ]'
+check 'plugin version from the stamp' '[ "$(q "doc[\"plugins\"][0][\"plugin_version\"]")" = 9.8.7-dev.3+1a2b3c4d ]'
+rm -f "$prefix/share/qar_rviz_streaming/plugin_version"
+
 cat > "$registry" <<EOF
 { "version": 1, "comment": "kept", "plugins": [
   { "distro": "humble", "platform": "linux-x64", "source": "prebuilt", "prefix": "/x", "qaros_version": "0.9.0" },

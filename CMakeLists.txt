@@ -12,7 +12,9 @@
 # parts of the plugin that need neither RViz nor Ogre, with their unit tests and the layering guard tests,
 # against those installed packages. It installs nothing; colcon installs the plugin.
 cmake_minimum_required(VERSION 3.22)
-project(qar_rviz_plugin VERSION 0.2.0
+# The version comes from the file VERSION and git (cmake/QarRvizVersion.cmake).
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/QarRvizVersion.cmake")
+project(qar_rviz_plugin VERSION ${QAR_RVIZ_PLUGIN_VERSION_CORE}
   DESCRIPTION "Web AR panel libraries, their examples and the unit tests of the RViz2 plugin; the plugin is the ament package qar_rviz_streaming, built by scripts/build_plugin.ps1"
   LANGUAGES CXX)
 
@@ -37,8 +39,8 @@ set(_qar_upstream_components qar_ar_core capi session)
 if(QAR_BUILD_EXAMPLES)
   list(APPEND _qar_upstream_components render url)
 endif()
-qar_find_upstream(qar_ogre_adapter VERSION 0.2.0 COMPONENTS ${_qar_upstream_components})
-qar_find_upstream(qar_qt_streaming VERSION 0.2.0 COMPONENTS seam qar_qt_streaming)
+qar_find_upstream(qar_ogre_adapter VERSION 0.3.0 COMPONENTS ${_qar_upstream_components})
+qar_find_upstream(qar_qt_streaming VERSION 0.3.0 COMPONENTS seam qar_qt_streaming)
 
 add_subdirectory(qar_ui_model)
 add_subdirectory(qar_ros_ui)

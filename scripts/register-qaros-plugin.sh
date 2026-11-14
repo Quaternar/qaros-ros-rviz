@@ -216,10 +216,17 @@ done
 is_ros_root "$root_abs" || die "$root_abs (from $root_from) is not a ROS 2 root with RViz: it needs setup.bash or local_setup.bash, and lib/rviz2/rviz2 or bin/rviz2."
 
 # --- Plugin version and C API header hash -----------------------------------------------------
-package_xml="$prefix_abs/share/$PACKAGE/package.xml"
-[ -f "$package_xml" ] || package_xml="$REPO_ROOT/$PACKAGE/package.xml"
-plugin_version="$(sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' "$package_xml" | head -n1 | tr -d '[:space:]')"
-[ -n "$plugin_version" ] || die "no <version> in $package_xml."
+# The full version the build installs (share/<package>/plugin_version, for example
+# 0.3.0-dev.4+1a2b3c4d), else the X.Y.Z of package.xml (a build made before the stamp existed).
+plugin_version=""
+[ -f "$prefix_abs/share/$PACKAGE/plugin_version" ] &&
+  plugin_version="$(head -n1 "$prefix_abs/share/$PACKAGE/plugin_version" | tr -d '[:space:]')"
+if [ -z "$plugin_version" ]; then
+  package_xml="$prefix_abs/share/$PACKAGE/package.xml"
+  [ -f "$package_xml" ] || package_xml="$REPO_ROOT/$PACKAGE/package.xml"
+  plugin_version="$(sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' "$package_xml" | head -n1 | tr -d '[:space:]')"
+  [ -n "$plugin_version" ] || die "no <version> in $package_xml."
+fi
 
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1 | tr -d '\\'

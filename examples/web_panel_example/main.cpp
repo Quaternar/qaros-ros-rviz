@@ -134,6 +134,10 @@ int main(int argc, char ** argv)
   bool loopback = false;
   int seconds = 60;
   int port = 0;
+  if (argc == 2 && std::string(argv[1]) == "--version") {
+    std::printf("qar_web_panel_example %s\n", QAR_RVIZ_PLUGIN_VERSION);
+    return 0;
+  }
   const bool help = argc == 2 && std::string(argv[1]) == "--help";
   bool bad_usage = false;
   for (int i = 1; i < argc && !help && !bad_usage; ++i) {
@@ -163,6 +167,7 @@ int main(int argc, char ** argv)
   if (!no_qaros) {
     qqa::SessionOwnerConfig owner_config;
     owner_config.program_tag = kProgramTag;
+    owner_config.app_version = QAR_RVIZ_PLUGIN_VERSION;
     owner_config.display_name = std::string("Web panel example on ") + host;
     owner_config.log_severity = QAR_LOG_SEVERITY_WARN;
     owner_config.enable_console_logging = false;

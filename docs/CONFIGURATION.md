@@ -377,7 +377,7 @@ The file has this form; [ros-plugins.schema.json](ros-plugins.schema.json) is it
       "source": "local",
       "ros_root": "C:\\qar\\deps\\ros2_humble\\ros2-windows",
       "prefix": "C:\\qar\\install",
-      "plugin_version": "0.2.0",
+      "plugin_version": "0.3.0-dev.4+1a2b3c4d",
       "c_api_header_sha256": "94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762",
       "registered_at": "2026-11-14T03:10:39Z"
     }
@@ -393,48 +393,59 @@ The file has this form; [ros-plugins.schema.json](ros-plugins.schema.json) is it
 | `source` | `local` for a build registered by the script, `prebuilt` for a release asset that QAROS unpacked. A `local` record wins over a `prebuilt` one for the same distribution and platform. |
 | `ros_root` | The ROS 2 root that QAROS sources before the overlay. |
 | `prefix` | The overlay prefix that holds the plugin; QAROS sources its `local_setup` script and starts `rviz2 -d <prefix>/share/qar_rviz_streaming/config/qar_streaming_dev.rviz`. |
-| `plugin_version` | The version in `package.xml` of the installed package. |
+| `plugin_version` | The version of the installed build: `share/qar_rviz_streaming/plugin_version`, which the build installs (for example `0.3.0-dev.4+1a2b3c4d`), else the `X.Y.Z` of its `package.xml`; for a `prebuilt` record the release version. |
 | `c_api_header_sha256` | The SHA-256 of `qar_streaming.h` the plugin was compiled against; QAROS compares it with its runtime and reports a mismatch as incompatible. |
 | `registered_at` | The UTC time of the registration. |
-| `qaros_version` | Only in `prebuilt` records: the QAROS release of the asset. |
+| `qaros_version` | Only in `prebuilt` records, written by QAROS. |
 
 A record is identified by (`distro`, `platform`, `source`): running the script again for the same distribution replaces its record.
 
 ## Release assets and manifest.json
 
-The workflow `.github/workflows/release.yml` builds the plugin for each pair of ROS 2 distribution and platform when a tag `v*` is pushed, or when it is started by hand with a version. Tags follow the QAROS release version: the tag `v0.9.0` is the plugin release for QAROS 0.9.0, and the version of the release is the tag without the `v`. The plugin's own version stays the version of `package.xml` and appears in the manifest as `plugin_version`. The matrix is Humble on Windows x64 (the Humble binary release, Qt 5.15.2 `msvc2019_64`, Visual Studio 2022) and Humble and Jazzy on Linux x64 (Ubuntu 22.04 and 24.04 with the ROS 2 apt packages); the Linux jobs are the first Linux builds of the plugin. The upstream libraries are built into the plugin from source checkouts of `qaros-ogre` and `qaros-qt` at the commits that the workflow pins.
+The workflow `.github/workflows/release.yml` builds the plugin for each pair of ROS 2 distribution and platform when a tag `v*` is pushed, or when it is started by hand. Tags are the plugin's own version: `vX.Y.Z` for a release and `vX.Y.Z-rc.N` for a release candidate (a pre-release on GitHub), and the version of the release is the tag without the `v`. Its `X.Y.Z` must equal the file `VERSION` of the repository, or the workflow stops; started by hand, the version defaults to `VERSION`, and a pull request into `main` builds `<VERSION>-pr.<number>` as workflow artifacts without a release. The build reports that version (the app version the panel tells the QAROS Hub, its log, `share/qar_rviz_streaming/plugin_version`). Which QAROS a build works with is not the tag but the QarOS C API it was compiled against: the manifest names it per zip as `c_api_header_sha256` and `min_qaros_version`. The matrix is Humble on Windows x64 (the Humble binary release, Qt 5.15.2 `msvc2019_64`, Visual Studio 2022). Prebuilt releases are Windows only for now: the Linux builds (Humble on Ubuntu 22.04, Jazzy on Ubuntu 24.04) do not compile yet ([#6](https://github.com/Quaternar/qaros-ros-rviz/issues/6)), and `scripts/build_plugin.sh` stays for a build by hand, which is unverified. The upstream libraries are built into the plugin from source checkouts of `qaros-ogre` and `qaros-qt` at the commits that the workflow pins.
 
 Each job runs `scripts\package-release.ps1` or `scripts/package-release.sh` on its install prefix, and the release gets:
 
 | Asset | Content |
 |---|---|
-| `qar_rviz_streaming-<version>-<distro>-<platform>.zip` | An overlay prefix at the root of the zip: `bin\qar_rviz_streaming.dll` or `lib/libqar_rviz_streaming.so`, the plugin's entries of `share/ament_index/resource_index` (without `parent_prefix_path`, which names folders of the build machine), `share/colcon-core/packages/qar_rviz_streaming`, `share/qar_rviz_streaming` (`plugin_description.xml`, `config`, `package.xml`, the environment hooks, `qar_streaming_h.sha256`, `LICENSE`) and colcon's `local_setup.*` scripts. The `setup.*` scripts are left out, because they chain to the underlays of the build machine. Unpacked into any folder, it is an overlay over the ROS 2 distribution. |
+| `qar_rviz_streaming-<plugin version>-<distro>-<platform>.zip` | An overlay prefix at the root of the zip: `bin\qar_rviz_streaming.dll` or `lib/libqar_rviz_streaming.so`, the plugin's entries of `share/ament_index/resource_index` (without `parent_prefix_path`, which names folders of the build machine), `share/colcon-core/packages/qar_rviz_streaming`, `share/qar_rviz_streaming` (`plugin_description.xml`, `config`, `package.xml`, the environment hooks, `qar_streaming_h.sha256`, `plugin_version` with the release version, `qaros_version` with the minimum QAROS version, `LICENSE`) and colcon's `local_setup.*` scripts. The `setup.*` scripts are left out, because they chain to the underlays of the build machine. Unpacked into any folder, it is an overlay over the ROS 2 distribution. |
 | `manifest.json` | One entry per zip. |
 
 ```json
 {
   "version": 1,
-  "release": "0.9.0",
+  "release": "0.3.0",
+  "plugin_version": "0.3.0",
   "package": "qar_rviz_streaming",
   "assets": [
     {
-      "name": "qar_rviz_streaming-0.9.0-humble-windows-x64.zip",
+      "name": "qar_rviz_streaming-0.3.0-humble-windows-x64.zip",
       "sha256": "<SHA-256 of the zip>",
       "size": 2118801,
       "distro": "humble",
       "platform": "windows-x64",
       "qt_major": 5,
-      "plugin_version": "0.2.0",
-      "c_api_header_sha256": "94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762"
+      "plugin_version": "0.3.0",
+      "c_api_header_sha256": "94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762",
+      "min_qaros_version": "0.9.0"
     }
   ]
 }
 ```
 
+| Field | Meaning |
+|---|---|
+| `version` | The format version, `1`. |
+| `release`, `plugin_version` | The release version, the tag without the `v`. |
+| `assets[].plugin_version` | The plugin version of the zip, the release version. |
+| `assets[].c_api_header_sha256` | The SHA-256 of the QarOS C header (`qar_streaming.h`) the zip was compiled against; QAROS picks a zip whose hash matches its runtime and reports a mismatch as incompatible. |
+| `assets[].min_qaros_version` | The QAROS version whose C API header the zip was built from: the `VERSION` file of the `external/qaros` submodule at build time. The zip needs that QAROS version or a newer one with the same C API. |
+| `assets[].distro`, `platform`, `qt_major`, `sha256`, `size` | What the zip was built for, and its checksum and size. |
+
 A job that fails leaves its zip out of the release and of `manifest.json`, so QAROS reports no prebuilt plugin for that distribution. The packaging scripts run on any install prefix, also one that holds the upstream libraries as well, and take only the plugin's files:
 
 ```powershell
-.\scripts\package-release.ps1 -Prefix $env:QAR_PREFIX -Version 0.9.0 -RosRoot $env:ROS2_INSTALL_ROOT -OutDir dist
+.\scripts\package-release.ps1 -Prefix $env:QAR_PREFIX -RosRoot $env:ROS2_INSTALL_ROOT -OutDir dist   # -Version defaults to VERSION
 ```
 
 ## DDS profile

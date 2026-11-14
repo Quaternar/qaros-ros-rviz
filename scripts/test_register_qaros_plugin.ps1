@@ -93,6 +93,14 @@ try {
     Check 'registered_at is ISO 8601 UTC' ([string]$rec.registered_at -match '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$' -or $rec.registered_at -is [datetime])
     Check 'no temporary file left' (@(Get-ChildItem -LiteralPath (Split-Path $registry) -Filter '*.tmp').Count -eq 0)
 
+    # 1b. The full version the build installs wins over package.xml.
+    $stamp = Join-Path $prefix 'share\qar_rviz_streaming\plugin_version'
+    New-File $stamp "9.8.7-dev.3+1a2b3c4d`n"
+    $r = Invoke-Register @('-Prefix', $prefix, '-RosRoot', $rosRoot)
+    Check 'register with a version stamp exits 0' ($r.Code -eq 0)
+    Check 'plugin_version from the stamp' (@((Read-Doc).plugins)[0].plugin_version -eq '9.8.7-dev.3+1a2b3c4d')
+    Remove-Item -LiteralPath $stamp
+
     # 2. Other records and unknown fields are kept; re-running replaces the local humble record.
     $seed = @"
 {

@@ -255,10 +255,19 @@ if (-not (Test-RosRoot $rootFull)) {
 }
 
 # --- Plugin version and C API header hash -------------------------------------------
-$packageXml = Join-Path $prefixFull "share\$Package\package.xml"
-if (-not (Test-Path -LiteralPath $packageXml)) { $packageXml = Join-Path $RepoRoot "$Package\package.xml" }
-$pluginVersion = ([xml][IO.File]::ReadAllText($packageXml)).package.version
-if ([string]::IsNullOrWhiteSpace($pluginVersion)) { throw "No <version> in $packageXml." }
+# The full version the build installs (share\<package>\plugin_version, for example
+# 0.3.0-dev.4+1a2b3c4d), else the X.Y.Z of package.xml (a build made before the stamp existed).
+$versionStamp = Join-Path $prefixFull "share\$Package\plugin_version"
+$pluginVersion = $null
+if (Test-Path -LiteralPath $versionStamp -PathType Leaf) {
+    $pluginVersion = ([IO.File]::ReadAllText($versionStamp)).Trim()
+}
+if ([string]::IsNullOrWhiteSpace($pluginVersion)) {
+    $packageXml = Join-Path $prefixFull "share\$Package\package.xml"
+    if (-not (Test-Path -LiteralPath $packageXml)) { $packageXml = Join-Path $RepoRoot "$Package\package.xml" }
+    $pluginVersion = ([xml][IO.File]::ReadAllText($packageXml)).package.version
+    if ([string]::IsNullOrWhiteSpace($pluginVersion)) { throw "No <version> in $packageXml." }
+}
 
 $hash = $null
 $hashFrom = $null

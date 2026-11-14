@@ -367,3 +367,15 @@ else()
   message(STATUS
     "Qt5 Widgets or qar_qt_streaming not found; qar_rviz_streaming_widget_tests is skipped.")
 endif()
+
+# The version of the build (cmake/QarRvizVersion.cmake) against the file VERSION and package.xml:
+# standard library and GoogleTest only.
+add_executable(qar_rviz_plugin_version_tests version_tests.cpp)
+target_link_libraries(qar_rviz_plugin_version_tests PRIVATE GTest::gtest_main)
+target_compile_features(qar_rviz_plugin_version_tests PRIVATE cxx_std_17)
+target_compile_definitions(qar_rviz_plugin_version_tests PRIVATE
+  QAR_RVIZ_PLUGIN_VERSION="${QAR_RVIZ_PLUGIN_VERSION_RESOLVED}"
+  QAR_TEST_VERSION_FILE="${PROJECT_SOURCE_DIR}/VERSION"
+  QAR_TEST_PACKAGE_XML="${PROJECT_SOURCE_DIR}/qar_rviz_streaming/package.xml")
+qar_apply_warning_flags(qar_rviz_plugin_version_tests)
+gtest_discover_tests(qar_rviz_plugin_version_tests DISCOVERY_TIMEOUT 30)

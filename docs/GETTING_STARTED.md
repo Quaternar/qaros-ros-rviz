@@ -848,7 +848,7 @@ The panel opens only when the browser of QarOS can reach the address. The Visual
 
 ## Expose a ROS topic as an AR panel
 
-The second example puts a ROS 2 topic on a panel. It builds a small model by hand: a value display bound to the field `data` of the newest message of `/qar_example/text`, which the example keeps under the path `message` of the data document, and a button that publishes. The panels that the repository `qar_rviz_plugin` 0.2.0 generates for any topic are built from templates; the example does not use them. It opens its page as a URL panel as the first example does, but it sizes the panel from the page and the fixed design viewport and does not follow the viewport that the page reports.
+The second example puts a ROS 2 topic on a panel. It builds a small model by hand: a value display bound to the field `data` of the newest message of `/qar_example/text`, which the example keeps under the path `message` of the data document, and a button that publishes. The panels that the repository `qar_rviz_plugin` 0.3.0 generates for any topic are built from templates; the example does not use them. It opens its page as a URL panel as the first example does, but it sizes the panel from the page and the fixed design viewport and does not follow the viewport that the page reports.
 
 ```cpp
 // The label is bound to the field "data" of the message, which the example keeps under the path "message" of

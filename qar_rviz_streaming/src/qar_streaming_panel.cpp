@@ -577,7 +577,7 @@ QarStreamingPanel::QarStreamingPanel(QWidget * parent)
   // puts the pick where the AR user was not pointing, silently.
   spatial_.set_transform(qar_ar_core::room_to_ros_from_environment());
   refreshSpatialUi();
-  appendLog("Qar streaming panel constructed.");
+  appendLog(QString("Qar streaming panel constructed (qar_rviz_streaming %1).").arg(QAR_RVIZ_PLUGIN_VERSION));
   reportSettings();
   // The variables that have no effect with this QAROS say so, once.
   for (const std::string & sentence : removed_environment_sentences(
@@ -2875,6 +2875,7 @@ qar_qar_adapter::SessionOwnerConfig QarStreamingPanel::makeSessionOwnerConfig()
   // PC is reached through the Hub of this PC as a member of it.
   cfg.program_tag = kProgramTag;
   cfg.display_name = "RViz2 (QAROS ROS plugin) on " + QSysInfo::machineHostName().toStdString();
+  cfg.app_version = QAR_RVIZ_PLUGIN_VERSION;
 
   // How long the Hub waits for the person to click Allow: 0 is the Hub's own default (120 s),
   // and the Hub takes at most 600 s.

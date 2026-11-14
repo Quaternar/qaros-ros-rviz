@@ -58,7 +58,7 @@
           "minLength": 1
         },
         "plugin_version": {
-          "description": "Version of the qar_rviz_streaming package (its package.xml).",
+          "description": "Version of the installed qar_rviz_streaming build: its share/qar_rviz_streaming/plugin_version (X.Y.Z, X.Y.Z-rc.N or X.Y.Z-dev.N+sha), else the X.Y.Z of its package.xml; for prebuilt records the release version.",
           "type": "string",
           "minLength": 1
         },
@@ -73,7 +73,7 @@
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
         },
         "qaros_version": {
-          "description": "Optional. For prebuilt records: the QAROS release the asset belongs to.",
+          "description": "Optional. For prebuilt records: written by QAROS.",
           "type": "string"
         }
       },

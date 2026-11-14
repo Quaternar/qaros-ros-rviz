@@ -11,6 +11,8 @@
 # time. The program draws no 3D scene, so it links neither the render component nor Ogre.
 
 add_executable(qar_web_panel_example main.cpp)
+# The version it prints with --version and tells the QAROS Hub (cmake/QarRvizVersion.cmake).
+target_compile_definitions(qar_web_panel_example PRIVATE QAR_RVIZ_PLUGIN_VERSION="${QAR_RVIZ_PLUGIN_VERSION_RESOLVED}")
 
 target_compile_features(qar_web_panel_example PRIVATE cxx_std_17)
 

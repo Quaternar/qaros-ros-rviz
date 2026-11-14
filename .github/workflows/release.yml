@@ -3,9 +3,15 @@
 #
 # Builds the qar_rviz_streaming RViz2 plugin for each {ROS 2 distribution x platform}, packages
 # each build as an overlay prefix zip (scripts/package-release.*) and attaches the zips and one
-# manifest.json to the GitHub release of the tag. Tags follow the QAROS release version: tag
-# v0.9.0 is the plugin release for QAROS 0.9.0. See docs/CONFIGURATION.md, section
-# "Release assets and manifest.json".
+# manifest.json to the GitHub release of the tag. Tags are the plugin's own version: vX.Y.Z for a
+# release, vX.Y.Z-rc.N for a candidate, and X.Y.Z must equal the file VERSION. manifest.json
+# names, per zip, the QAROS version whose C API the build was made from (min_qaros_version) and
+# the hash of that header. See docs/CONFIGURATION.md, section "Release assets and manifest.json",
+# and AGENTS.md, section "Versions and releases".
+#
+# Only Humble on Windows x64 is built for now: the Linux builds fail to compile
+# (https://github.com/Quaternar/qaros-ros-rviz/issues/6); scripts/build_plugin.sh stays for a
+# build by hand.
 #
 # The upstream libraries qar_ogre_adapter (qaros-ogre) and qar_qt_streaming (qaros-qt) are built
 # into the plugin from source checkouts at the pinned commits below (source mode of
@@ -16,15 +22,16 @@ on:
   push:
     tags: ['v*']
   # A pull request into main builds and packages every target as workflow artifacts (version
-  # 0.0.0-pr.<number>) and never publishes a release.
+  # <VERSION>-pr.<number>) and never publishes a release.
   pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: Release version, the QAROS version without the leading v (for example 0.9.0)
-        required: true
+        description: Release version without the leading v (X.Y.Z or X.Y.Z-rc.N; X.Y.Z must equal VERSION). Empty for the file VERSION
+        required: false
         type: string
+        default: ''
       publish:
         description: Create or update the GitHub release v<version> (otherwise workflow artifacts only)
         type: boolean
@@ -46,8 +53,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  QAROS_OGRE_REF: ${{ inputs.qaros_ogre_ref || 'ade6899a20003574197a09340595d316a8a4105c' }}
-  QAROS_QT_REF: ${{ inputs.qaros_qt_ref || '746097c4d0529dc5a2b221b53ad8c9667766fc2f' }}
+  QAROS_OGRE_REF: ${{ inputs.qaros_ogre_ref || '64454e2dce72a8111b477dbc8e477b48f759eb8e' }}
+  QAROS_QT_REF: ${{ inputs.qaros_qt_ref || '68a9513217e0d0035f2fd2c0d962092bf59569b2' }}
   # The build needs no Git LFS file of the qaros submodule (images of its documentation).
   GIT_LFS_SKIP_SMUDGE: '1'
 
@@ -58,6 +65,10 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: VERSION
+          sparse-checkout-cone-mode: false
       - id: v
         env:
           EVENT: ${{ github.event_name }}
@@ -65,16 +76,30 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ "$EVENT" = workflow_dispatch ]; then v="$INPUT_VERSION";
-          elif [ "$EVENT" = pull_request ]; then v="0.0.0-pr.$PR_NUMBER";
+          core="$(head -n1 VERSION | tr -d '[:space:]')"
+          if ! [[ "$core" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION must hold X.Y.Z, found '$core'"
+            exit 1
+          fi
+          if [ "$EVENT" = workflow_dispatch ]; then v="${INPUT_VERSION:-$core}"
+          elif [ "$EVENT" = pull_request ]; then v="$core-pr.$PR_NUMBER"
           else v="$REF_NAME"; fi
           v="${v#v}"
-          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]]; then
-            echo "::error::'$v' is not a release version like 0.9.0 (tags are v<QAROS version>)"
+          if [ "$EVENT" = pull_request ]; then
+            pattern='^[0-9]+\.[0-9]+\.[0-9]+-pr\.[0-9]+$'
+          else
+            pattern='^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'
+          fi
+          if ! [[ "$v" =~ $pattern ]]; then
+            echo "::error::'$v' is not a release version: tags are vX.Y.Z or vX.Y.Z-rc.N"
+            exit 1
+          fi
+          if [ "${v%%-*}" != "$core" ]; then
+            echo "::error::version $v does not match VERSION $core. Fix VERSION or the tag."
             exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "Release version: $v"
+          echo "Release version: $v (VERSION $core)"
 
   script-tests:
     name: Script tests (${{ matrix.os }})
@@ -174,7 +199,7 @@ jobs:
       - name: Build the plugin
         run: |
           $ws = $env:GITHUB_WORKSPACE -replace '\\', '/'
-          ./scripts/build_plugin.ps1 -CMakeArgs "-DQAR_OGRE_ADAPTER_SOURCE_DIR=$ws/upstream/qaros-ogre", "-DQAR_QT_STREAMING_SOURCE_DIR=$ws/upstream/qaros-qt"
+          ./scripts/build_plugin.ps1 -CMakeArgs "-DQAR_OGRE_ADAPTER_SOURCE_DIR=$ws/upstream/qaros-ogre", "-DQAR_QT_STREAMING_SOURCE_DIR=$ws/upstream/qaros-qt", "-DQAR_RVIZ_PLUGIN_VERSION_FULL=${{ needs.version.outputs.version }}"
 
       - name: Package
         run: ./scripts/package-release.ps1 -Version '${{ needs.version.outputs.version }}' -Distro '${{ matrix.distro }}' -Platform '${{ matrix.platform }}' -OutDir dist
@@ -194,79 +219,9 @@ jobs:
           path: build/colcon/log
           if-no-files-found: ignore
 
-  linux:
-    name: Build ${{ matrix.distro }} linux-x64
-    needs: [version, script-tests]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - distro: humble
-            os: ubuntu-22.04
-          - distro: jazzy
-            os: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - uses: actions/checkout@v4
-        with:
-          repository: Quaternar/qaros-ogre
-          ref: ${{ env.QAROS_OGRE_REF }}
-          path: upstream/qaros-ogre
-      - uses: actions/checkout@v4
-        with:
-          repository: Quaternar/qaros-qt
-          ref: ${{ env.QAROS_QT_REF }}
-          path: upstream/qaros-qt
-
-      - uses: ros-tooling/setup-ros@v0.7
-        with:
-          required-ros-distributions: ${{ matrix.distro }}
-
-      - name: Build dependencies
-        env:
-          DISTRO: ${{ matrix.distro }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            "ros-$DISTRO-rviz2" "ros-$DISTRO-rviz-common" "ros-$DISTRO-rviz-rendering" \
-            "ros-$DISTRO-rviz-default-plugins" "ros-$DISTRO-rviz-ogre-vendor" "ros-$DISTRO-pluginlib" \
-            "ros-$DISTRO-rclcpp" "ros-$DISTRO-sensor-msgs" "ros-$DISTRO-ament-index-cpp" \
-            "ros-$DISTRO-ament-cmake" qtbase5-dev libqt5websockets5-dev ninja-build \
-            python3-colcon-common-extensions
-
-      - name: Build the plugin
-        run: |
-          bash scripts/build_plugin.sh --ros-root "/opt/ros/${{ matrix.distro }}" \
-            --prefix "$RUNNER_TEMP/install" \
-            --ogre-source upstream/qaros-ogre --qt-source upstream/qaros-qt
-
-      - name: Package
-        run: |
-          bash scripts/package-release.sh --prefix "$RUNNER_TEMP/install" \
-            --version '${{ needs.version.outputs.version }}' --distro '${{ matrix.distro }}' \
-            --platform linux-x64 --out-dir dist
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.distro }}-linux-x64
-          path: |
-            dist/*.zip
-            dist/qar_rviz_streaming-*.json
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: logs-${{ matrix.distro }}-linux-x64
-          path: build/colcon/log
-          if-no-files-found: ignore
-
   release:
     name: GitHub release
-    needs: [version, windows, linux]
+    needs: [version, windows]
     # Publishes what was built: a failed matrix job leaves its asset out of the release and of
     # manifest.json (QAROS then reports no prebuilt plugin for that distribution), and stays red.
     if: ${{ !cancelled() && needs.version.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
@@ -292,7 +247,7 @@ jobs:
             name="$(jq -r .name "$e")"; sum="$(jq -r .sha256 "$e")"
             echo "$sum  dist/$name" | sha256sum -c -
           done
-          jq -s --arg v "$VERSION" '{version: 1, release: $v, package: "qar_rviz_streaming", assets: (sort_by(.name))}' \
+          jq -s --arg v "$VERSION" '{version: 1, release: $v, plugin_version: $v, package: "qar_rviz_streaming", assets: (sort_by(.name))}' \
             "${entries[@]}" > dist/manifest.json
           cat dist/manifest.json
 
@@ -302,9 +257,12 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           tag="v$VERSION"
+          qaros="$(jq -r '[.assets[].min_qaros_version] | unique | join(", ")' dist/manifest.json)"
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "qar_rviz_streaming for QAROS $VERSION" \
-              --notes "Prebuilt qar_rviz_streaming RViz2 plugin for QAROS $VERSION. Each zip is an overlay prefix for one ROS 2 distribution and platform; manifest.json lists their SHA-256 and the QarOS C API header hash."
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" "${prerelease[@]}" \
+              --title "qar_rviz_streaming $VERSION" \
+              --notes "Prebuilt qar_rviz_streaming RViz2 plugin $VERSION for QAROS $qaros or newer, Windows x64 only for now. Each zip is an overlay prefix for one ROS 2 distribution and platform; manifest.json lists their SHA-256, the QarOS C API header hash and the minimum QAROS version. Changes: https://github.com/$GITHUB_REPOSITORY/blob/$tag/CHANGELOG.md"
           fi
           gh release upload "$tag" dist/*.zip dist/manifest.json --repo "$GITHUB_REPOSITORY" --clobber

@@ -21,7 +21,8 @@
         share\colcon-core\packages\qar_rviz_streaming
         share\qar_rviz_streaming\...                     (plugin_description.xml, config,
                                                          package.xml, environment hooks,
-                                                         qar_streaming_h.sha256, LICENSE)
+                                                         qar_streaming_h.sha256, plugin_version,
+                                                         qaros_version, LICENSE)
         local_setup.* and _local_setup_util_*.py         (colcon's prefix scripts)
     setup.* of the prefix are left out: they chain to the underlays of the build machine.
 
@@ -31,8 +32,10 @@
 .PARAMETER Prefix
     The colcon install prefix that holds the plugin. Default: the environment variable QAR_PREFIX.
 .PARAMETER Version
-    The release version, the QAROS version the release belongs to, without a leading v (a
-    leading v is removed). Required.
+    The release version, the plugin's own version without a leading v (a leading v is removed):
+    X.Y.Z for a release, X.Y.Z-rc.N for a candidate, X.Y.Z-pr.N for a pull request build. Its
+    X.Y.Z should be the version of the build (VERSION, package.xml); the script warns otherwise.
+    Default: the file VERSION of the repository.
 .PARAMETER Distro
     The ROS 2 distribution the plugin was built for. Default: from -RosRoot, else ROS_DISTRO.
 .PARAMETER RosRoot
@@ -46,21 +49,26 @@
     The QarOS C header the plugin was built against. Default: the prefix's
     share\qar_rviz_streaming\qar_streaming_h.sha256, else the header of the submodule
     external\qaros.
+.PARAMETER MinQarosVersion
+    The QAROS version whose C API header the plugin was built against, written to the manifest as
+    min_qaros_version. Default: the prefix's share\qar_rviz_streaming\qaros_version, else the
+    file VERSION of the submodule external\qaros.
 .PARAMETER OutDir
     The output folder; created when missing. An existing zip of the same name is replaced.
 
 .EXAMPLE
-    .\scripts\package-release.ps1 -Prefix C:\qar\install -Version 0.9.0 -Distro humble -OutDir dist
+    .\scripts\package-release.ps1 -Prefix C:\qar\install -Distro humble -OutDir dist
 #>
 [CmdletBinding()]
 param(
     [string]$Prefix = "",
-    [Parameter(Mandatory = $true)][string]$Version,
+    [string]$Version = "",
     [string]$Distro = "",
     [Alias('Ros2Root')][string]$RosRoot = "",
     [ValidateSet('windows-x64', 'linux-x64', 'linux-arm64')][string]$Platform = 'windows-x64',
     [ValidateSet(5, 6)][int]$QtMajor = 5,
     [string]$CApiHeader = "",
+    [string]$MinQarosVersion = "",
     [Parameter(Mandatory = $true)][string]$OutDir
 )
 
@@ -78,6 +86,9 @@ function Get-FullPath([string]$Path) {
 function Get-Sha256([string]$Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
 # --- Inputs ----------------------------------------------------------------------------------
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = ([IO.File]::ReadAllLines((Join-Path $RepoRoot 'VERSION')) | Select-Object -First 1)
+}
 $Version = $Version.Trim()
 if ($Version.StartsWith('v')) { $Version = $Version.Substring(1) }
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$') {
@@ -159,7 +170,34 @@ if ($entries.Contains($stampRel)) { $entries.Remove($stampRel) }
 $generated[$stampRel] = "$hash`n"
 if (-not $entries.Contains("share/$Package/LICENSE")) { $entries["share/$Package/LICENSE"] = Join-Path $RepoRoot 'LICENSE' }
 
-$pluginVersion = ([xml][IO.File]::ReadAllText((Join-Path $Prefix "share\$Package\package.xml"))).package.version
+# The minimum QAROS version: given, from the build's stamp, or from the submodule.
+$qarosStampRel = "share/$Package/qaros_version"
+if (-not [string]::IsNullOrWhiteSpace($MinQarosVersion)) {
+    $minQaros = $MinQarosVersion.Trim()
+    $minQarosFrom = '-MinQarosVersion'
+} elseif ($entries.Contains($qarosStampRel)) {
+    $minQaros = ([IO.File]::ReadAllText($entries[$qarosStampRel])).Trim()
+    $minQarosFrom = $entries[$qarosStampRel]
+} else {
+    $v = Join-Path $RepoRoot 'external\qaros\VERSION'
+    if (-not (Test-Path -LiteralPath $v)) { throw "No qaros_version in the prefix and no $v; pass -MinQarosVersion." }
+    $minQaros = ([IO.File]::ReadAllLines($v) | Select-Object -First 1).Trim()
+    $minQarosFrom = "$v (the prefix has no qaros_version)"
+}
+if ($minQaros -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "Invalid QAROS version '$minQaros' from $minQarosFrom." }
+if ($entries.Contains($qarosStampRel)) { $entries.Remove($qarosStampRel) }
+$generated[$qarosStampRel] = "$minQaros`n"
+
+# The plugin version of the release is the release version; the build's package.xml should agree.
+$pluginVersion = $Version
+$packageVersion = ([xml][IO.File]::ReadAllText((Join-Path $Prefix "share\$Package\package.xml"))).package.version
+$releaseCore = ($Version -split '[-+]')[0]
+if ($packageVersion -ne $releaseCore) {
+    Write-Warning "The prefix holds $Package $packageVersion (package.xml), the release version is $Version."
+}
+$versionStampRel = "share/$Package/plugin_version"
+if ($entries.Contains($versionStampRel)) { $entries.Remove($versionStampRel) }
+$generated[$versionStampRel] = "$pluginVersion`n"
 
 # --- Write the zip ------------------------------------------------------------------------------
 $OutDir = Get-FullPath $OutDir
@@ -202,6 +240,7 @@ $asset = [ordered]@{
     qt_major            = $QtMajor
     plugin_version      = $pluginVersion
     c_api_header_sha256 = $hash
+    min_qaros_version   = $minQaros
 }
 $entryPath = Join-Path $OutDir "$baseName.json"
 [IO.File]::WriteAllText($entryPath, (ConvertTo-Json -InputObject $asset -Depth 5) + "`n", $utf8)
@@ -211,11 +250,13 @@ $assets = @()
 foreach ($f in Get-ChildItem -LiteralPath $OutDir -Filter "$Package-$Version-*.json" | Sort-Object Name) {
     $assets += , ([IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json)
 }
-$manifest = [ordered]@{ version = 1; release = $Version; package = $Package; assets = $assets }
+$manifest = [ordered]@{ version = 1; release = $Version; plugin_version = $Version; package = $Package; assets = $assets }
 [IO.File]::WriteAllText((Join-Path $OutDir 'manifest.json'), (ConvertTo-Json -InputObject $manifest -Depth 6) + "`n", $utf8)
 
 Write-Host "Packaged $($names.Count) files from $Prefix" -ForegroundColor Green
 Write-Host "  zip      : $zipPath"
 Write-Host "  sha256   : $($asset.sha256)"
+Write-Host "  version  : $pluginVersion"
 Write-Host "  C API    : $hash (from $hashFrom)"
+Write-Host "  QAROS    : $minQaros or newer (from $minQarosFrom)"
 Write-Host "  manifest : $(Join-Path $OutDir 'manifest.json')"

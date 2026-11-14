@@ -249,7 +249,7 @@ flowchart BT
 
 The libraries meet in the value tree `UiValue`. A `TopicSubscription` gives a `UiValue` that `PanelSession::set_value` ships to the page. A control event of the page carries the action string and the new value, which the host maps to `TopicPublisher::publish`, `ServiceBridge::call` or `ActionBridge::send_goal`, and `PanelSession::ack` reports the outcome. The ROS example of the repository is this join.
 
-`qar_web_panels` needs one thing from qar_ogre_adapter 0.2.0: the C type `QarGuiPanelSize`, which `size_url_panel` returns through `qar_ar_core/qar_streaming_c.hpp`, the wrapper of the QarOS C header. None of the three libraries calls a QarOS function, so linking them needs neither the SDK nor its loader. QarOS opens the page through the component `url` of qar_ogre_adapter, which takes the address that `WebPanelServer::page_url` returns ([Getting started](GETTING_STARTED.md#open-the-panel-in-qaros)). The semantic templates that turn a ROS type into a model, and the RViz plugin that exposes a topic as a panel, are the part of the plugin ([Adding a semantic template](DEVELOPING.md#adding-a-semantic-template)).
+`qar_web_panels` needs one thing from qar_ogre_adapter 0.3.0: the C type `QarGuiPanelSize`, which `size_url_panel` returns through `qar_ar_core/qar_streaming_c.hpp`, the wrapper of the QarOS C header. None of the three libraries calls a QarOS function, so linking them needs neither the SDK nor its loader. QarOS opens the page through the component `url` of qar_ogre_adapter, which takes the address that `WebPanelServer::page_url` returns ([Getting started](GETTING_STARTED.md#open-the-panel-in-qaros)). The semantic templates that turn a ROS type into a model, and the RViz plugin that exposes a topic as a panel, are the part of the plugin ([Adding a semantic template](DEVELOPING.md#adding-a-semantic-template)).
 
 ## Two routes into AR
 
@@ -259,7 +259,7 @@ A QarOS GUI panel has one of two content types, and the type is fixed when the p
 |---|---|---|
 | Content type of the panel | `QAR_GUI_PANEL_CONTENT_TYPE_STREAM_ID`, created with `QarGuiPanelStreamIdExt` | `QAR_GUI_PANEL_CONTENT_TYPE_WEBSITE_URI`, created with `QarGuiPanelUrlExt` |
 | What the panel shows | a video that the host renders and sends; in this stack a Qt widget | a page that QarOS fetches and renders in its own browser |
-| Who renders it | the host, in qar_qt_streaming 0.2.0 | the browser of QarOS |
+| Who renders it | the host, in qar_qt_streaming 0.3.0 | the browser of QarOS |
 | Where the input goes | to the host, as the gestures that QarOS reports for the panel | to the browser, which handles pointing itself; the page sends every control event over the WebSocket of its own server |
 | Content budget | whatever the widget is: the host chooses the raster and the physical size | the viewport that the browser is given, which follows the size of the panel under the installed QAROS and for which the plugin plans 500 by 500 CSS pixels; what lies below it is reached by paging |
 | Suited to | mirroring an existing Qt widget | panels that are made for AR, from a model or from ROS 2 types |
