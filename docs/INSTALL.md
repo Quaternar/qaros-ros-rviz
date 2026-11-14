@@ -1019,6 +1019,42 @@ True   share\ament_index\resource_index\rviz_common__pluginlib__plugin\qar_rviz_
 
 These commands do not load the plugin. The first time that RViz loads it is [Launch RViz with the plugin](GETTING_STARTED.md#launch-rviz-with-the-plugin), and [Check the launch configuration](GETTING_STARTED.md#check-the-launch-configuration) shows without a window what the launcher will do. If the panel is missing in RViz although the three files exist, [RViz and plugin problems](TROUBLESHOOTING.md#rviz-and-plugin-problems) lists the causes.
 
+## Register the plugin for QAROS
+
+QAROS starts RViz2 with this plugin from the "ROS 2 Rviz" source application of the Visualizer. For your own build, register the install prefix once after the build; `scripts\build_plugin.ps1` prints this command at its end and does not run it:
+
+```powershell
+.\scripts\register-qaros-plugin.ps1 -Prefix $env:QAR_PREFIX -RosRoot $env:ROS2_INSTALL_ROOT
+```
+```text
+Added the local record for humble / windows-x64 in C:\Users\<user>\AppData\Roaming\Quaternar\ros-plugins.json
+  ROS 2 root     : C:\qar\deps\ros2_humble\ros2-windows
+  prefix         : C:\qar\install
+  plugin version : 0.2.0
+  C API SHA-256  : 94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762
+                   (from C:\qar\install\share\qar_rviz_streaming\qar_streaming_h.sha256)
+```
+
+Running it again after a new build replaces the record; `-Unregister -Distro humble` removes it. The script checks the prefix and the distribution and writes one record into a per-user file; it changes nothing else. Without a build of your own, QAROS offers to download the prebuilt plugin of its release. [QAROS plugin registration](CONFIGURATION.md#qaros-plugin-registration) describes the file and the parameters.
+
+## Linux (unverified)
+
+The plugin has not been built on Linux by hand. The release workflow builds it for Humble on Ubuntu 22.04 and Jazzy on Ubuntu 24.04 from the ROS 2 apt packages, and its first runs are the first Linux builds; until they pass, treat the steps below as the intended procedure, not a verified one. The repairs of this document are Windows-only: a distribution from the apt packages needs none.
+
+```bash
+sudo apt install ros-humble-rviz2 ros-humble-rviz-default-plugins qtbase5-dev libqt5websockets5-dev \
+  ninja-build python3-colcon-common-extensions
+git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz ~/qar/src/qar_rviz_plugin
+git clone https://github.com/Quaternar/qaros-ogre ~/qar/src/qar_ogre_adapter
+git clone https://github.com/Quaternar/qaros-qt ~/qar/src/qar_qt_streaming
+cd ~/qar/src/qar_rviz_plugin
+scripts/build_plugin.sh --ros-root /opt/ros/humble --prefix ~/qar/install \
+  --ogre-source ~/qar/src/qar_ogre_adapter --qt-source ~/qar/src/qar_qt_streaming
+scripts/register-qaros-plugin.sh --ros-root /opt/ros/humble --prefix ~/qar/install
+```
+
+`scripts/build_plugin.sh` builds the two upstream libraries into the plugin from their checkouts (or finds them installed below `--upstream-prefix`), installs into the prefix with `--merge-install` and ends with `=== BUILD OK ===`, the path of `lib/libqar_rviz_streaming.so` and the register command. `MAKEFLAGS=-j2` limits the parallel jobs.
+
 ## Removing everything again
 
 The installation changes your machine in a few places. This section lists every one of them and how to undo it. The scripts and commands that this documentation tells you to run write only to the folders and registry values listed here, to the build folders inside the clones, and to the files they report. The programs that they call keep caches and logs of their own outside these folders, such as the download cache of pip; this section does not list them.

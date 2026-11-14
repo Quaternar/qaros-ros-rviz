@@ -250,12 +250,13 @@ These variables are read by the CMake files, by the scripts or by Windows, and n
 | Variable | Read by | Default | Values and parsing | Effect |
 |---|---|---|---|---|
 | `QAROS_RUNTIME_DIR` | - | Not set. | A folder that exists; the launcher refuses a parameter that names none. | Set by the launcher from `-RuntimeDir`: the folder of a QAROS runtime to use instead of the installed one. Set by `scripts/run_live_rviz_stream_real.ps1` (from -RuntimeDir). |
-| `ROS2_INSTALL_ROOT` | `cmake/QarRosBuildSupport.cmake`, `scripts/build_plugin.ps1`, `scripts/env_setup.ps1`, `scripts/fix_missing_eigen.ps1`, and 12 more files, qar_ogre_adapter (its preset and package configuration) | None: a script or the configure step that needs it stops with an error that names the parameter or cache variable and this variable. | A folder. The shared CMake support module uses it when the cache variable `QAR_ROS2_INSTALL_ROOT` is unset or empty; the folder must exist and contain `local_setup.bat`. Scripts use it when the `-Ros2Root` parameter is omitted. The Ogre sample of qar_ogre_adapter takes a non-empty value as the Ogre plugin folder `<root>/opt/rviz_ogre_vendor/bin`. | Root of the ROS 2 Humble Windows distribution: Ogre through `rviz_ogre_vendor`, the ROS command-line tools and the Ogre DLL folder. |
+| `ROS2_INSTALL_ROOT` | `cmake/QarRosBuildSupport.cmake`, `scripts/build_plugin.ps1`, `scripts/env_setup.ps1`, `scripts/fix_missing_eigen.ps1`, and 12 more files, qar_ogre_adapter (its preset and package configuration) | None: a script or the configure step that needs it stops with an error that names the parameter or cache variable and this variable. | A folder. The shared CMake support module uses it when the cache variable `QAR_ROS2_INSTALL_ROOT` is unset or empty; the folder must exist and contain `local_setup.bat` (Windows) or `setup.sh` (Linux). Scripts use it when the `-Ros2Root` parameter is omitted. The Ogre sample of qar_ogre_adapter takes a non-empty value as the Ogre plugin folder `<root>/opt/rviz_ogre_vendor/bin`. | Root of the ROS 2 Humble Windows distribution: Ogre through `rviz_ogre_vendor`, the ROS command-line tools and the Ogre DLL folder. |
 | `QAR_QT_ROOT` | `cmake/QarBuildSupport.cmake`, `scripts/build_plugin.ps1`, `scripts/env_setup.ps1`, `scripts/run_live_rviz_stream_real.ps1`, and 2 more files, qar_qt_streaming (its preset and package configuration) | None: the configure step stops with an error that names this variable when it needs the kit and finds no Qt in another way. | A folder. The shared CMake support module uses it when the cache variable `QAR_QT_ROOT` is unset or empty, puts it in front of `CMAKE_PREFIX_PATH` and checks that it holds `lib/cmake/Qt5/Qt5Config.cmake` or `lib/cmake/Qt6/Qt6Config.cmake`. Scripts use it when the `-QtRoot` parameter is omitted. | Root of the Qt kit that the build uses: the Qt 5.15.2 `msvc2019_64` kit of the documentation, or a Qt 6 kit. |
 | `QAR_DEPS_ROOT` | `scripts/fetch_dependencies.ps1`, `scripts/fix_missing_eigen.ps1`, `scripts/fix_missing_openssl_dll.ps1`, `scripts/fix_missing_spdlog_dll.ps1`, and 2 more files | None: a script that needs it stops with an error that names the parameter and this variable. | A folder. Scripts use it when the `-DepsRoot` parameter is omitted. | Dependency root of the setup kit: the downloads folder and the build trees of the distribution repairs live below it. |
 | `QAR_PREFIX` | `cmake/QarRosBuildSupport.cmake`, `scripts/build_plugin.ps1`, `scripts/run_live_rviz_stream_real.ps1`, `scripts/run_rviz_with_plugin.ps1`, and 1 more file | None: the configure step continues without it, and a script that needs it stops with an error that names the parameter and this variable. | One folder, or several separated by semicolons (CMake reads the value as a list); every folder must exist. CMake prepends them to `CMAKE_PREFIX_PATH`. Scripts use it when the `-Prefix` parameter is omitted. | Install prefix of the repositories: the libraries are installed into it, and a repository that depends on them finds them through it. |
 | `QAR_SDK_ROOT` | `scripts/fix_old_vc_runtime.ps1`, `scripts/run_live_rviz_stream_real.ps1`, qar_ogre_adapter (`qar_qar_adapter`, its preset), qar_qt_streaming (its preset and package configuration) | None. | A folder. CMake uses it when the cache variable `QAR_SDK_ROOT` is unset or empty. Where the build checks the SDK library, an unset or wrong value only gives a configure warning, because nothing links against the SDK; where the build looks for the QarOS headers, the `include` folder of the root is used when it holds the folder of the QarOS C++ SDK headers and `qar_streaming.h`. Scripts use it when the `-SdkRoot` parameter is omitted. | Root of the installed QAROS, the folder that holds `bin` and `include` and that the installer records as `InstallFolder` in the registry. It is used by the configure-time check, by the search for the QarOS headers and by the scripts that need the install tree; at run time the library is found by the vendor lookup (the registry, `QAROS_RUNTIME_DIR`, `PATH`) or by the library path of the owner configuration. |
 | `QAR_VENV` | `scripts/build_plugin.ps1`, `scripts/env_setup.ps1`, `scripts/fix_missing_openssl_dll.ps1`, `scripts/fix_stale_pixi_paths.ps1` | None: a script that needs it stops with an error that names the parameter and this variable; `fix_missing_openssl_dll.ps1` tries `tar` instead; `fix_stale_pixi_paths.ps1` prints a warning and goes on without the numpy headers. | A folder. Scripts use it when the `-Venv` parameter is omitted; `fix_missing_openssl_dll.ps1` takes `Scripts\python.exe` below it as the Python that unpacks the OpenSSL package when `-Python` is omitted; `fix_stale_pixi_paths.ps1` takes the numpy headers from the numpy package below it when `-NumpySourceInclude` is omitted. | Python 3.10 virtual environment (the folder with `Scripts\python.exe`). |
+| `QAR_VS_VERSION` | `scripts/qar_locations.ps1` (all scripts that build or import the compiler) | `2019` | `2019` or `2022`; another value is an error. | The Visual Studio of the scripts: 2019 (MSVC v142, the toolset of the ROS 2 Humble Windows distribution) or 2022 (MSVC v143, which links against the v142 binaries and is what the release workflow uses). It selects the installation that `vswhere` looks for and the CMake generator of the repairs that build a library. |
 | `PYTHONPATH` | `cmake/QarRosBuildSupport.cmake` | None. | The shared CMake support module puts `<ROS2_INSTALL_ROOT>/Lib/site-packages` in front of the existing value for the configure process when that folder exists. | Lets the ament CMake modules import `ament_package` from the Python of the ROS 2 distribution while a project is configured. |
 | `QT_QPA_PLATFORM_PLUGIN_PATH` | `scripts/env_setup.ps1` | None. | Read by Qt, not by repository code; set by `scripts/env_setup.ps1`. | Directory of the Qt platform plugins, the folder `platforms`, for the programs that the shell starts. Set by `scripts/env_setup.ps1`. |
 | `QT_PLUGIN_PATH` | - | None. | Read by Qt, not by repository code; set by `scripts/env_setup.ps1`. | Directory of the Qt plugins. Set by `scripts/env_setup.ps1`. |
@@ -333,6 +334,108 @@ python  -> C:\qar\venv\Scripts\python.exe
 ```
 
 In that window run `python scripts\publish_test_markers.py`. What the launcher does with `-Confirm` beyond this, the graphics preference, the clean-up of earlier test publishers and of the shared memory of Fast-DDS, and the rotation of large QarOS logs, you have to do yourself or leave out.
+
+## QAROS plugin registration
+
+QAROS shows a "ROS 2 Rviz" source application in the Visualizer for each ROS 2 distribution it finds, and starts `rviz2` with this plugin. It learns where a plugin build is from a per-user file, `ros-plugins.json`, with one record per plugin build:
+
+| Platform | File |
+|---|---|
+| Windows | `%APPDATA%\Quaternar\ros-plugins.json` |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/quaternar/ros-plugins.json` |
+
+QAROS writes a record with the source `prebuilt` when it downloads a release asset (see the next section). For a build of your own, run the register script after the build; `scripts\build_plugin.ps1` and `scripts/build_plugin.sh` print the command at the end, and do not run it:
+
+```powershell
+.\scripts\register-qaros-plugin.ps1 -Prefix $env:QAR_PREFIX -RosRoot $env:ROS2_INSTALL_ROOT
+.\scripts\register-qaros-plugin.ps1 -Unregister -Distro humble
+```
+```bash
+scripts/register-qaros-plugin.sh --prefix ~/qar/install            # ROS 2 sourced, or --ros-root /opt/ros/jazzy
+scripts/register-qaros-plugin.sh --unregister --distro jazzy
+```
+
+The script checks the prefix (the ament index resource `share/ament_index/resource_index/rviz_common__pluginlib__plugin/qar_rviz_streaming`, the plugin library `bin\qar_rviz_streaming.dll` or `lib/libqar_rviz_streaming.so`, `plugin_description.xml` and `config/qar_streaming_dev.rviz`) and the ROS 2 root (a setup script and `rviz2`), and writes nothing when a check fails. It only checks that the files are there: QAROS expects a ROS 2 distribution whose `rviz2` starts, and neither QAROS nor the script repairs one ([A broken ROS 2 distribution](TROUBLESHOOTING.md#a-broken-ros-2-distribution)). It needs no administrator rights, writes the file atomically (a temporary file in the same folder, then a rename) as UTF-8 without a byte order mark, keeps every other record and every field it does not know, and refuses a file it cannot read or of another `version`.
+
+| Parameter (PowerShell / bash) | Default | Meaning |
+|---|---|---|
+| `-Prefix` / `--prefix` | `QAR_PREFIX`; on Linux else `<repository>/install` | The colcon install prefix of the plugin. |
+| `-RosRoot` / `--ros-root` | `ROS2_INSTALL_ROOT` (Windows), `/opt/ros/$ROS_DISTRO` (Linux), else the first ROS 2 root on `AMENT_PREFIX_PATH` | The ROS 2 root: the folder with `local_setup.bat` or `setup.bash` and `rviz2`. |
+| `-Distro` / `--distro` | Read from `share/ros_environment` of the root, else `ROS_DISTRO` | The distribution; a value that contradicts the root is an error. |
+| `-CApiHeader` / `--c-api-header` | `share/qar_rviz_streaming/qar_streaming_h.sha256` of the prefix, which the build installs, else `external/qaros/qar-streaming-c/include/qar_streaming.h` | The QarOS C header the plugin was built against; its SHA-256 goes into the record. |
+| `-Unregister` / `--unregister` | Off | Remove the `local` record of this distribution and platform instead. |
+
+The file has this form; [ros-plugins.schema.json](ros-plugins.schema.json) is its JSON schema:
+
+```json
+{
+  "version": 1,
+  "plugins": [
+    {
+      "distro": "humble",
+      "platform": "windows-x64",
+      "source": "local",
+      "ros_root": "C:\\qar\\deps\\ros2_humble\\ros2-windows",
+      "prefix": "C:\\qar\\install",
+      "plugin_version": "0.2.0",
+      "c_api_header_sha256": "94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762",
+      "registered_at": "2026-11-14T03:10:39Z"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `version` | The format version, `1`. A writer that does not know the version leaves the file alone. |
+| `distro` | The ROS 2 distribution, in lower case. |
+| `platform` | `windows-x64` or `linux-x64` (`linux-arm64` on an ARM machine). |
+| `source` | `local` for a build registered by the script, `prebuilt` for a release asset that QAROS unpacked. A `local` record wins over a `prebuilt` one for the same distribution and platform. |
+| `ros_root` | The ROS 2 root that QAROS sources before the overlay. |
+| `prefix` | The overlay prefix that holds the plugin; QAROS sources its `local_setup` script and starts `rviz2 -d <prefix>/share/qar_rviz_streaming/config/qar_streaming_dev.rviz`. |
+| `plugin_version` | The version in `package.xml` of the installed package. |
+| `c_api_header_sha256` | The SHA-256 of `qar_streaming.h` the plugin was compiled against; QAROS compares it with its runtime and reports a mismatch as incompatible. |
+| `registered_at` | The UTC time of the registration. |
+| `qaros_version` | Only in `prebuilt` records: the QAROS release of the asset. |
+
+A record is identified by (`distro`, `platform`, `source`): running the script again for the same distribution replaces its record.
+
+## Release assets and manifest.json
+
+The workflow `.github/workflows/release.yml` builds the plugin for each pair of ROS 2 distribution and platform when a tag `v*` is pushed, or when it is started by hand with a version. Tags follow the QAROS release version: the tag `v0.9.0` is the plugin release for QAROS 0.9.0, and the version of the release is the tag without the `v`. The plugin's own version stays the version of `package.xml` and appears in the manifest as `plugin_version`. The matrix is Humble on Windows x64 (the Humble binary release, Qt 5.15.2 `msvc2019_64`, Visual Studio 2022) and Humble and Jazzy on Linux x64 (Ubuntu 22.04 and 24.04 with the ROS 2 apt packages); the Linux jobs are the first Linux builds of the plugin. The upstream libraries are built into the plugin from source checkouts of `qaros-ogre` and `qaros-qt` at the commits that the workflow pins.
+
+Each job runs `scripts\package-release.ps1` or `scripts/package-release.sh` on its install prefix, and the release gets:
+
+| Asset | Content |
+|---|---|
+| `qar_rviz_streaming-<version>-<distro>-<platform>.zip` | An overlay prefix at the root of the zip: `bin\qar_rviz_streaming.dll` or `lib/libqar_rviz_streaming.so`, the plugin's entries of `share/ament_index/resource_index` (without `parent_prefix_path`, which names folders of the build machine), `share/colcon-core/packages/qar_rviz_streaming`, `share/qar_rviz_streaming` (`plugin_description.xml`, `config`, `package.xml`, the environment hooks, `qar_streaming_h.sha256`, `LICENSE`) and colcon's `local_setup.*` scripts. The `setup.*` scripts are left out, because they chain to the underlays of the build machine. Unpacked into any folder, it is an overlay over the ROS 2 distribution. |
+| `manifest.json` | One entry per zip. |
+
+```json
+{
+  "version": 1,
+  "release": "0.9.0",
+  "package": "qar_rviz_streaming",
+  "assets": [
+    {
+      "name": "qar_rviz_streaming-0.9.0-humble-windows-x64.zip",
+      "sha256": "<SHA-256 of the zip>",
+      "size": 2118801,
+      "distro": "humble",
+      "platform": "windows-x64",
+      "qt_major": 5,
+      "plugin_version": "0.2.0",
+      "c_api_header_sha256": "94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762"
+    }
+  ]
+}
+```
+
+A job that fails leaves its zip out of the release and of `manifest.json`, so QAROS reports no prebuilt plugin for that distribution. The packaging scripts run on any install prefix, also one that holds the upstream libraries as well, and take only the plugin's files:
+
+```powershell
+.\scripts\package-release.ps1 -Prefix $env:QAR_PREFIX -Version 0.9.0 -RosRoot $env:ROS2_INSTALL_ROOT -OutDir dist
+```
 
 ## DDS profile
 

@@ -153,6 +153,20 @@ SELF-TEST PASSED: 4 fabricated recordings (source stall, GUI-thread stall, QarOS
 
 The file `qar_streaming_panel.cpp`, which holds the panel, and the other sources that need RViz are compiled by the `colcon` build of the plugin and by no other build of this repository, so that build is the test of that code: a change to the panel needs `scripts\build_plugin.ps1`, described in [Build and install qar_rviz_plugin](INSTALL.md#build-and-install-qar_rviz_plugin), as well as `ctest`. A mistake in the panel can pass every test of this document and break only the build of the plugin.
 
+### The script tests
+
+The register scripts of QAROS have tests of their own, outside CTest, which need no ROS 2, no build and no QAROS: each creates a fake ROS 2 root and a fake install prefix in a new temporary folder, points the per-user configuration folder (`APPDATA`, `XDG_CONFIG_HOME`) there, and checks the records that the script writes, keeps, replaces and removes, the checks that refuse a prefix or a root, and that a damaged file or a file of a newer version is left unchanged. The release workflow runs them before it builds.
+
+```powershell
+pwsh -NoProfile -File scripts\test_register_qaros_plugin.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test_register_qaros_plugin.ps1
+```
+```bash
+bash scripts/test_register_qaros_plugin.sh
+```
+
+Each prints one `PASS` or `FAIL` line per check and ends with `All checks passed.` and the exit code 0.
+
 ## Test doubles
 
 No test of this repository loads the QarOS library: the tests of `qar_capi_panels` call the QarOS C API through a fake of its function tables, and the three web libraries do not call it. The tests use real objects wherever they can, and these stand in for the rest; the last three stand in for the other end of a connection of the web libraries.

@@ -11,6 +11,8 @@ Find the symptom in the table; the second column leads to the entry that explain
 | A command fails with a syntax error or an unknown command in a window titled Windows PowerShell | [A command of this documentation fails in Windows PowerShell](#a-command-of-this-documentation-fails-in-windows-powershell) |
 | pip, aqt, git, winget or CMake stops with a certificate error | [A download fails with a certificate error](#a-download-fails-with-a-certificate-error) |
 | Configuring ends with a fatal error that says that GoogleTest is not available | [Configuring stops because GoogleTest is not available](#configuring-stops-because-googletest-is-not-available) |
+| QAROS shows no "ROS 2 Rviz" for a distribution, or rviz2 of the Windows Humble binary release fails to start | [A broken ROS 2 distribution](#a-broken-ros-2-distribution) |
+| register-qaros-plugin refuses a prefix or a ROS 2 root | [The register script refuses a prefix or a ROS 2 root](#the-register-script-refuses-a-prefix-or-a-ros-2-root) |
 | A script says that Visual Studio 2019 with the C++ x64 build tools was not found | [The scripts cannot find Visual Studio 2019](#the-scripts-cannot-find-visual-studio-2019) |
 | rviz2.exe, ros2 or rclpy fails at start with a missing DLL (status 0xC0000135) | [A program of the ROS 2 distribution fails to load a DLL](#a-program-of-the-ros-2-distribution-fails-to-load-a-dll) |
 | ROS 2 cannot load a middleware, or rviz2.exe ends with the exit code 0xC0000409 and shows no window | [The middleware cannot start, or RViz exits without a window](#the-middleware-cannot-start-or-rviz-exits-without-a-window) |
@@ -130,7 +132,7 @@ Set-Content -Path $bundle -Value $pem -Encoding ascii
 
 ### The scripts cannot find Visual Studio 2019
 
-**Symptom.** A script stops because `vswhere` finds no Visual Studio 2019 with the C++ x64 build tools. **Cause.** Only a newer Visual Studio is installed, or the Build Tools were installed without the C++ workload and the MSVC component; the scripts accept only a 16.x installation. **Fix.** Install the components listed in [Toolchain](INSTALL.md#toolchain) and run its verify command; a newer Visual Studio next to it does no harm.
+**Symptom.** A script stops because `vswhere` finds no Visual Studio 2019 with the C++ x64 build tools. **Cause.** Only a newer Visual Studio is installed, or the Build Tools were installed without the C++ workload and the MSVC component; the scripts look only for a 16.x installation unless the environment variable `QAR_VS_VERSION` is `2022`. **Fix.** Install the components listed in [Toolchain](INSTALL.md#toolchain) and run its verify command; a newer Visual Studio next to it does no harm. To build with Visual Studio 2022 (MSVC v143) instead, set `$env:QAR_VS_VERSION = '2022'` ([Configuration](CONFIGURATION.md#variables-of-the-build-the-scripts-and-the-host)).
 
 ### A program of the ROS 2 distribution fails to load a DLL
 
@@ -198,6 +200,26 @@ type_description.hpp:250: std::string interface;  ///< "msg", "srv" or "action"
 ```
 
 **Fix.** Include the headers of `qar_ui_model` before every header that includes `<windows.h>`, as the examples do, or include `url_panel_sizing.hpp` first, which includes the headers of `qar_ui_model` before the wrapper. [Coding conventions](DEVELOPING.md#coding-conventions) states the rule.
+
+## A broken ROS 2 distribution
+
+QAROS expects a ROS 2 distribution whose `rviz2` starts: the "ROS 2 Rviz" tile of the Visualizer and `scripts\register-qaros-plugin.ps1` / `scripts/register-qaros-plugin.sh` only check that a setup script and `rviz2` are there, and neither repairs a distribution. A distribution from the official apt packages on Ubuntu works as installed. The official ROS 2 Humble binary release for Windows does not: it has the gaps below, and this repository ships one idempotent repair script for each. Run the script, then start `rviz2` again; the order and the details are in [Repairs to the ROS 2 Windows distribution](INSTALL.md#repairs-to-the-ros-2-windows-distribution).
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `rviz2.exe`, `ros2` or `rclpy` fails at start with the status 0xC0000135 (DLL not found) | `spdlog.dll`, which `rcl.dll` imports, is missing | `scripts\fix_missing_spdlog_dll.ps1` |
+| RViz, `tf2`, `class_loader` or the middleware fails to load a DLL | `console_bridge.dll`, `tinyxml2.dll`, `yaml-cpp.dll`, `assimp-vc141-mt.dll` and `libcurl.dll` are missing | `scripts\fix_missing_vendor_dlls.ps1` |
+| ROS 2 cannot load the middleware; `rviz2.exe` exits without a window | Fast-DDS imports the OpenSSL 1.1.1 DLLs, which are missing | `scripts\fix_missing_openssl_dll.ps1` |
+| `rviz2.exe` exits at start: two copies of Qt are loaded | The RViz binaries import Qt DLL names of a conda build | `scripts\fix_qt_conda_imports.ps1`, and Qt 5.15.2 on `PATH` |
+| RViz ends with 0xC0000409 when a robot description reaches the Robot model display | `tinyxml.dll`, which the URDF libraries import, is missing | `scripts\fix_missing_tinyxml_dll.ps1` |
+| `"Connect to QarOS"` ends RViz with a `SEH FAULT` in `qar_library_init` | The C++ runtime next to `rviz2.exe` is 14.29; the QarOS library needs 14.40 or newer | `scripts\fix_old_vc_runtime.ps1` |
+| Building the plugin: `find_package(rviz_common)` fails, Eigen3 is not found, or a path under `C:/pixi_ws` is rejected | Missing CMake files of vendor packages, missing Eigen headers, exported targets that name folders of the build machine | `scripts\fix_missing_vendor_cmake_configs.ps1`, `scripts\fix_missing_eigen.ps1`, `scripts\fix_stale_pixi_paths.ps1` (`scripts\build_plugin.ps1` runs these three) |
+
+The entries of [Installation and build problems](#installation-and-build-problems) and [RViz and plugin problems](#rviz-and-plugin-problems) describe each case in more detail. The plugin itself needs Qt 5.15.2 (`msvc2019_64`) on `PATH` when RViz runs on Windows, because the distribution ships no Qt.
+
+### The register script refuses a prefix or a ROS 2 root
+
+**Symptom.** `scripts\register-qaros-plugin.ps1` or `scripts/register-qaros-plugin.sh` stops with "does not hold an installed qar_rviz_streaming plugin" or "is not a ROS 2 root with RViz", and `ros-plugins.json` is unchanged. **Cause.** The prefix lacks a file of the installed plugin (the build failed or installed elsewhere), or the folder given as the ROS 2 root has no setup script or no `rviz2`. **Fix.** Build again and pass the prefix that the build printed; pass the distribution root itself (the folder with `local_setup.bat` or `setup.bash`), not its `bin` folder. A message about the `version` or invalid JSON means that `ros-plugins.json` was written by a newer QAROS or was damaged; the script leaves it alone ([QAROS plugin registration](CONFIGURATION.md#qaros-plugin-registration)).
 
 ## Run-time problems
 

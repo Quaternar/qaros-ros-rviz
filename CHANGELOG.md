@@ -6,7 +6,21 @@ Each version lists what it adds, the compatibility it was verified with (the QAR
 
 ## Unreleased
 
+### Added
+
+- `scripts/register-qaros-plugin.ps1` (Windows) and `scripts/register-qaros-plugin.sh` (Linux): register a hand-built install prefix for QAROS in the per-user `ros-plugins.json` (`%APPDATA%\Quaternar\`, `${XDG_CONFIG_HOME:-~/.config}/quaternar/`), one record per (distro, platform, source), with `-Unregister` / `--unregister`; they check the prefix and the ROS 2 root and never repair the distribution. The format has `"version": 1` and is described in `docs/CONFIGURATION.md` and `docs/ros-plugins.schema.json`.
+- `scripts/test_register_qaros_plugin.ps1` and `scripts/test_register_qaros_plugin.sh`, tests of the register scripts against a temporary configuration folder and a fake prefix.
+- the release workflow `.github/workflows/release.yml`: on a tag `v<QAROS version>` it builds the plugin for Humble on Windows x64 and for Humble and Jazzy on Linux x64, and attaches one overlay prefix zip per build and a `manifest.json` (SHA-256, C API header hash, distribution, platform, Qt major, plugin version) to the GitHub release.
+- `scripts/package-release.ps1` and `scripts/package-release.sh`, which package the plugin's files of an install prefix as a release zip with its manifest entry.
+- `scripts/build_plugin.sh`, the Linux build of the plugin with colcon (not verified yet).
+- the plugin installs `share/qar_rviz_streaming/qar_streaming_h.sha256`, the SHA-256 of the QarOS C header it was compiled against.
+- `scripts/build_plugin.ps1` prints the register command at its end, and has the switch `-SkipRepairs`.
+- the environment variable `QAR_VS_VERSION` (`2019`, the default, or `2022`) selects the Visual Studio of the scripts and the generator of the repairs that build a library.
+- the troubleshooting section "A broken ROS 2 distribution", which maps the known gaps of the Windows Humble binary release to the repair scripts.
+
 ### Changed
+
+- the location check of the ROS 2 root in `cmake/QarRosBuildSupport.cmake` accepts `setup.sh` (Linux) besides `local_setup.bat`, and `QAR_QT_ROOT` is optional on Linux, where Qt comes from the system packages.
 
 - the QarOS C header (`qar-streaming-c`) and C++ headers (`qar-streaming-cpp`) come from the public qaros repository, the git submodule `external/qaros`; clone with `--recurse-submodules`. Configuring stops when an installed upstream package carries QarOS headers of another qaros commit (`QAR_QAROS_HEADER_CHECK`).
 - the panel joins only the Hub of this PC, as a local app. QAROS marks the pairing with the Hub of another PC (code onboarding, rejoin and forget) as deprecated, and the plugin calls none of them: to reach the Hub of another PC, make the Hub of this PC a member of it and join the Hub of this PC.

@@ -114,9 +114,19 @@ A program finds the installed QAROS by itself: the installer records the install
 
 This stack was verified against the installed QAROS 0.9.0-dev.3008+65dc9aeb; the [SDK compatibility](docs/SDK_COMPATIBILITY.md) document says how to identify the version you have.
 
+## Prebuilt releases and QAROS registration
+
+QAROS offers "ROS 2 Rviz" in the Source Applications of the Visualizer for every ROS 2 distribution on the PC and starts `rviz2` with this plugin. The plugin comes either prebuilt from the GitHub releases of this repository, which QAROS downloads and checks against the SHA-256 of the release's `manifest.json`, or from a build of your own, which you register after the build:
+
+```powershell
+.\scripts\register-qaros-plugin.ps1 -Prefix $env:QAR_PREFIX -RosRoot $env:ROS2_INSTALL_ROOT
+```
+
+Release tags follow the QAROS release version (`v0.9.0` is the plugin release for QAROS 0.9.0); each release has one zip per ROS 2 distribution and platform, an overlay prefix that works from any folder. QAROS expects a ROS 2 distribution whose `rviz2` starts and does not repair one; [A broken ROS 2 distribution](docs/TROUBLESHOOTING.md#a-broken-ros-2-distribution) lists the known cases and the scripts that fix them. [QAROS plugin registration](docs/CONFIGURATION.md#qaros-plugin-registration) and [Release assets and manifest.json](docs/CONFIGURATION.md#release-assets-and-manifestjson) describe the file formats.
+
 ## Platform support
 
-The stack runs on Windows 11, 64-bit, and is built with the Microsoft C++ toolset v142 (Visual Studio 2019). It is run from a local desktop session. Linux is not built or tested.
+The stack runs on Windows 11, 64-bit, and is built with the Microsoft C++ toolset v142 (Visual Studio 2019); the scripts also accept Visual Studio 2022 (v143) with `QAR_VS_VERSION=2022`, which the release workflow uses. It is run from a local desktop session. On Linux, the release workflow builds the plugin for Humble (Ubuntu 22.04) and Jazzy (Ubuntu 24.04) with `scripts/build_plugin.sh`; that build has not been verified yet ([Linux (unverified)](docs/INSTALL.md#linux-unverified)), and the plain-CMake unit build and the launchers are Windows only.
 
 ## License
 
