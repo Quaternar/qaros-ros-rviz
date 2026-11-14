@@ -11,6 +11,8 @@ written and how a version is released is in [AGENTS.md](AGENTS.md).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-14
+
 ### Features
 
 - The environment variable `QAR_PANEL_AUTO_CONNECT=1` makes the panel in live mode join the QAROS Hub by itself at start, as if you pressed "Connect to QarOS"; QAROS sets it when it launches RViz with the plugin, and `scripts/run_live_rviz_stream_real.ps1` sets it unless your shell has a value (`0` keeps the button). A failed join is not repeated by itself, and Cancel and Disconnect work as before ([#8](https://github.com/Quaternar/qaros-ros-rviz/pull/8)).
