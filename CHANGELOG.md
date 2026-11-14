@@ -11,6 +11,8 @@ written and how a version is released is in [AGENTS.md](AGENTS.md).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-14
+
 ### Breaking
 
 - The panel joins only the QAROS Hub of this PC, as a local app: to reach the Hub of another PC, make the Hub of this PC a member of it in QAROS ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
