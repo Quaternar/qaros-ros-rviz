@@ -164,6 +164,8 @@ colcon --log-base (Join-Path $colconRoot "log") build `
     --event-handlers console_direct+ `
     --cmake-args `
         -G Ninja `
+        "-DCMAKE_C_COMPILER=cl" `
+        "-DCMAKE_CXX_COMPILER=cl" `
         "-DCMAKE_BUILD_TYPE=RelWithDebInfo" `
         "-DQt5_DIR=$qtCmakeDir" `
         "-DQAR_PREFIX=$Prefix" `

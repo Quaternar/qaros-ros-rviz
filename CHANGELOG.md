@@ -41,6 +41,7 @@ written and how a version is released is in [AGENTS.md](AGENTS.md).
 ### Bug fixes
 
 - The repair scripts (`fix_missing_eigen.ps1`, `fix_missing_openssl_dll.ps1`, `fix_missing_tinyxml_dll.ps1`, `fix_missing_vendor_dlls.ps1`) unpack with the tar of Windows, so a GNU tar first on `PATH` (the one of Git) no longer hangs on a `C:\` archive path ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
+- `build_plugin.ps1` builds with MSVC (`cl`) even when a MinGW `c++` is on `PATH`; it used to pick MinGW, which cannot compile the plugin ([#5](https://github.com/Quaternar/qaros-ros-rviz/pull/5)).
 
 ## [0.2.0] - 2026-11-13
 
