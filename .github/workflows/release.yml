@@ -53,8 +53,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  QAROS_OGRE_REF: ${{ inputs.qaros_ogre_ref || 'bc75c0ca0e11582dd81f877c7488e38559d5fb16' }}
-  QAROS_QT_REF: ${{ inputs.qaros_qt_ref || '0430d447d0092672636f82f05a0269a998db4631' }}
+  QAROS_OGRE_REF: ${{ inputs.qaros_ogre_ref || '03a21838c9bb34386cdfaa187fde3d63f945790a' }}
+  QAROS_QT_REF: ${{ inputs.qaros_qt_ref || '5b26930c0232405db4b0eed3541c0c28fb0a5941' }}
   # The build needs no Git LFS file of the qaros submodule (images of its documentation).
   GIT_LFS_SKIP_SMUDGE: '1'
 
