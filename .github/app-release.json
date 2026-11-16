@@ -1,0 +1,9 @@
+{
+  "version_files": [
+    {"path": "VERSION", "pattern": "^(?P<version>\\d+\\.\\d+\\.\\d+)$"},
+    {"path": "qar_rviz_streaming/package.xml",
+     "pattern": "<version>(?P<version>\\d+\\.\\d+\\.\\d+)</version>"}
+  ],
+  "changelog": "CHANGELOG.md",
+  "release": {"workflow": "release.yml", "inputs": {"version": "{version}", "publish": "true"}}
+}

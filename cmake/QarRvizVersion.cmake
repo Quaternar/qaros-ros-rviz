@@ -4,15 +4,17 @@
 # The version of qar_rviz_plugin (the RViz2 plugin qar_rviz_streaming and the libraries of this
 # repository). Include it before project() in the top-level CMakeLists.txt and in
 # qar_rviz_streaming/CMakeLists.txt; it sets in the including scope
-#   QAR_RVIZ_PLUGIN_VERSION_CORE      X.Y.Z, read from VERSION at the repository root, the only copy
-#   QAR_RVIZ_PLUGIN_VERSION_RESOLVED  the version a build reports:
+#   QAR_RVIZ_PLUGIN_VERSION_CORE      X.Y.Z, read from VERSION at the repository root, the only copy:
+#                                     the version of the last release
+#   QAR_RVIZ_PLUGIN_VERSION_RESOLVED  the version a build reports; any build but a release carries
+#                                     the next patch X.Y.(Z+1):
 #     HEAD tagged vX.Y.Z        X.Y.Z
-#     HEAD tagged vX.Y.Z-rc.N   X.Y.Z-rc.N
-#     any other commit          X.Y.Z-dev.<commits since the last v* tag>+<short sha>
-#     no git checkout           X.Y.Z-dev (a source archive)
+#     any other commit          X.Y.(Z+1)-dev.<commits since the last v* tag>+<short sha>
+#     no git checkout           X.Y.(Z+1)-dev (a source archive)
 # A tag whose X.Y.Z differs from VERSION stops the configure. -DQAR_RVIZ_PLUGIN_VERSION_FULL=<v>
-# replaces the git part (the release workflow passes the release version, X.Y.Z-pr.N for a pull
-# request); its X.Y.Z must equal VERSION as well. ROS tools need a literal version in
+# replaces the git part (the release workflow passes the release version X.Y.Z, X.Y.(Z+1)-pr.N
+# for a pull request): a release X.Y.Z must equal VERSION, a prerelease (X.Y.Z-...) must carry the
+# next patch. ROS tools need a literal version in
 # qar_rviz_streaming/package.xml: it must equal VERSION, or the configure stops. The value is fixed
 # when CMake configures: configure again after a new commit or tag. The release steps are in
 # AGENTS.md, section "Versions and releases".
@@ -47,24 +49,34 @@ function(_qar_rviz_version_resolve root out_core out_full)
   if(NOT core MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
     message(FATAL_ERROR "${file} must hold X.Y.Z, found '${core}'.")
   endif()
+  # VERSION is the last release: every build but a release reports the next patch.
+  string(REGEX REPLACE "^[0-9]+\\.[0-9]+\\.([0-9]+)$" "\\1" patch "${core}")
+  math(EXPR patch "${patch} + 1")
+  string(REGEX REPLACE "^([0-9]+\\.[0-9]+\\.)[0-9]+$" "\\1${patch}" next "${core}")
 
   if(NOT "${QAR_RVIZ_PLUGIN_VERSION_FULL}" STREQUAL "")
     set(full "${QAR_RVIZ_PLUGIN_VERSION_FULL}")
     if(NOT full MATCHES "^([0-9]+\\.[0-9]+\\.[0-9]+)([-+][0-9A-Za-z.+-]+)?$")
       message(FATAL_ERROR "QAR_RVIZ_PLUGIN_VERSION_FULL '${full}' is not a version.")
     endif()
-    if(NOT CMAKE_MATCH_1 STREQUAL core)
+    set(full_core "${CMAKE_MATCH_1}")
+    if(full MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+-")
+      if(NOT full_core STREQUAL next)
+        message(FATAL_ERROR "QAR_RVIZ_PLUGIN_VERSION_FULL ${full} must carry the next patch ${next} "
+          "(VERSION ${core} is the last release).")
+      endif()
+    elseif(NOT full_core STREQUAL core)
       message(FATAL_ERROR "QAR_RVIZ_PLUGIN_VERSION_FULL ${full} does not match VERSION ${core}.")
     endif()
   elseif(NOT GIT_FOUND OR NOT EXISTS "${root}/.git")
-    set(full "${core}-dev")
+    set(full "${next}-dev")
   else()
     _qar_rviz_version_git("${root}" tag describe --tags --exact-match --match "v[0-9]*" HEAD)
-    if(tag MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)(-rc\\.[0-9]+)?$")
+    if(tag MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)$")
       if(NOT CMAKE_MATCH_1 STREQUAL core)
         message(FATAL_ERROR "Tag ${tag} does not match VERSION ${core}. Fix VERSION or the tag.")
       endif()
-      set(full "${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
+      set(full "${CMAKE_MATCH_1}")
     else()
       _qar_rviz_version_git("${root}" last describe --tags --abbrev=0 --match "v[0-9]*" HEAD)
       if(last)
@@ -77,9 +89,9 @@ function(_qar_rviz_version_resolve root out_core out_full)
       endif()
       _qar_rviz_version_git("${root}" sha rev-parse --short=8 HEAD)
       if(sha STREQUAL "")
-        set(full "${core}-dev.${count}")
+        set(full "${next}-dev.${count}")
       else()
-        set(full "${core}-dev.${count}+${sha}")
+        set(full "${next}-dev.${count}+${sha}")
       endif()
     endif()
   endif()

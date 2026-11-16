@@ -16,7 +16,8 @@
 #                              [--min-qaros-version X.Y.Z]
 #
 #   --prefix        colcon install prefix that holds the plugin (default: $QAR_PREFIX)
-#   --version       release version, the plugin's own version: X.Y.Z, X.Y.Z-rc.N or X.Y.Z-pr.N
+#   --version       release version, the plugin's own version: X.Y.Z (a release, equal to VERSION),
+#                   X.Y.(Z+1)-pr.N or X.Y.(Z+1)-dev.N+<sha> (the next patch after VERSION)
 #                   (a leading v is removed; default: the file VERSION of the repository)
 #   --distro        ROS 2 distribution (default: $ROS_DISTRO)
 #   --platform      linux-x64 (default for x86_64), linux-arm64, windows-x64
@@ -80,7 +81,7 @@ version = env["QAR_VERSION"].strip()
 if version.startswith("v"):
     version = version[1:]
 if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?", version):
-    sys.exit(f"ERROR: --version '{version}' is not a version like 0.9.0 or 0.9.0-rc.1.")
+    sys.exit(f"ERROR: --version '{version}' is not a version like 0.9.0 or 0.9.1-pr.5.")
 distro = env["QAR_DISTRO"].strip().lower()
 
 def sha256(path):
@@ -155,7 +156,12 @@ plugin_version = version
 xml = open(os.path.join(prefix, "share", pkg, "package.xml"), encoding="utf-8").read()
 m = re.search(r"<version>\s*([^<\s]+)\s*</version>", xml)
 package_version = m.group(1) if m else ""
-if package_version != re.split(r"[-+]", version)[0]:
+# package.xml holds the last release: any version but a release (X.Y.Z-...) carries the next patch.
+expected_core = package_version
+last = re.fullmatch(r"([0-9]+\.[0-9]+\.)([0-9]+)", package_version)
+if last and re.match(r"[0-9]+\.[0-9]+\.[0-9]+-", version):
+    expected_core = last.group(1) + str(int(last.group(2)) + 1)
+if expected_core != re.split(r"[-+]", version)[0]:
     print(f"WARNING: the prefix holds {pkg} {package_version} (package.xml), the release version is {version}.",
           file=sys.stderr)
 version_stamp = f"share/{pkg}/plugin_version"

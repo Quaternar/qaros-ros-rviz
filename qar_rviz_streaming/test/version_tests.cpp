@@ -31,10 +31,18 @@ TEST(PluginVersion, IsTheVersionFileWithTheDerivedPart)
   const std::string core = match[1];
   std::cout << "qar_rviz_plugin " << version << " (VERSION " << core << ")\n";
 
-  EXPECT_EQ(version.rfind(core, 0), 0u) << version;
-  // X.Y.Z, X.Y.Z-rc.N, X.Y.Z-dev[.N[+sha]], X.Y.Z-pr.N or a release build's own suffix.
-  EXPECT_TRUE(std::regex_match(version, std::regex(R"([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?)")))
+  // VERSION is the last release: a release X.Y.Z (or X.Y.Z+build) equals it, any other build
+  // (X.Y.Z-dev[.N[+sha]], X.Y.Z-pr.N) carries the next patch.
+  ASSERT_TRUE(std::regex_match(version, match, std::regex(R"(([0-9]+\.[0-9]+\.[0-9]+)([-+][0-9A-Za-z.+-]+)?)")))
     << version;
+  const std::string version_core = match[1];
+  const bool prerelease = version.size() > version_core.size() && version[version_core.size()] == '-';
+  std::string expected = core;
+  if (prerelease) {
+    const std::size_t dot = core.rfind('.');
+    expected = core.substr(0, dot + 1) + std::to_string(std::stoul(core.substr(dot + 1)) + 1);
+  }
+  EXPECT_EQ(version_core, expected) << version;
 
   const std::string xml = read_file(QAR_TEST_PACKAGE_XML);
   ASSERT_TRUE(std::regex_search(xml, match, std::regex(R"(<version>\s*([^<\s]+)\s*</version>)")))
