@@ -13,7 +13,8 @@ in [docs/DEVELOPING.md](docs/DEVELOPING.md) and [docs/TESTING.md](docs/TESTING.m
   tool or assistant name in commits, pull requests or issues.
 - Commit subjects follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
   (`feat:`, `fix:`, `docs:`, `build:`, `ci:`, `refactor:`, `test:`; `!` marks a breaking change),
-  with a short bullet list as the body.
+  with a short bullet list as the body. A pull request's title follows them too: it decides the
+  release when the pull request merges (see [Versions and releases](#versions-and-releases)).
 
 ## Changelog
 
@@ -38,23 +39,25 @@ in [docs/DEVELOPING.md](docs/DEVELOPING.md) and [docs/TESTING.md](docs/TESTING.m
 
 ## Versions and releases
 
-[VERSION](VERSION) holds the next planned version `X.Y.Z` of the plugin and is its only copy; CMake
-reads it (`cmake/QarRvizVersion.cmake`) in the unit project and in `qar_rviz_streaming`. ROS tools
-need a literal version in `qar_rviz_streaming/package.xml`: keep it equal to `VERSION`, the
-configure stops when they differ. The full version of a build is derived, never typed:
+[VERSION](VERSION) holds the version `X.Y.Z` of the last release of the plugin and is its only
+copy; CMake reads it (`cmake/QarRvizVersion.cmake`) in the unit project and in
+`qar_rviz_streaming`. ROS tools need a literal version in `qar_rviz_streaming/package.xml`: it
+equals `VERSION`, the configure stops when they differ. Both change only in a release commit,
+which CI makes. The full version of a build is derived, never typed; any build but a release
+carries the next patch:
 
-| HEAD | Version | Example |
+| HEAD | Version | Example (`VERSION` 0.3.0) |
 |---|---|---|
-| tagged `vX.Y.Z` | `X.Y.Z` | `0.2.1` |
-| tagged `vX.Y.Z-rc.N` | `X.Y.Z-rc.N` | `0.2.1-rc.1` |
-| any other commit | `X.Y.Z-dev.<commits since the last v* tag>+<short sha>` | `0.2.1-dev.4+1a2b3c4d` |
-| pull request build of the release workflow | `X.Y.Z-pr.<number>` | `0.2.1-pr.5` |
+| tagged `vX.Y.Z` | `X.Y.Z` | `0.3.0` |
+| any other commit | `X.Y.(Z+1)-dev.<commits since the last v* tag>+<short sha>` | `0.3.1-dev.4+1a2b3c4d` |
+| pull request build of the release workflow | `X.Y.(Z+1)-pr.<number>` | `0.3.1-pr.5` |
 
 - The panel logs that version and tells it to the QAROS Hub as its app version; the build installs
   it as `share/qar_rviz_streaming/plugin_version`, which the register scripts record.
 - A tag whose `X.Y.Z` differs from `VERSION` stops the CMake configure and the release workflow.
   `-DQAR_RVIZ_PLUGIN_VERSION_FULL=<version>` replaces the derived part (the workflow passes the
-  release version); its `X.Y.Z` must equal `VERSION` too.
+  release version): a release `X.Y.Z` must equal `VERSION`, a `-pr`/`-dev` version must carry the
+  next patch.
 - The version is fixed when CMake configures: configure again after a new commit or tag.
 - Release tags are the plugin's own version, not the QAROS version. Which QAROS a release works
   with is recorded per zip in `manifest.json`: `c_api_header_sha256` and `min_qaros_version`, the
@@ -64,18 +67,35 @@ configure stops when they differ. The full version of a build is derived, never 
   must, the change is under **Breaking** with its migration step, and a removal is deprecated at
   least one minor version earlier where possible. A `PATCH` version only fixes. While the major
   version is 0, the CMake packages accept a request only for the same minor version.
-- Tags go on `main`; there are no release branches.
-- This repository follows the shared QAROS versioning scheme: [ADR-0001: One versioning scheme for every QAROS repository](https://github.com/Quaternar/qaros/blob/main/docs/adr/0001-one-versioning-scheme.md).
+- Tags go on `main`; there are no release branches and no candidate (`-rc`) tags.
+- This repository follows the shared QAROS versioning scheme: [ADR-0001: One versioning scheme for every QAROS repository](https://github.com/Quaternar/qaros/blob/main/docs/adr/0001-one-versioning-scheme.md),
+  refined for apps by [ADR-0002: QAROS apps release on every merge that changes behaviour](https://github.com/Quaternar/qaros/blob/main/docs/adr/0002-app-release-on-merge.md).
 
-To release `X.Y.Z`:
+Every merge to `main` that changes behaviour is a release; nobody tags or bumps `VERSION` by hand.
+`.github/workflows/app-release.yml` decides the bump of a merged pull request. If it is not
+*none*, CI writes the new version into `VERSION` and `package.xml` (the files in
+`.github/app-release.json`), moves the entries of `## [Unreleased]` under
+`## [X.Y.Z] - YYYY-MM-DD`, commits `chore(release): vX.Y.Z`, tags it `vX.Y.Z` and pushes both. It
+then starts the release workflow (`.github/workflows/release.yml`) on the tag, which builds the
+zips and `manifest.json` and attaches them to the GitHub release `vX.Y.Z`.
 
-1. Optional release candidate: tag the commit to test `vX.Y.Z-rc.N` on `main` and push the tag;
-   the release workflow publishes it as a GitHub pre-release.
-2. Release commit: move the entries of `## [Unreleased]` under a new heading
-   `## [X.Y.Z] - YYYY-MM-DD` and leave an empty `## [Unreleased]` above it. Change nothing else in
-   this commit.
-3. Tag that commit `vX.Y.Z` on `main` and push the tag. The release workflow
-   (`.github/workflows/release.yml`) builds the zips and `manifest.json` and attaches them to the
-   GitHub release `vX.Y.Z`.
-4. Bump: in the next commit set `VERSION` and the `<version>` of `qar_rviz_streaming/package.xml`
-   to the next planned version (`X.(Y+1).0`), never in the tagged commit.
+A `release:*` label on the pull request wins; without one, its title decides:
+
+| Label | Title (Conventional Commit) | Bump | From `0.3.0` |
+|---|---|---|---|
+| `release:major` | | major | `1.0.0` |
+| | `feat!: ...`, `fix(x)!: ...`, or `BREAKING` in the title | major (minor below 1.0.0) | `0.4.0` |
+| `release:minor` | `feat: ...` | minor | `0.4.0` |
+| `release:patch` | `fix: ...`, `perf: ...`, `revert: ...` | patch | `0.3.1` |
+| `release:none` | `docs`, `ci`, `chore`, `test`, `refactor`, `style`, `build` | none | none |
+
+- The check **Release bump** on every pull request shows the version merging it releases. It fails
+  when the title is no Conventional Commit of a known type and no `release:*` label is set.
+- The release ships every `Unreleased` entry, so the changelog sets a floor: `Breaking` or
+  `Removed` entries make it at least a breaking bump, `Features`, `Enhancements` or `Deprecated` at
+  least a minor, `Bug fixes` or `Security` at least a patch.
+- To merge without releasing (pull requests that only make sense together), label them
+  `release:none`. The next releasing merge ships them all.
+- A failed release build: fix it on `main`. If the fix was in CI only, run the release workflow
+  again on the tag (`gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z -f publish=true`).
+  A tag never moves.

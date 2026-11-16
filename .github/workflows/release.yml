@@ -3,8 +3,10 @@
 #
 # Builds the qar_rviz_streaming RViz2 plugin for each {ROS 2 distribution x platform}, packages
 # each build as an overlay prefix zip (scripts/package-release.*) and attaches the zips and one
-# manifest.json to the GitHub release of the tag. Tags are the plugin's own version: vX.Y.Z for a
-# release, vX.Y.Z-rc.N for a candidate, and X.Y.Z must equal the file VERSION. manifest.json
+# manifest.json to the GitHub release of the tag. Tags are the plugin's own version vX.Y.Z, and
+# X.Y.Z must equal the file VERSION (the last release). app-release.yml makes the tag on every
+# merge that changes behaviour and starts this workflow on it
+# (gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z -f publish=true). manifest.json
 # names, per zip, the QAROS version whose C API the build was made from (min_qaros_version) and
 # the hash of that header. See docs/CONFIGURATION.md, section "Release assets and manifest.json",
 # and AGENTS.md, section "Versions and releases".
@@ -22,18 +24,18 @@ on:
   push:
     tags: ['v*']
   # A pull request into main builds and packages every target as workflow artifacts (version
-  # <VERSION>-pr.<number>) and never publishes a release.
+  # X.Y.(Z+1)-pr.<number>, the next patch after VERSION) and never publishes a release.
   pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: Release version without the leading v (X.Y.Z or X.Y.Z-rc.N; X.Y.Z must equal VERSION). Empty for the file VERSION
+        description: Release version without the leading v (X.Y.Z, equal to VERSION). Empty for the tag the workflow runs on, else the development version X.Y.(Z+1)-dev.N+sha
         required: false
         type: string
         default: ''
       publish:
-        description: Create or update the GitHub release v<version> (otherwise workflow artifacts only)
+        description: Create or update the GitHub release v<version>; run on the tag v<version> (otherwise workflow artifacts only)
         type: boolean
         default: false
       qaros_ogre_ref:
@@ -70,34 +72,52 @@ jobs:
         with:
           sparse-checkout: VERSION
           sparse-checkout-cone-mode: false
+          fetch-depth: 0  # tags, for the development version of a branch
       - id: v
         env:
           EVENT: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
           REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # VERSION is the last release: a release X.Y.Z equals it, any other build carries the
+          # next patch X.Y.(Z+1) (cmake/QarRvizVersion.cmake derives the same).
           core="$(head -n1 VERSION | tr -d '[:space:]')"
           if ! [[ "$core" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::VERSION must hold X.Y.Z, found '$core'"
             exit 1
           fi
-          if [ "$EVENT" = workflow_dispatch ]; then v="${INPUT_VERSION:-$core}"
-          elif [ "$EVENT" = pull_request ]; then v="$core-pr.$PR_NUMBER"
-          else v="$REF_NAME"; fi
-          v="${v#v}"
-          if [ "$EVENT" = pull_request ]; then
-            pattern='^[0-9]+\.[0-9]+\.[0-9]+-pr\.[0-9]+$'
+          next="${core%.*}.$(( ${core##*.} + 1 ))"
+          if [ "$EVENT" = pull_request ]; then v="$next-pr.$PR_NUMBER"
+          elif [ "$EVENT" = push ] || [ -n "$INPUT_VERSION" ]; then v="${INPUT_VERSION:-$REF_NAME}"
+          elif [ "$REF_TYPE" = tag ]; then v="$REF_NAME"
           else
-            pattern='^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'
+            last="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true)"
+            v="$next-dev.$(git rev-list --count "${last:+$last..}HEAD")+$(git rev-parse --short=8 HEAD)"
           fi
-          if ! [[ "$v" =~ $pattern ]]; then
-            echo "::error::'$v' is not a release version: tags are vX.Y.Z or vX.Y.Z-rc.N"
+          v="${v#v}"
+          if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then expected="$core"
+          elif [ "$EVENT" != push ] && [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(pr|dev)\.[0-9]+(\+[0-9a-f]+)?$ ]]; then expected="$next"
+          else
+            echo "::error::'$v' is not a release version: tags are vX.Y.Z"
             exit 1
           fi
-          if [ "${v%%-*}" != "$core" ]; then
-            echo "::error::version $v does not match VERSION $core. Fix VERSION or the tag."
+          if [ "${v%%-*}" != "$expected" ]; then
+            echo "::error::version $v does not match $expected (VERSION $core). Fix VERSION or the tag."
             exit 1
+          fi
+          # Only a release is published, and only from its own tag.
+          if [ "$EVENT" = workflow_dispatch ] && [ "$PUBLISH" = true ]; then
+            if [ "$expected" != "$core" ]; then
+              echo "::error::$v is no release: only a tag vX.Y.Z is published"
+              exit 1
+            fi
+            if [ "$REF_TYPE" != tag ] || [ "$REF_NAME" != "v$v" ]; then
+              echo "::error::publish v$v from its tag: gh workflow run release.yml --ref v$v -f version=$v -f publish=true"
+              exit 1
+            fi
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "Release version: $v (VERSION $core)"
@@ -275,10 +295,8 @@ jobs:
         run: |
           tag="v$VERSION"
           qaros="$(jq -r '[.assets[].min_qaros_version] | unique | join(", ")' dist/manifest.json)"
-          prerelease=()
-          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" "${prerelease[@]}" \
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --title "qar_rviz_streaming $VERSION" \
               --notes "Prebuilt qar_rviz_streaming RViz2 plugin $VERSION for QAROS $qaros or newer, Windows x64 only for now. Each zip is an overlay prefix for one ROS 2 distribution and platform; manifest.json lists their SHA-256, the QarOS C API header hash and the minimum QAROS version. Changes: https://github.com/$GITHUB_REPOSITORY/blob/$tag/CHANGELOG.md"
           fi

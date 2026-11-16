@@ -33,8 +33,10 @@
     The colcon install prefix that holds the plugin. Default: the environment variable QAR_PREFIX.
 .PARAMETER Version
     The release version, the plugin's own version without a leading v (a leading v is removed):
-    X.Y.Z for a release, X.Y.Z-rc.N for a candidate, X.Y.Z-pr.N for a pull request build. Its
-    X.Y.Z should be the version of the build (VERSION, package.xml); the script warns otherwise.
+    X.Y.Z for a release, X.Y.(Z+1)-pr.N for a pull request build, X.Y.(Z+1)-dev.N+<sha> for a
+    development build. VERSION and package.xml hold the last release: a release's X.Y.Z should
+    equal the build's package.xml, any other version's X.Y.Z its next patch; the script warns
+    otherwise.
     Default: the file VERSION of the repository.
 .PARAMETER Distro
     The ROS 2 distribution the plugin was built for. Default: from -RosRoot, else ROS_DISTRO.
@@ -92,7 +94,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 $Version = $Version.Trim()
 if ($Version.StartsWith('v')) { $Version = $Version.Substring(1) }
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$') {
-    throw "-Version '$Version' is not a version like 0.9.0 or 0.9.0-rc.1."
+    throw "-Version '$Version' is not a version like 0.9.0 or 0.9.1-pr.5."
 }
 if ([string]::IsNullOrWhiteSpace($Prefix)) { $Prefix = $env:QAR_PREFIX }
 if ([string]::IsNullOrWhiteSpace($Prefix)) { throw 'Pass -Prefix <folder> or set QAR_PREFIX.' }
@@ -192,7 +194,12 @@ $generated[$qarosStampRel] = "$minQaros`n"
 $pluginVersion = $Version
 $packageVersion = ([xml][IO.File]::ReadAllText((Join-Path $Prefix "share\$Package\package.xml"))).package.version
 $releaseCore = ($Version -split '[-+]')[0]
-if ($packageVersion -ne $releaseCore) {
+# package.xml holds the last release: any version but a release (X.Y.Z-...) carries the next patch.
+$expectedCore = $packageVersion
+if ($Version -match '^[0-9]+\.[0-9]+\.[0-9]+-' -and $packageVersion -match '^([0-9]+\.[0-9]+\.)([0-9]+)$') {
+    $expectedCore = $matches[1] + ([int]$matches[2] + 1)
+}
+if ($expectedCore -ne $releaseCore) {
     Write-Warning "The prefix holds $Package $packageVersion (package.xml), the release version is $Version."
 }
 $versionStampRel = "share/$Package/plugin_version"
