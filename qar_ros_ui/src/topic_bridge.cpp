@@ -5,10 +5,15 @@
 
 #include <algorithm>
 #include <exception>
+#include <functional>
+#include <memory>
 #include <mutex>
+#include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "rclcpp/any_subscription_callback.hpp"
 #include "rclcpp/generic_publisher.hpp"
 #include "rclcpp/generic_subscription.hpp"
 #include "rclcpp/publisher_options.hpp"
@@ -25,6 +30,39 @@ using qar_ui_model::UiValue;
 
 namespace
 {
+
+using SerializedCallback = std::function<void(std::shared_ptr<rclcpp::SerializedMessage>)>;
+
+/// True when the constructor of the generic subscription takes a std::function, as on Humble and
+/// Iron, and false when it takes an AnySubscriptionCallback, as on Jazzy and later.
+template<typename Subscription>
+inline constexpr bool takes_std_function_v = std::is_constructible_v<
+  Subscription, rclcpp::node_interfaces::NodeBaseInterface *,
+  std::shared_ptr<rcpputils::SharedLibrary>, const std::string &, const std::string &,
+  const rclcpp::QoS &, SerializedCallback, const rclcpp::SubscriptionOptions &>;
+
+/// Builds a generic subscription over the given typesupport library with whichever callback type
+/// the installed rclcpp asks for: a std::function (Humble, Iron) or an AnySubscriptionCallback
+/// (Jazzy and later). Only the matching branch is instantiated; the allocator parameter is
+/// dependent so that the AnySubscriptionCallback type is not instantiated in the discarded branch.
+template<typename Subscription, typename CallbackT, typename Allocator = std::allocator<void>>
+std::shared_ptr<Subscription> make_generic_subscription(
+  rclcpp::node_interfaces::NodeBaseInterface * base,
+  const std::shared_ptr<rcpputils::SharedLibrary> & library, const std::string & topic,
+  const std::string & type_name, const rclcpp::QoS & qos, CallbackT && callback,
+  const rclcpp::SubscriptionOptions & options)
+{
+  if constexpr (takes_std_function_v<Subscription>) {
+    return std::make_shared<Subscription>(
+      base, library, topic, type_name, qos, SerializedCallback(std::forward<CallbackT>(callback)),
+      options);
+  } else {
+    rclcpp::AnySubscriptionCallback<rclcpp::SerializedMessage, Allocator> any_callback;
+    any_callback.set(std::forward<CallbackT>(callback));
+    return std::make_shared<Subscription>(
+      base, library, topic, type_name, qos, any_callback, options);
+  }
+}
 
 rclcpp::QoS to_qos(const rmw_qos_profile_t & profile)
 {
@@ -151,7 +189,7 @@ Result TopicSubscription::Impl::create(
             }
           };
       }
-      auto created = std::make_shared<rclcpp::GenericSubscription>(
+      auto created = make_generic_subscription<rclcpp::GenericSubscription>(
         handles.base.get(), ts.rmw_library, topic, type_name, to_qos(new_profile), on_message,
         sub_options);
       handles.topics->add_subscription(created, sub_options.callback_group);
