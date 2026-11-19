@@ -207,6 +207,49 @@ TEST(HtmlRenderer, EveryWidgetAppearsOnceWithItsAttributesInOrder)
     std::string::npos);
 }
 
+TEST(HtmlRenderer, ACompactToggleCarriesItsCaptionInsideTheSwitch)
+{
+  // No caption row above the switch; the title stands between the track and the state word.
+  EXPECT_EQ(render_widget_fragment(widgets::toggle("t", "on", "Power").with_compact()),
+    "<div class=\"qar-widget qar-toggle-widget\" data-qar-id=\"t\" data-qar-type=\"toggle\" "
+    "data-qar-bind=\"on\">"
+    "<button type=\"button\" class=\"qar-toggle\" role=\"switch\" aria-checked=\"false\" "
+    "data-qar-role=\"toggle\">"
+    "<span class=\"qar-toggle-track\"><span class=\"qar-toggle-knob\"></span></span>"
+    "<span class=\"qar-toggle-title\">Power</span>"
+    "<span class=\"qar-toggle-text\" data-qar-role=\"text\">&mdash;</span></button></div>");
+
+  // A bound title carries the role the runtime looks for, and the title is escaped.
+  const std::string bound = render_widget_fragment(
+    widgets::toggle("t", "on", "A<b>").with_compact().with_label_binding("cap.t"));
+  EXPECT_NE(bound.find("<span class=\"qar-toggle-title\" data-qar-role=\"caption\">A&lt;b&gt;"
+      "</span>"), std::string::npos) << bound;
+  EXPECT_EQ(bound.find("qar-caption"), std::string::npos);
+
+  // A plain toggle keeps its caption row; the flag is the only difference.
+  const std::string plain = render_widget_fragment(widgets::toggle("t", "on", "Power"));
+  EXPECT_NE(plain.find("<div class=\"qar-caption\">Power</div>"), std::string::npos);
+  EXPECT_EQ(plain.find("qar-toggle-title"), std::string::npos);
+
+  // The switch is still the touch target: the same button, read-only toggles stay disabled.
+  const Widget read_only = widgets::toggle("t", "on", "P").with_compact().with_editable(false);
+  EXPECT_NE(render_widget_fragment(read_only).find("data-qar-role=\"toggle\" disabled>"),
+    std::string::npos);
+}
+
+TEST(HtmlRenderer, ACompactValueSharesOneLine)
+{
+  EXPECT_EQ(render_widget_fragment(
+      widgets::value("v", "more", "More topics:").with_compact().with_label_binding("cap.v")),
+    "<div class=\"qar-widget qar-value qar-value-compact\" data-qar-id=\"v\" "
+    "data-qar-type=\"value\" data-qar-bind=\"more\">"
+    "<div class=\"qar-caption\" data-qar-role=\"caption\">More topics:</div>"
+    "<div class=\"qar-readout\"><span class=\"qar-readout-value\" data-qar-role=\"value\">"
+    "&mdash;</span></div></div>");
+  EXPECT_EQ(render_widget_fragment(widgets::value("v", "more", "More")).find("value-compact"),
+    std::string::npos);
+}
+
 TEST(HtmlRenderer, WidgetFragmentsAreStable)
 {
   // Golden fragments for the small widgets: a change here is a change to the

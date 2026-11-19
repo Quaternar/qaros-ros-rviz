@@ -23,6 +23,41 @@ constexpr const char * kInviteReadyToolTip =
 constexpr const char * kInviteBusyToolTip = "An invite is in progress.";
 constexpr const char * kInviteAttachingToolTip =
   "The session is being set up; an invite is possible when that is done.";
+constexpr const char * kJoinAgainToolTip =
+  "Give up the session the QAROS Hub does not answer for, release it and join the Hub again.";
+constexpr const char * kStopRejoiningToolTip =
+  "Stop joining the QAROS Hub again. Connect to QarOS starts a join.";
+
+/// An automatic attempt is under way and the Hub has not shown its approval prompt.
+bool joining_again_quietly(const ConnectionInput & input)
+{
+  return input.auto_rejoin && !input.rejoin_prompt_open &&
+         input.phase == ConnectionPhase::WaitingForApproval;
+}
+
+std::string approval_text_of(const ConnectionInput & input)
+{
+  std::string text =
+    "QarOS: waiting for approval in the QAROS Hub - click Allow in the QAROS window";
+  if (input.approval_seconds_left >= 0) {
+    text += " (" + format_countdown(input.approval_seconds_left) + " left)";
+  }
+  return text;
+}
+
+std::string lost_text_of(const ConnectionInput & input)
+{
+  const std::string head = "QarOS: the QAROS Hub is gone - ";
+  if (input.releasing) {
+    return head + "releasing the session ...";
+  }
+  const std::string attempt = std::to_string(input.rejoin_attempt);
+  if (input.rejoin_in_s < 0) {
+    return head + "joining it again (attempt " + attempt + "); RViz keeps working";
+  }
+  return head + "joining it again in " + std::to_string(input.rejoin_in_s) + " s (attempt " +
+         attempt + "); RViz keeps working";
+}
 
 std::string state_text_of(const ConnectionInput & input)
 {
@@ -33,25 +68,31 @@ std::string state_text_of(const ConnectionInput & input)
       return "QarOS: not connected";
     case ConnectionPhase::Loading:
       return "QarOS: loading the QAROS runtime ...";
-    case ConnectionPhase::WaitingForApproval: {
-        std::string text =
-          "QarOS: waiting for approval in the QAROS Hub - click Allow in the QAROS window";
-        if (input.approval_seconds_left >= 0) {
-          text += " (" + format_countdown(input.approval_seconds_left) + " left)";
-        }
-        return text;
+    case ConnectionPhase::WaitingForApproval:
+      if (joining_again_quietly(input)) {
+        return "QarOS: joining the QAROS Hub again (attempt " +
+               std::to_string(input.rejoin_attempt) + ") ...";
       }
+      return approval_text_of(input);
     case ConnectionPhase::Running: {
         if (input.attaching) {
           return "QarOS: joined (local app) - setting up the session ...";
         }
-        return std::string("QarOS: connected (local app)") +
-               (input.streaming_paused ? ", streaming paused - " : " - ") +
-               std::to_string(input.target_count) + " target(s), " +
-               std::to_string(input.served_count) + " served";
+        std::string text = std::string("QarOS: connected (local app)") +
+          (input.streaming_paused ? ", streaming paused - " : " - ") +
+          std::to_string(input.target_count) + " target(s), " +
+          std::to_string(input.served_count) + " served";
+        if (!input.degraded_text.empty()) {
+          text += "; " + input.degraded_text;
+        }
+        return text;
       }
     case ConnectionPhase::Reconnecting:
-      return "QarOS: Hub not reachable - waiting for it to come back";
+      return "QarOS: Hub not reachable - waiting for it to come back" +
+             (input.hub_silent_s >= 0 ? " (" + std::to_string(input.hub_silent_s) + " s)" :
+             std::string());
+    case ConnectionPhase::Lost:
+      return lost_text_of(input);
     case ConnectionPhase::Stopping:
       return "QarOS: disconnecting ...";
     case ConnectionPhase::Failed:
@@ -63,14 +104,10 @@ std::string state_text_of(const ConnectionInput & input)
 
 std::string identity_text_of(const ConnectionInput & input)
 {
-  if (input.phase == ConnectionPhase::Preview) {
-    return "preview (no QAROS)";
-  }
   const bool approved = input.phase == ConnectionPhase::Running ||
-    input.phase == ConnectionPhase::Reconnecting;
-  return approved ?
-         "This PC: approved local app (" + input.program_name + ")" :
-         "This PC: local app (" + input.program_name + "), approved once in the QAROS Hub";
+    input.phase == ConnectionPhase::Reconnecting || input.phase == ConnectionPhase::Lost;
+  return approved ? "This PC: approved local app (" + input.program_name + ")" :
+         "This PC (not joined yet)";
 }
 
 }  // namespace
@@ -89,8 +126,17 @@ ConnectionView make_connection_view(const ConnectionInput & input)
   ConnectionView view;
   view.state_text = state_text_of(input);
   view.identity_text = identity_text_of(input);
+
   view.cancel_enabled = phase == ConnectionPhase::Loading ||
-    phase == ConnectionPhase::WaitingForApproval;
+    phase == ConnectionPhase::WaitingForApproval || phase == ConnectionPhase::Reconnecting ||
+    phase == ConnectionPhase::Lost;
+  if (phase == ConnectionPhase::Reconnecting) {
+    view.cancel_text = "Join again";
+    view.cancel_tooltip = kJoinAgainToolTip;
+  } else if (phase == ConnectionPhase::Lost || joining_again_quietly(input)) {
+    view.cancel_text = "Stop rejoining";
+    view.cancel_tooltip = kStopRejoiningToolTip;
+  }
 
   if (phase == ConnectionPhase::Running && input.attaching) {
     view.invite_enabled = false;

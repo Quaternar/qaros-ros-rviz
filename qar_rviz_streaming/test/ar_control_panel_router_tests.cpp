@@ -17,6 +17,7 @@
 namespace
 {
 
+using qar_rviz_streaming::ArCopySize;
 using qar_rviz_streaming::ArPickMode;
 using qar_rviz_streaming::ControlPanelCommandKind;
 using qar_rviz_streaming::ControlPanelRouting;
@@ -153,11 +154,11 @@ TEST(ArControlPanelRouter, PanelToggleSlot)
     }
   }
   EXPECT_EQ(ac::panel_toggle_id(0), "cp_panel_0");
-  EXPECT_EQ(ac::panel_toggle_id(5), "cp_panel_5");
-  EXPECT_EQ(ac::kPanelSlots, 6u);
+  EXPECT_EQ(ac::panel_toggle_id(15), "cp_panel_15");
+  EXPECT_EQ(ac::kPanelSlots, 16u);
 
   // A slot beyond the last, or an id that is not a plain slot number, is no widget of the page.
-  for (const char * id : {"cp_panel_6", "cp_panel_9", "cp_panel_10", "cp_panel_", "cp_panel_00",
+  for (const char * id : {"cp_panel_16", "cp_panel_17", "cp_panel_99", "cp_panel_", "cp_panel_00",
       "cp_panel_05", "cp_panel_-1", "cp_panel_+1", "cp_panel_1x", "cp_panel_ 1", "cp_panel_1.0",
       "cp_panel", "cp_panels_1", "CP_PANEL_1", "cp_panel_99999999999999"})
   {
@@ -166,6 +167,27 @@ TEST(ArControlPanelRouter, PanelToggleSlot)
     EXPECT_FALSE(routing.ok) << id;
     EXPECT_EQ(routing.error, std::string("unknown control '") + id + "'") << id;
   }
+}
+
+TEST(ArControlPanelRouter, SlotFifteenIsAcceptedSixteenIsRefused)
+{
+  const ControlPanelRouting last = route_control_panel_event(
+    event("cp_panel_15", ac::kActionPanelToggle, UiValue(true)));
+  ASSERT_TRUE(last.ok) << last.error;
+  EXPECT_EQ(last.command.kind, ControlPanelCommandKind::SetPanelOn);
+  EXPECT_EQ(last.command.slot, 15u);
+  const ControlPanelRouting beyond = route_control_panel_event(
+    event("cp_panel_16", ac::kActionPanelToggle, UiValue(true)));
+  EXPECT_FALSE(beyond.ok);
+  EXPECT_EQ(beyond.error, "unknown control 'cp_panel_16'");
+  EXPECT_EQ(beyond.command.kind, ControlPanelCommandKind::None);
+
+  const ControlPanelRouting last_tool = route_control_panel_event(
+    event("cp_tool_7", ac::kActionToolToggle, UiValue(false)));
+  ASSERT_TRUE(last_tool.ok) << last_tool.error;
+  EXPECT_EQ(last_tool.command.slot, 7u);
+  EXPECT_FALSE(route_control_panel_event(
+      event("cp_tool_8", ac::kActionToolToggle, UiValue(false))).ok);
 }
 
 TEST(ArControlPanelRouter, PanelToggleNeedsBool)
@@ -197,8 +219,8 @@ TEST(ArControlPanelRouter, ToolToggleSlot)
     }
   }
   EXPECT_EQ(ac::tool_toggle_id(0), "cp_tool_0");
-  EXPECT_EQ(ac::tool_toggle_id(3), "cp_tool_3");
-  EXPECT_EQ(ac::kToolSlots, 4u);
+  EXPECT_EQ(ac::tool_toggle_id(7), "cp_tool_7");
+  EXPECT_EQ(ac::kToolSlots, 8u);
   EXPECT_STREQ(ac::kActionToolToggle, "cp.tool.toggle");
   // A frame that names no action is read as the widget's own.
   const ControlPanelRouting bare = route_control_panel_event(event("cp_tool_1", "", UiValue(true)));
@@ -208,7 +230,7 @@ TEST(ArControlPanelRouter, ToolToggleSlot)
   EXPECT_TRUE(bare.command.on);
 
   // A slot beyond the last, or an id that is not a plain slot number, is no widget of the page.
-  for (const char * id : {"cp_tool_4", "cp_tool_9", "cp_tool_10", "cp_tool_", "cp_tool_00",
+  for (const char * id : {"cp_tool_8", "cp_tool_9", "cp_tool_10", "cp_tool_", "cp_tool_00",
       "cp_tool_01", "cp_tool_-1", "cp_tool_+1", "cp_tool_1x", "cp_tool_x", "cp_tool_ 1",
       "cp_tool_1.0", "cp_tool", "cp_tools_1", "CP_TOOL_1", "cp_tool_99999999999999"})
   {
@@ -255,7 +277,7 @@ TEST(ArControlPanelRouter, UnknownControlIsRefused)
 
   // A widget that only shows something has no action to run.
   for (const char * id : {"cp_conn", "cp_peers", "cp_error", "cp_h_panels", "cp_h_tools",
-      "cp_more_panels", "cp_more_tools"})
+      "cp_more_panels", "cp_more_tools", "cp_more_topics"})
   {
     const ControlPanelRouting shown = route_control_panel_event(event(id, "", UiValue(true)));
     EXPECT_FALSE(shown.ok) << id;
@@ -304,6 +326,60 @@ TEST(ArControlPanelRouter, ForeignActionIsRefused)
     "control 'cp_pick_mode' declares action 'cp.pick.mode' but the event named 'ros.publish'");
 }
 
+TEST(ArControlPanelRouter, ATopicSwitchGivesSetPickTopicWithItsSlot)
+{
+  for (std::size_t slot = 0; slot < ac::kPickTopicSlots; ++slot) {
+    for (const bool on : {true, false}) {
+      const ControlPanelRouting routing = route_control_panel_event(
+        event(ac::pick_topic_toggle_id(slot), ac::kActionPickTopic, UiValue(on)));
+      ASSERT_TRUE(routing.ok) << slot << ": " << routing.error;
+      EXPECT_EQ(routing.command.kind, ControlPanelCommandKind::SetPickTopic);
+      EXPECT_EQ(routing.command.slot, slot);
+      EXPECT_EQ(routing.command.on, on);
+    }
+  }
+  // A frame that names no action is read as the widget's own.
+  EXPECT_TRUE(route_control_panel_event(event("cp_pick_topic_1", "", UiValue(true))).ok);
+  // Another action is refused, and so is a value that is no switch.
+  const ControlPanelRouting foreign =
+    route_control_panel_event(event("cp_pick_topic_1", ac::kActionToolToggle, UiValue(true)));
+  EXPECT_FALSE(foreign.ok);
+  EXPECT_EQ(
+    foreign.error,
+    "control 'cp_pick_topic_1' declares action 'cp.pick.topic' but the event named "
+    "'cp.tool.toggle'");
+  for (const UiValue & bad : {UiValue("on"), UiValue(1), UiValue()}) {
+    const ControlPanelRouting routing =
+      route_control_panel_event(event("cp_pick_topic_0", ac::kActionPickTopic, bad));
+    EXPECT_FALSE(routing.ok);
+    EXPECT_EQ(routing.error, "a topic switch needs on or off");
+  }
+  // The line that shows the topic sends nothing.
+  const ControlPanelRouting line =
+    route_control_panel_event(event(ac::kIdPickTopic, ac::kActionPickTopic, UiValue(true)));
+  EXPECT_FALSE(line.ok);
+  EXPECT_EQ(line.error, "control 'cp_pick_topic' has no action");
+  EXPECT_FALSE(qar_rviz_streaming::control_command_is_deferred(
+      ControlPanelCommandKind::SetPickTopic));
+  EXPECT_STREQ(qar_rviz_streaming::to_string(ControlPanelCommandKind::SetPickTopic),
+    "set_pick_topic");
+}
+
+TEST(ArControlPanelRouter, ATopicSlotBeyondTheLimitIsRefused)
+{
+  const std::string last = "cp_pick_topic_" + std::to_string(ac::kPickTopicSlots - 1);
+  EXPECT_TRUE(route_control_panel_event(event(last, ac::kActionPickTopic, UiValue(true))).ok);
+  for (const std::string & id : {"cp_pick_topic_" + std::to_string(ac::kPickTopicSlots),
+      std::string("cp_pick_topic_-1"), std::string("cp_pick_topic_01"),
+      std::string("cp_pick_topic_1x"), std::string("cp_pick_topic_")})
+  {
+    const ControlPanelRouting routing =
+      route_control_panel_event(event(id, ac::kActionPickTopic, UiValue(true)));
+    EXPECT_FALSE(routing.ok) << id;
+    EXPECT_EQ(routing.error, "unknown control '" + id + "'") << id;
+  }
+}
+
 TEST(ArControlPanelRouter, DeferredKinds)
 {
   using qar_rviz_streaming::control_command_is_deferred;
@@ -313,6 +389,7 @@ TEST(ArControlPanelRouter, DeferredKinds)
   EXPECT_FALSE(control_command_is_deferred(ControlPanelCommandKind::SetPickMode));
   EXPECT_FALSE(control_command_is_deferred(ControlPanelCommandKind::ConfirmPick));
   EXPECT_FALSE(control_command_is_deferred(ControlPanelCommandKind::CancelPick));
+  EXPECT_FALSE(control_command_is_deferred(ControlPanelCommandKind::SetArCopySize));
   EXPECT_FALSE(control_command_is_deferred(ControlPanelCommandKind::None));
 
   EXPECT_STREQ(qar_rviz_streaming::to_string(ControlPanelCommandKind::None), "none");
@@ -322,4 +399,66 @@ TEST(ArControlPanelRouter, DeferredKinds)
   EXPECT_STREQ(qar_rviz_streaming::to_string(ControlPanelCommandKind::CancelPick), "cancel_pick");
   EXPECT_STREQ(qar_rviz_streaming::to_string(ControlPanelCommandKind::SetPanelOn), "set_panel_on");
   EXPECT_STREQ(qar_rviz_streaming::to_string(ControlPanelCommandKind::SetToolOn), "set_tool_on");
+  EXPECT_STREQ(
+    qar_rviz_streaming::to_string(ControlPanelCommandKind::SetArCopySize), "set_ar_copy_size");
+}
+
+TEST(ArControlPanelRouter, TheCopySizeChoiceGivesSetArCopySizeWithTheWord)
+{
+  struct Case
+  {
+    const char * word;
+    ArCopySize size;
+  };
+  for (const Case & c :
+    {Case{"enlarged", ArCopySize::Enlarged}, Case{"native", ArCopySize::Native}})
+  {
+    const ControlPanelRouting routing = route_control_panel_event(
+      event(ac::kIdArCopySize, ac::kActionArCopySize, UiValue(c.word)));
+    ASSERT_TRUE(routing.ok) << c.word << ": " << routing.error;
+    EXPECT_TRUE(routing.error.empty());
+    EXPECT_EQ(routing.command.kind, ControlPanelCommandKind::SetArCopySize);
+    EXPECT_EQ(routing.command.ar_copy_size, c.size) << c.word;
+  }
+  // A frame that names no action is read as the widget's own.
+  const ControlPanelRouting bare =
+    route_control_panel_event(event(ac::kIdArCopySize, "", UiValue("native")));
+  ASSERT_TRUE(bare.ok) << bare.error;
+  EXPECT_EQ(bare.command.ar_copy_size, ArCopySize::Native);
+  // The ids and the action id are the contract with the page.
+  EXPECT_STREQ(ac::kIdArCopySize, "cp_ar_copy_size");
+  EXPECT_STREQ(ac::kActionArCopySize, "cp.ar_copy.size");
+}
+
+TEST(ArControlPanelRouter, ABadCopySizeWordIsRefused)
+{
+  // Exactly the two words of the setting: no other case, no padding, no other type.
+  for (const UiValue & bad : {UiValue("huge"), UiValue("Enlarged"), UiValue("NATIVE"),
+      UiValue("native "), UiValue(""), UiValue(1), UiValue(true), UiValue()})
+  {
+    const ControlPanelRouting routing =
+      route_control_panel_event(event(ac::kIdArCopySize, ac::kActionArCopySize, bad));
+    EXPECT_FALSE(routing.ok);
+    EXPECT_EQ(routing.command.kind, ControlPanelCommandKind::None);
+    EXPECT_EQ(routing.error.rfind("not a Qt panel size: '", 0), 0u) << routing.error;
+  }
+  EXPECT_EQ(
+    route_control_panel_event(event(ac::kIdArCopySize, ac::kActionArCopySize, UiValue("huge")))
+    .error,
+    "not a Qt panel size: 'huge'");
+  // The value that is echoed is printable and short.
+  const ControlPanelRouting long_word = route_control_panel_event(
+    event(ac::kIdArCopySize, ac::kActionArCopySize, UiValue("x\ny" + std::string(200, 'q'))));
+  EXPECT_FALSE(long_word.ok);
+  EXPECT_EQ(long_word.error.find('\n'), std::string::npos);
+  EXPECT_LT(long_word.error.size(), 80u);
+  // Another action is refused before the value is looked at.
+  EXPECT_EQ(
+    route_control_panel_event(event(ac::kIdArCopySize, ac::kActionPanelToggle, UiValue("native")))
+    .error,
+    "control 'cp_ar_copy_size' declares action 'cp.ar_copy.size' but the event named "
+    "'cp.panel.toggle'");
+  // No other widget carries that action.
+  EXPECT_FALSE(
+    route_control_panel_event(event(ac::kIdPickMode, ac::kActionArCopySize, UiValue("off"))).ok);
 }

@@ -19,6 +19,7 @@
 #include "qar_ui_model/html_renderer.hpp"
 #include "qar_ui_model/page_metrics.hpp"
 #include "qar_ui_model/type_description.hpp"
+#include "qar_ui_model/viewport_fit.hpp"
 
 namespace
 {
@@ -105,8 +106,12 @@ TEST(ArControlPageModel, Validates)
     EXPECT_NE(child.type, WidgetType::Row) << child.id;
     EXPECT_NE(child.type, WidgetType::Column) << child.id;
   }
-  // 3 pick widgets, the connection, 2 headings, 6 + 4 slots, 2 "more" lines, peers and error.
-  EXPECT_EQ(model.root.children.size(), 3u + 1u + 2u + ac::kPanelSlots + ac::kToolSlots + 2u + 2u);
+  // 3 pick widgets, the topic line, its switches and the "more topics" line, the connection,
+  // 2 headings, 16 + 8 slots, 2 "more" lines, the Qt panel size choice, peers and error.
+  EXPECT_EQ(
+    model.root.children.size(),
+    3u + 1u + ac::kPickTopicSlots + 1u + 1u + 2u + ac::kPanelSlots + ac::kToolSlots + 2u + 1u +
+    2u);
 
   // The model survives its own wire form.
   UiModel parsed;
@@ -181,12 +186,15 @@ TEST(ArControlPageModel, IdsAndActionsMatchTheRouter)
 
   // The widgets that send something are exactly the ones the router has a command for.
   std::set<std::string> expected = {
-    ac::kIdPickMode, ac::kIdPickConfirm, ac::kIdPickCancel};
+    ac::kIdPickMode, ac::kIdPickConfirm, ac::kIdPickCancel, ac::kIdArCopySize};
   for (std::size_t slot = 0; slot < ac::kPanelSlots; ++slot) {
     expected.insert(ac::panel_toggle_id(slot));
   }
   for (std::size_t slot = 0; slot < ac::kToolSlots; ++slot) {
     expected.insert(ac::tool_toggle_id(slot));
+  }
+  for (std::size_t slot = 0; slot < ac::kPickTopicSlots; ++slot) {
+    expected.insert(ac::pick_topic_toggle_id(slot));
   }
   EXPECT_EQ(accepted_ids, expected);
 
@@ -207,6 +215,8 @@ TEST(ArControlPageModel, IdsAndActionsMatchTheRouter)
   EXPECT_EQ(kind_of(ac::kIdPickCancel), ControlPanelCommandKind::CancelPick);
   EXPECT_EQ(kind_of("cp_panel_3"), ControlPanelCommandKind::SetPanelOn);
   EXPECT_EQ(kind_of("cp_tool_1"), ControlPanelCommandKind::SetToolOn);
+  EXPECT_EQ(kind_of("cp_pick_topic_2"), ControlPanelCommandKind::SetPickTopic);
+  EXPECT_EQ(kind_of("cp_ar_copy_size"), ControlPanelCommandKind::SetArCopySize);
 
   // The page offers exactly the three pick modes of the router, in the words it expects.
   const Widget * mode = model.find(ac::kIdPickMode);
@@ -222,6 +232,35 @@ TEST(ArControlPageModel, IdsAndActionsMatchTheRouter)
   EXPECT_EQ(mode->label, "Pick in the scene");
   EXPECT_EQ(model.find(ac::kIdPickConfirm)->label, "Confirm pick");
   EXPECT_EQ(model.find(ac::kIdPickCancel)->label, "Cancel pick");
+}
+
+TEST(ArControlPageModel, HasSixteenPanelSwitchesAndEightToolSwitches)
+{
+  EXPECT_EQ(ac::kPanelSlots, 16u);
+  EXPECT_EQ(ac::kToolSlots, 8u);
+  const UiModel model = make_ar_control_page_model();
+  std::size_t panel_switches = 0;
+  std::size_t tool_switches = 0;
+  for (const Widget & child : model.root.children) {
+    if (child.type != WidgetType::Toggle) {
+      continue;
+    }
+    if (child.id.rfind(ac::kPanelIdPrefix, 0) == 0) {
+      ++panel_switches;
+    } else if (child.id.rfind(ac::kToolIdPrefix, 0) == 0) {
+      ++tool_switches;
+    }
+  }
+  EXPECT_EQ(panel_switches, 16u);
+  EXPECT_EQ(tool_switches, 8u);
+  EXPECT_NE(model.find("cp_panel_15"), nullptr);
+  EXPECT_EQ(model.find("cp_panel_16"), nullptr);
+  EXPECT_NE(model.find("cp_tool_7"), nullptr);
+  EXPECT_EQ(model.find("cp_tool_8"), nullptr);
+  // Every switch is a plain toggle: the page keeps the touch target of the theme for each.
+  for (std::size_t slot = 0; slot < ac::kPanelSlots; ++slot) {
+    EXPECT_EQ(model.find(ac::panel_toggle_id(slot))->type, WidgetType::Toggle) << slot;
+  }
 }
 
 TEST(ArControlPageModel, SlotsCarryLabelAndVisibleBindings)
@@ -361,8 +400,9 @@ TEST(ArControlPageModel, InitialDocumentHidesEverySlot)
   }
   std::set<std::string> leaves;
   collect_leaf_paths(document, "", leaves);
-  // 3 status + 2 pick + 6 x 3 panel + 4 x 3 tool + 4 more paths.
-  EXPECT_EQ(leaves.size(), 39u);
+  // 3 status + 2 pick + 2 topic + 4 x 3 topic switch + 2 more topics + the Qt panel size
+  // + 16 x 3 panel + 8 x 3 tool + 4 more paths.
+  EXPECT_EQ(leaves.size(), 98u);
   EXPECT_EQ(bound.size(), leaves.size());
   EXPECT_EQ(std::set<std::string>(bound.begin(), bound.end()), leaves);
 
@@ -380,7 +420,48 @@ TEST(ArControlPageModel, InitialDocumentHidesEverySlot)
       ++hidden;
     }
   }
-  EXPECT_EQ(hidden, ac::kPanelSlots + ac::kToolSlots + 1u);
+  // The slots, the line about the tools, the topic line, its switches and the "more topics" line.
+  EXPECT_EQ(hidden, ac::kPanelSlots + ac::kToolSlots + 1u + 1u + ac::kPickTopicSlots + 1u);
+  EXPECT_EQ(*document_value(document, "more.topics"), UiValue(""));
+  EXPECT_EQ(*document_value(document, "settings.ar_copy_size"), UiValue("enlarged"));
+  EXPECT_EQ(*document_value(document, "pick.topic"), UiValue(""));
+  for (std::size_t slot = 0; slot < ac::kPickTopicSlots; ++slot) {
+    EXPECT_EQ(*document_value(document, ac::pick_topic_path(slot, "show")), UiValue(false));
+    EXPECT_TRUE(document_value(document, ac::pick_topic_path(slot, "title"))->is_null());
+    EXPECT_EQ(*document_value(document, ac::pick_topic_path(slot, "on")), UiValue(false));
+  }
+}
+
+TEST(ArControlPageModel, TheTopicBlockFollowsCancel)
+{
+  const UiModel model = make_ar_control_page_model();
+  // Right after Cancel and before the connection light, so that it stays on the first screen.
+  const std::size_t cancel = index_of(model, ac::kIdPickCancel);
+  EXPECT_EQ(index_of(model, ac::kIdPickTopic), cancel + 1);
+  for (std::size_t slot = 0; slot < ac::kPickTopicSlots; ++slot) {
+    EXPECT_EQ(index_of(model, ac::pick_topic_toggle_id(slot)), cancel + 2 + slot);
+  }
+  EXPECT_LT(index_of(model, ac::pick_topic_toggle_id(ac::kPickTopicSlots - 1)),
+    index_of(model, ac::kIdConnection));
+
+  const Widget * line = model.find(ac::kIdPickTopic);
+  ASSERT_NE(line, nullptr);
+  EXPECT_EQ(line->type, WidgetType::ValueDisplay);
+  EXPECT_EQ(line->label, "Publishes to");
+  EXPECT_EQ(line->binding, "pick.topic");
+  EXPECT_EQ(line->visible_binding, "pick.topic_show");
+  EXPECT_TRUE(line->action.empty());
+
+  for (std::size_t slot = 0; slot < ac::kPickTopicSlots; ++slot) {
+    const Widget * toggle = model.find(ac::pick_topic_toggle_id(slot));
+    ASSERT_NE(toggle, nullptr) << slot;
+    EXPECT_EQ(toggle->type, WidgetType::Toggle) << slot;
+    EXPECT_EQ(toggle->action, "cp.pick.topic") << slot;
+    EXPECT_EQ(toggle->binding, "pick.topics.s" + std::to_string(slot) + ".on") << slot;
+    EXPECT_EQ(toggle->label_binding, "pick.topics.s" + std::to_string(slot) + ".title") << slot;
+    EXPECT_EQ(toggle->visible_binding, "pick.topics.s" + std::to_string(slot) + ".show") << slot;
+  }
+  EXPECT_EQ(model.find(ac::pick_topic_toggle_id(ac::kPickTopicSlots)), nullptr);
 }
 
 TEST(ArControlPageModel, PickBlockComesFirst)
@@ -431,4 +512,147 @@ TEST(ArControlPageModel, PickBlockComesFirst)
   EXPECT_EQ(single.columns, 1u);
   EXPECT_EQ(single.widget_count, model.root.children.size());
   EXPECT_EQ(single.widest_row, 0u) << "no row in the page";
+}
+
+/// The page reduced to the armed pick block: the mode, Confirm, Cancel, optionally the line that
+/// names the topic, the four topic switches and the "more topics" hint (every one of them shown).
+UiModel armed_block_page(const UiModel & model, bool with_topic_line)
+{
+  UiModel block = model;
+  block.root.children.clear();
+  std::vector<std::string> ids = {ac::kIdPickMode, ac::kIdPickConfirm, ac::kIdPickCancel};
+  if (with_topic_line) {
+    ids.push_back(ac::kIdPickTopic);
+  }
+  for (std::size_t slot = 0; slot < ac::kPickTopicSlots; ++slot) {
+    ids.push_back(ac::pick_topic_toggle_id(slot));
+  }
+  ids.push_back(ac::kIdMoreTopics);
+  for (const std::string & id : ids) {
+    block.root.children.push_back(*model.find(id));
+  }
+  return block;
+}
+
+/// Where the armed block ends, in CSS pixels from the top of the page, for a viewport @p width
+/// wide, fitted as the page's script fits it. @p caption_line receives the height of one line of
+/// caption text at that fit.
+double armed_block_bottom_px(
+  const UiModel & model, bool with_topic_line, double width, double * caption_line = nullptr)
+{
+  const qar_ui_model::ViewportFit fit =
+    qar_ui_model::fit_page_to_viewport(model, qar_ui_model::ArTheme::dark(), width);
+  const UiModel block = armed_block_page(model, with_topic_line);
+  // measure_page counts the panel padding on both sides; the bottom edge has only the top one.
+  const double bottom =
+    qar_ui_model::measure_page(block, fit.theme, 1).height_px - fit.theme.padding_px;
+  if (caption_line != nullptr) {
+    *caption_line = fit.theme.small_font_px * qar_ui_model::kPageLineHeight;
+  }
+  return bottom;
+}
+
+TEST(ArControlPageModel, TheArmedPickBlockFitsTheFirstScreen)
+{
+  const UiModel model = make_ar_control_page_model();
+  struct Viewport
+  {
+    double width;
+    double height;
+  };
+  // The design viewport, and the one that the logs show once the panel has been resized.
+  for (const Viewport viewport : {Viewport{500.0, 500.0}, Viewport{296.0, 282.0}}) {
+    double caption_line = 0.0;
+    const double bottom = armed_block_bottom_px(model, false, viewport.width, &caption_line);
+    std::cout << "[ INFO ] armed pick block " << viewport.width << " x " << viewport.height
+              << ": ends at " << bottom << " px, one wrapped caption line is " << caption_line
+              << " px\n";
+    // For the record: the same block when the line that names a topic outside the switches is
+    // shown as well (a typed topic); it is the rarer case and not pinned.
+    std::cout << "[ INFO ]   with the topic line: "
+              << armed_block_bottom_px(model, true, viewport.width) << " px\n";
+    RecordProperty(
+      "block_bottom_px_" + std::to_string(static_cast<int>(viewport.width)),
+      static_cast<int>(bottom));
+    EXPECT_GT(bottom, 0.0);
+    EXPECT_LE(bottom, viewport.height - caption_line)
+      << "mode, Confirm, Cancel, four topic switches and the hint end inside the first screen, "
+      << "with room for one wrapped caption line, at " << viewport.width << " px";
+  }
+}
+
+TEST(ArControlPageModel, TheTopicSwitchesAndTheHintAreCompact)
+{
+  const UiModel model = make_ar_control_page_model();
+  for (std::size_t slot = 0; slot < ac::kPickTopicSlots; ++slot) {
+    const Widget * toggle = model.find(ac::pick_topic_toggle_id(slot));
+    ASSERT_NE(toggle, nullptr) << slot;
+    EXPECT_TRUE(toggle->compact) << "the topic name stands inside the switch: " << slot;
+  }
+  const Widget * hint = model.find(ac::kIdMoreTopics);
+  ASSERT_NE(hint, nullptr);
+  EXPECT_TRUE(hint->compact) << "one line, not a readout of its own";
+  EXPECT_EQ(hint->label, "More topics on the desktop:");
+  // The line that names a topic outside the switches and every other toggle keep their layout.
+  EXPECT_FALSE(model.find(ac::kIdPickTopic)->compact);
+  EXPECT_FALSE(model.find(ac::panel_toggle_id(0))->compact);
+  EXPECT_FALSE(model.find(ac::tool_toggle_id(0))->compact);
+
+  // A switch is one touch target high, a plain one a caption row more.
+  const qar_ui_model::ArTheme theme = qar_ui_model::ArTheme::dark();
+  EXPECT_NEAR(
+    qar_ui_model::measure_widget_height(*model.find(ac::pick_topic_toggle_id(0)), theme, 1),
+    theme.touch_target_px, 1e-9);
+  EXPECT_GE(theme.touch_target_px, 64);
+  EXPECT_GT(
+    qar_ui_model::measure_widget_height(*model.find(ac::panel_toggle_id(0)), theme, 1),
+    theme.touch_target_px);
+}
+
+TEST(ArControlPageModel, TheMoreTopicsLineFollowsTheTopicSwitches)
+{
+  const UiModel model = make_ar_control_page_model();
+  // After the last topic switch and before the connection light: the pick block stays together on
+  // the first screen.
+  const std::size_t last = index_of(model, ac::pick_topic_toggle_id(ac::kPickTopicSlots - 1));
+  EXPECT_EQ(index_of(model, ac::kIdMoreTopics), last + 1);
+  EXPECT_LT(index_of(model, ac::kIdMoreTopics), index_of(model, ac::kIdConnection));
+  EXPECT_STREQ(ac::kIdMoreTopics, "cp_more_topics");
+
+  const Widget * line = model.find(ac::kIdMoreTopics);
+  ASSERT_NE(line, nullptr);
+  EXPECT_EQ(line->type, WidgetType::ValueDisplay);
+  EXPECT_EQ(line->label, "More topics on the desktop:");
+  EXPECT_EQ(line->binding, "more.topics");
+  EXPECT_EQ(line->visible_binding, "more.topics_show");
+  EXPECT_TRUE(line->action.empty()) << "it only shows";
+}
+
+TEST(ArControlPageModel, TheQtPanelSizeChoiceStandsBelowThePanelSwitches)
+{
+  const UiModel model = make_ar_control_page_model();
+  const Widget * choice = model.find(ac::kIdArCopySize);
+  ASSERT_NE(choice, nullptr);
+  EXPECT_STREQ(ac::kIdArCopySize, "cp_ar_copy_size");
+  EXPECT_EQ(choice->type, WidgetType::Choice);
+  EXPECT_TRUE(choice->editable);
+  EXPECT_EQ(choice->label, "Qt panels");
+  EXPECT_EQ(choice->binding, "settings.ar_copy_size");
+  EXPECT_EQ(choice->action, "cp.ar_copy.size");
+  EXPECT_STREQ(ac::kActionArCopySize, "cp.ar_copy.size");
+  EXPECT_TRUE(choice->visible_binding.empty()) << "the setting can be chosen at any time";
+  ASSERT_EQ(choice->choices.size(), 2u);
+  EXPECT_EQ(choice->choices[0].label, "Enlarged");
+  EXPECT_EQ(choice->choices[0].value, UiValue("enlarged"));
+  EXPECT_EQ(choice->choices[1].label, "Native");
+  EXPECT_EQ(choice->choices[1].value, UiValue("native"));
+
+  // Below the panel switches and their "more" line, above the AR tools.
+  EXPECT_LT(
+    index_of(model, ac::panel_toggle_id(ac::kPanelSlots - 1)), index_of(model, ac::kIdArCopySize));
+  EXPECT_LT(index_of(model, ac::kIdMorePanels), index_of(model, ac::kIdArCopySize));
+  EXPECT_LT(index_of(model, ac::kIdArCopySize), index_of(model, ac::kIdToolsHeader));
+  // The pick block stays first.
+  EXPECT_LT(index_of(model, ac::kIdMoreTopics), index_of(model, ac::kIdConnection));
+  EXPECT_LT(index_of(model, ac::kIdConnection), index_of(model, ac::kIdArCopySize));
 }

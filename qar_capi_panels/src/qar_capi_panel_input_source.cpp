@@ -5,6 +5,7 @@
 
 #include "qar_capi_input_internal.hpp"
 #include "qar_qar_adapter/gui_call_guard.hpp"
+#include "qar_qar_adapter/log_time.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -85,8 +86,10 @@ panel_pointer_id_for(const QarPeerId & peer, qar_ar_core::PointerHand hand)
 //  QarCApiPanelInputSource
 // ===========================================================================
 
-QarCApiPanelInputSource::QarCApiPanelInputSource(QarSession * session)
-: session_(session)
+QarCApiPanelInputSource::QarCApiPanelInputSource(
+  QarSession * session, std::shared_ptr<qar_qar_adapter::IReleaseLane> lane)
+: session_(session),
+  lane_(std::move(lane))
 {
 }
 
@@ -132,6 +135,7 @@ QarCApiPanelInputSource::subscribe_panel(
   unsubscribe_panel(panel_key);
 
   PanelSubscription subscription;
+  subscription.id = id;
   subscription.gesture_slot = qar_qar_adapter::detail::mint_slot(this);
   subscription.state_slot = qar_qar_adapter::detail::mint_slot(this);
   if (subscription.gesture_slot == nullptr || subscription.state_slot == nullptr) {
@@ -224,6 +228,18 @@ QarCApiPanelInputSource::subscribe_panel(
 void
 QarCApiPanelInputSource::unsubscribe_panel(const std::string & panel_key)
 {
+  unsubscribe_panel_impl(panel_key, /*on_lane=*/false);
+}
+
+void
+QarCApiPanelInputSource::unsubscribe_panel_on_lane(const std::string & panel_key)
+{
+  unsubscribe_panel_impl(panel_key, /*on_lane=*/true);
+}
+
+void
+QarCApiPanelInputSource::unsubscribe_panel_impl(const std::string & panel_key, bool on_lane)
+{
   PanelSubscription subscription;
   {
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -243,7 +259,7 @@ QarCApiPanelInputSource::unsubscribe_panel(const std::string & panel_key)
   // Retire OUTSIDE mutex_: retire() waits on the slot mutex, which a callback
   // may hold, and that callback wants mutex_ to bump the stats. Holding both in
   // the other order would be the deadlock.
-  retire(subscription);
+  retire(subscription, on_lane);
 }
 
 void
@@ -259,13 +275,52 @@ QarCApiPanelInputSource::unsubscribe_all()
   }
   cancel_lifecycles_for_panel(std::string());
   for (auto & entry : taken) {
-    retire(entry.second);
+    retire(entry.second, /*on_lane=*/true);
   }
 }
 
 void
-QarCApiPanelInputSource::retire(PanelSubscription & subscription)
+QarCApiPanelInputSource::retire(PanelSubscription & subscription, bool on_lane)
 {
+  if (on_lane && lane_ != nullptr) {
+    // The slots are disowned on this thread, which makes no QarOS call: once that returns, no
+    // callback is inside the owner and none ever is again, whatever the tokens do. The cancel
+    // waits for a callback that is running and the destroy for the Hub, so both are left to the
+    // thread that owns the session.
+    qar_qar_adapter::detail::retire_slot(subscription.gesture_slot);
+    qar_qar_adapter::detail::retire_slot(subscription.state_slot);
+    QarCancelToken * const gesture_token = subscription.gesture_token;
+    QarCancelToken * const state_token = subscription.state_token;
+    subscription.gesture_slot = nullptr;
+    subscription.state_slot = nullptr;
+    subscription.gesture_token = nullptr;
+    subscription.state_token = nullptr;
+    if (gesture_token == nullptr && state_token == nullptr) {
+      return;
+    }
+    const bool posted = lane_->post_release(
+      "panel-input-release", [gesture_token, state_token] {
+        if (gesture_token != nullptr) {
+          QAR_CALL(qar_cancel_token_cancel, gesture_token);
+        }
+        if (state_token != nullptr) {
+          QAR_CALL(qar_cancel_token_cancel, state_token);
+        }
+        if (gesture_token != nullptr) {
+          QAR_CALL(qar_cancel_token_handle_destroy, gesture_token);
+        }
+        if (state_token != nullptr) {
+          QAR_CALL(qar_cancel_token_handle_destroy, state_token);
+        }
+      });
+    if (!posted) {
+      std::fprintf(
+        stderr, "[qar-panel-adapter] %s panel input tokens left unreleased (the owner thread is "
+        "gone)\n", qar_qar_adapter::wall_clock_hms_ms().c_str());
+      std::fflush(stderr);
+    }
+    return;
+  }
   // Cancel first so the runtime stops delivering, then disown the slots so
   // anything already in flight finds nothing to touch. Only then destroy the
   // token handles.
@@ -601,6 +656,17 @@ QarCApiPanelInputSource::has_panel(const std::string & panel_key) const
 {
   const std::lock_guard<std::mutex> lock(mutex_);
   return panels_.find(panel_key) != panels_.end();
+}
+
+std::optional<QarGuiPanelId>
+QarCApiPanelInputSource::subscribed_id(const std::string & panel_key) const
+{
+  const std::lock_guard<std::mutex> lock(mutex_);
+  const auto it = panels_.find(panel_key);
+  if (it == panels_.end()) {
+    return std::nullopt;
+  }
+  return it->second.id;
 }
 
 PanelInputStats

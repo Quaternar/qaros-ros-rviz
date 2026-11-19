@@ -205,22 +205,32 @@ measure_widget_height(const Widget & widget, const ArTheme & theme, std::size_t 
       // No caption: the text IS the widget.
       return body;
     case WidgetType::ValueDisplay:
+      // A compact readout shares one line of small text with its caption.
+      if (widget.compact) {
+        return stack(theme, {small, help});
+      }
       // `.qar-readout { min-height: calc(var(--qar-font-value) * 1.4) }`.
       return stack(theme, {cap, value, help});
+    case WidgetType::Toggle:
+      // A compact toggle carries its caption inside the switch: no caption row.
+      if (widget.compact) {
+        return stack(theme, {touch, help});
+      }
+      return stack(theme, {cap, touch, help});
     case WidgetType::NumberInput:
     case WidgetType::TextInput:
-    case WidgetType::Toggle:
     case WidgetType::Slider:
     case WidgetType::Choice:
     case WidgetType::StatusLight:
       // One touch-target-high control under its caption. Choice chips and
-      // Toggle carry their own label inside the control, not above it, but
-      // both still render the caption row.
+      // a plain Toggle carry their own label inside the control, not above
+      // it, but both still render the caption row.
       return stack(theme, {cap, touch, help});
     case WidgetType::Button:
       // `.qar-action { min-height: calc(var(--qar-touch) + 8px) }` plus the
       // acknowledgement line, which reserves `min-height: 1.4em` at all times.
-      return stack(theme, {cap, touch + static_cast<double>(theme.gap_tight_px), small, help});
+      // `render_button` emits no caption row: the text is inside the button.
+      return stack(theme, {touch + static_cast<double>(theme.gap_tight_px), small, help});
     case WidgetType::Vector3: {
       // `render_vector3` puts the unit on its own `.qar-readout` line BELOW the
       // component boxes whenever the widget carries one. Leaving it out made

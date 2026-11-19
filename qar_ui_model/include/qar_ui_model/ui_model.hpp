@@ -144,6 +144,10 @@ struct Widget
   UiValue payload;               ///< Button: sent as the event value.
   bool confirm = false;          ///< Button: press twice within a short window.
   bool integer = false;          ///< NumberInput/Slider: integer semantics.
+  /// Toggle: the caption sits inside the switch, so the widget is one touch target high. Value:
+  /// the caption and the readout share one line of small text. Other types ignore it. The JSON
+  /// key is "compact".
+  bool compact = false;
   std::optional<std::size_t> max_length;   ///< TextInput.
   std::vector<ChoiceOption> choices;       ///< Choice.
   std::vector<TableColumn> columns;        ///< Table.
@@ -170,6 +174,7 @@ struct Widget
   Widget & with_payload(UiValue value);
   Widget & with_confirm(bool value = true);
   Widget & with_integer(bool value = true);
+  Widget & with_compact(bool value = true);
   Widget & with_rule(StatusRule rule);
   Widget & with_choice(std::string label, UiValue value);
   Widget & with_column(TableColumn column);

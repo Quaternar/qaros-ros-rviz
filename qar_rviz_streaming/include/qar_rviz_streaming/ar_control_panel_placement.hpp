@@ -47,6 +47,7 @@
 /// An instance of a peer whose stream closes is reported as hidden and, when the stream
 /// returns, as shown again.
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -166,6 +167,49 @@ private:
 
 /// "peer:" followed by the 32 lower-case hex digits of the peer id.
 std::string control_panel_instance_key(const QarPeerId & peer);
+
+/// Whether the AR panels of a peer stay shown when its 3D stream is gone. While the 3D senders
+/// are held for a restarting Hub process (@p senders_held_for_hub) the list of targets is the one
+/// of the Hub that ended, so the peer is presumed to come back with the new Hub; its panels stay.
+/// Otherwise @p target_online_and_served decides: the target is online and served.
+bool target_stays_for_panels(bool senders_held_for_hub, bool target_online_and_served);
+
+/// @brief The peers whose 3D stream is being made again while their target stays online.
+///
+/// A stream closes for two reasons: the target left, or only the 3D sender was closed (the
+/// runtime reported the stream closed, or the sender was recycled) and a new one is made at once.
+/// The AR panels of a peer stay shown in the second case: the target is still there and served.
+/// The panel lists such a peer next to the peers that have a stream, so the placement policy sees
+/// it as present and hides nothing. A peer is dropped when its stream is open again or its target
+/// has gone.
+class RemadeStreamPeers
+{
+public:
+  /// A stream of @p peer closed. @p target_stays: its target is still online and served.
+  void stream_closed(const QarPeerId & peer, bool target_stays);
+
+  /// A stream of @p peer is open.
+  void stream_opened(const QarPeerId & peer);
+
+  /// Drops every peer for which @p target_stays returns false.
+  template<typename Predicate>
+  void keep_if_target_stays(Predicate target_stays)
+  {
+    peers_.erase(
+      std::remove_if(
+        peers_.begin(), peers_.end(),
+        [&target_stays](const QarPeerId & peer) {return !target_stays(peer);}),
+      peers_.end());
+  }
+
+  /// The peers whose stream is being made again.
+  const std::vector<QarPeerId> & peers() const {return peers_;}
+
+  void clear() {peers_.clear();}
+
+private:
+  std::vector<QarPeerId> peers_;
+};
 
 }  // namespace qar_rviz_streaming
 

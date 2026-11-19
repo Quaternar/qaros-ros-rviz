@@ -16,6 +16,8 @@
 
 #include <gtest/gtest.h>
 
+#include "qar_rviz_streaming/ar_copy_scale.hpp"
+#include "qar_rviz_streaming/ar_restore_state.hpp"
 #include "qar_rviz_streaming/spatial_interaction.hpp"
 
 namespace
@@ -81,9 +83,10 @@ bool contains(const std::vector<std::string> & words, const std::string & word)
 TEST(PanelSettings, SpecTableKeysAreUniqueAndOrdered)
 {
   const std::vector<std::string> expected = {
-    "Resolution", "FPS Cap", "Hub Mode", "Hidden Displays On Connect",
-    "AR Control Panel", "AR Panel Close Mode", "AR Visibility", "Web Panel Scale", "Pick Target",
-    "Pick Frame", "Invite Device", "Invite Hostname"};
+    "Resolution", "FPS Cap", "Hub Mode", "AR Copy Size", "AR Copy Scale", "AR Copy Overall Scale",
+    "Hidden Displays On Connect", "AR Control Panel", "AR Panel Close Mode", "AR Visibility",
+    "Web Panel Scale", "Pick Target", "Pick Frame", "Pick Topics", "Invite Device",
+    "Invite Hostname"};
   std::vector<std::string> keys;
   for (const SettingSpec & spec : qar_rviz_streaming::panel_setting_specs()) {
     keys.push_back(spec.key);
@@ -95,6 +98,9 @@ TEST(PanelSettings, SpecTableKeysAreUniqueAndOrdered)
   EXPECT_STREQ(key::kResolution, "Resolution");
   EXPECT_STREQ(key::kFpsCap, "FPS Cap");
   EXPECT_STREQ(key::kHubMode, "Hub Mode");
+  EXPECT_STREQ(key::kArCopySize, "AR Copy Size");
+  EXPECT_STREQ(key::kArCopyScale, "AR Copy Scale");
+  EXPECT_STREQ(key::kArCopyOverallScale, "AR Copy Overall Scale");
   EXPECT_STREQ(key::kHiddenDisplaysOnConnect, "Hidden Displays On Connect");
   EXPECT_STREQ(key::kArControlPanel, "AR Control Panel");
   EXPECT_STREQ(key::kArPanelCloseMode, "AR Panel Close Mode");
@@ -102,17 +108,22 @@ TEST(PanelSettings, SpecTableKeysAreUniqueAndOrdered)
   EXPECT_STREQ(key::kWebPanelScale, "Web Panel Scale");
   EXPECT_STREQ(key::kPickTarget, "Pick Target");
   EXPECT_STREQ(key::kPickFrame, "Pick Frame");
+  EXPECT_STREQ(key::kPickTopics, "Pick Topics");
   EXPECT_STREQ(key::kInviteDevice, "Invite Device");
   EXPECT_STREQ(key::kInviteHostname, "Invite Hostname");
 
   // The variable of each setting that has one.
   const std::map<std::string, std::string> variables = {
     {"Hub Mode", "QAR_PANEL_HUB_MODE"},
+    {"AR Copy Size", "QAR_PANEL_AR_COPY_SIZE"},
+    {"AR Copy Scale", "QAR_PANEL_AR_COPY_SCALE"},
+    {"AR Copy Overall Scale", "QAR_PANEL_AR_COPY_OVERALL_SCALE"},
     {"Hidden Displays On Connect", "QAR_PANEL_HIDDEN_DISPLAYS"},
     {"AR Control Panel", "QAR_PANEL_AR_CONTROL"},
     {"AR Panel Close Mode", "QAR_PANEL_CLOSE_MODE"},
     {"AR Visibility", "QAR_PANEL_AR_VISIBILITY"},
-    {"Web Panel Scale", "QAR_PANEL_WEB_SCALE"}};
+    {"Web Panel Scale", "QAR_PANEL_WEB_SCALE"},
+    {"Pick Topics", "QAR_PANEL_PICK_TOPICS"}};
   for (const SettingSpec & spec : qar_rviz_streaming::panel_setting_specs()) {
     const auto variable = variables.find(spec.key);
     if (variable == variables.end()) {
@@ -183,9 +194,11 @@ TEST(PanelSettings, SavedValueWinsOverDefault)
 {
   const SettingsText saved = {
     {"Resolution", "1920x1080"}, {"FPS Cap", "90"}, {"Hub Mode", "local"},
+    {"AR Copy Size", "native"}, {"AR Copy Scale", "1.50"}, {"AR Copy Overall Scale", "1.75"},
     {"Hidden Displays On Connect", "false"}, {"AR Control Panel", "false"},
     {"AR Panel Close Mode", "notice"}, {"AR Visibility", "close"}, {"Web Panel Scale", "1.50"},
-    {"Pick Target", "ground_plane"}, {"Pick Frame", "odom"}, {"Invite Device", "headset"},
+    {"Pick Target", "ground_plane"}, {"Pick Frame", "odom"},
+    {"Pick Topics", "point=/my_point;nav_goal=/my_goal"}, {"Invite Device", "headset"},
     {"Invite Hostname", "HOLO-1"}};
   std::vector<std::string> warnings;
   const ResolvedSettings settings = resolve(saved, env_of({}), &warnings);
@@ -369,7 +382,7 @@ TEST(PanelSettings, AChoiceMayTakeMoreWordsFromTheEnvironmentThanFromTheControls
 TEST(PanelSettings, InvalidSavedValueFallsBackWithWarning)
 {
   const SettingsText config = {
-    {"Settings Version", "4"}, {"Resolution", "800x600"}, {"FPS Cap", "50"},
+    {"Settings Version", "5"}, {"Resolution", "800x600"}, {"FPS Cap", "50"},
     {"Hub Mode", "sideways"}, {"Hidden Displays On Connect", "maybe"}, {"Web Panel Scale", "0.1"},
     {"Pick Frame", "bad frame"}, {"Invite Device", "phone"}, {"Pick Target", "sky"},
     {"AR Visibility", "minimise"}, {"AR Panel Close Mode", "keep"}, {"AR Control Panel", "2"},
@@ -425,17 +438,17 @@ TEST(PanelSettings, UnknownKeysAreReported)
 
 TEST(PanelSettings, NewerVersionReadsKnownKeys)
 {
-  // Version 4 is the version the plugin writes, so the first newer one is 5.
+  // Version 5 is the version the plugin writes, so the first newer one is 6.
   const SettingsText config = {
-    {"Settings Version", "5"}, {"Resolution", "1920x1080"}, {"Future Key", "x"}};
+    {"Settings Version", "6"}, {"Resolution", "1920x1080"}, {"Future Key", "x"}};
   SettingsLoadReport report;
   const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(config, report);
-  EXPECT_EQ(report.version, 5);
+  EXPECT_EQ(report.version, 6);
   EXPECT_EQ(parsed, (SettingsText{{"Resolution", "1920x1080"}}));
   ASSERT_EQ(report.warnings.size(), 1u);
   EXPECT_EQ(
     report.warnings[0],
-    "settings were written by a newer plugin (version 5); unknown keys are ignored");
+    "settings were written by a newer plugin (version 6); unknown keys are ignored");
   EXPECT_TRUE(report.migrated.empty());
   EXPECT_EQ(report.unknown_keys, (std::vector<std::string>{"Future Key"}));
 }
@@ -444,10 +457,10 @@ TEST(PanelSettings, CurrentVersionIsNotNewer)
 {
   // A configuration that this plugin saved reads without a word of warning.
   const SettingsText config = {
-    {"Settings Version", "4"}, {"Resolution", "1920x1080"}, {"Future Key", "x"}};
+    {"Settings Version", "5"}, {"Resolution", "1920x1080"}, {"Future Key", "x"}};
   SettingsLoadReport report;
   const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(config, report);
-  EXPECT_EQ(report.version, 4);
+  EXPECT_EQ(report.version, 5);
   EXPECT_EQ(parsed, (SettingsText{{"Resolution", "1920x1080"}}));
   EXPECT_TRUE(report.warnings.empty());
   EXPECT_TRUE(report.migrated.empty());
@@ -534,8 +547,8 @@ TEST(PanelSettings, SaveWritesTheVersionKey)
 {
   const SettingsText written = qar_rviz_streaming::settings_to_save({}, resolve({}, env_of({})));
   ASSERT_EQ(written.count(qar_rviz_streaming::kSettingsVersionKey), 1u);
-  EXPECT_EQ(written.at(qar_rviz_streaming::kSettingsVersionKey), "4");
-  EXPECT_EQ(qar_rviz_streaming::kPanelSettingsVersion, 4);
+  EXPECT_EQ(written.at(qar_rviz_streaming::kSettingsVersionKey), "5");
+  EXPECT_EQ(qar_rviz_streaming::kPanelSettingsVersion, 5);
   EXPECT_STREQ(qar_rviz_streaming::kSettingsVersionKey, "Settings Version");
   EXPECT_EQ(written.size(), qar_rviz_streaming::panel_setting_specs().size() + 1);
 
@@ -564,6 +577,36 @@ TEST(PanelSettings, SaveKeepsTheOperatorsValueWhileTheEnvironmentWins)
     qar_rviz_streaming::settings_to_save(user, with_variable).at("AR Visibility"), "close");
   const ResolvedSettings without_variable = resolve(user, env_of({}));
   EXPECT_EQ(without_variable.at(key::kArVisibility).value, "close");
+}
+
+TEST(PanelSettings, AnEditIsNotKeptWhileTheEnvironmentDecidesTheKey)
+{
+  // The rule the panel applies before it stores an operator edit: the choice of a pick topic
+  // made while QAR_PANEL_PICK_TOPICS decides must never become the operator's own value.
+  const ResolvedSettings with_variable =
+    resolve({}, env_of({{"QAR_PANEL_PICK_TOPICS", "point=/a,/b"}}));
+  ASSERT_EQ(with_variable.at(key::kPickTopics).source, SettingSource::Environment);
+  EXPECT_FALSE(qar_rviz_streaming::setting_edit_is_kept(with_variable, key::kPickTopics));
+  // Other keys are not decided by that variable.
+  EXPECT_TRUE(qar_rviz_streaming::setting_edit_is_kept(with_variable, key::kPickFrame));
+
+  // The panel's path: an edit is stored only when it is kept, so the file never gets the value.
+  SettingsText user;
+  if (qar_rviz_streaming::setting_edit_is_kept(with_variable, key::kPickTopics)) {
+    user[key::kPickTopics] = "point=/b,/a";
+  }
+  EXPECT_EQ(user.count(key::kPickTopics), 0u);
+  EXPECT_EQ(qar_rviz_streaming::settings_to_save(user, with_variable).count(key::kPickTopics), 0u);
+
+  // Without the variable, or with one that is rejected, the edit is kept and is written.
+  const ResolvedSettings without_variable = resolve({}, env_of({}));
+  EXPECT_TRUE(qar_rviz_streaming::setting_edit_is_kept(without_variable, key::kPickTopics));
+  const ResolvedSettings rejected =
+    resolve({}, env_of({{"QAR_PANEL_PICK_TOPICS", "point=/a b"}}));
+  EXPECT_NE(rejected.at(key::kPickTopics).source, SettingSource::Environment);
+  EXPECT_TRUE(qar_rviz_streaming::setting_edit_is_kept(rejected, key::kPickTopics));
+  // A key that is not in the table is not decided by any variable.
+  EXPECT_TRUE(qar_rviz_streaming::setting_edit_is_kept(without_variable, "No Such Key"));
 }
 
 TEST(PanelSettings, NeverPersistedKeysAreAbsent)
@@ -845,16 +888,16 @@ TEST(PanelSettings, VersionOneConfigIsMigratedToTheCurrentKeys)
   EXPECT_EQ(settings.at(key::kHubMode).source, SettingSource::Default);
   EXPECT_TRUE(qar_rviz_streaming::wants_default_dock_size(report));
 
-  // Saving it writes version 4 and the Hub key with its default; loading that asks no more and
+  // Saving it writes version 5 and the Hub key with its default; loading that asks no more and
   // changes nothing.
   const SettingsText saved = qar_rviz_streaming::settings_to_save(parsed, settings);
-  EXPECT_EQ(saved.at("Settings Version"), "4");
+  EXPECT_EQ(saved.at("Settings Version"), "5");
   EXPECT_EQ(saved.count("Peer Admission"), 0u);
   EXPECT_EQ(saved.at("Hub Mode"), "auto");
   EXPECT_EQ(saved.at("Invite Device"), "headset");
   SettingsLoadReport again;
   const SettingsText reread = qar_rviz_streaming::parse_saved_settings(saved, again);
-  EXPECT_EQ(again.version, 4);
+  EXPECT_EQ(again.version, 5);
   EXPECT_TRUE(again.warnings.empty());
   EXPECT_TRUE(again.migrated.empty());
   EXPECT_TRUE(again.unknown_keys.empty());
@@ -929,11 +972,11 @@ TEST(PanelSettings, VersionThreeConfigLosesThePairingWithAnotherPc)
 
 TEST(PanelSettings, CurrentVersionIsNotMigrated)
 {
-  // From version 4 on, a Peer Admission or Hub Host key is an unknown key and a removed word is
+  // From version 5 on, a Peer Admission or Hub Host key is an unknown key and a removed word is
   // a rejected value: the migration reads only what older plugins wrote.
   SettingsLoadReport report;
   const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(
-    {{"Settings Version", "4"}, {"Peer Admission", "new"}, {"Invite Device", "quest"},
+    {{"Settings Version", "5"}, {"Peer Admission", "new"}, {"Invite Device", "quest"},
       {"Hub Mode", "remote"}, {"Hub Host", "hub"}}, report);
   EXPECT_TRUE(parsed.empty());
   EXPECT_TRUE(report.migrated.empty());
@@ -1000,7 +1043,8 @@ TEST(PanelSettings, DefaultDockSizeIsWantedBelowVersionTwo)
     {"version 2, no other key", {{"Settings Version", "2"}}, 2, false},
     {"version 3", {{"Settings Version", "3"}, {"FPS Cap", "30"}}, 3, false},
     {"version 4", {{"Settings Version", "4"}, {"FPS Cap", "30"}}, 4, false},
-    {"version 5, newer", {{"Settings Version", "5"}, {"FPS Cap", "30"}}, 5, false},
+    {"version 5", {{"Settings Version", "5"}, {"FPS Cap", "30"}}, 5, false},
+    {"version 6, newer", {{"Settings Version", "6"}, {"FPS Cap", "30"}}, 6, false},
     {"version 99", {{"Settings Version", "99"}}, 99, false},
     {"version with white space", {{"Settings Version", " 2 "}}, 2, false},
   };
@@ -1025,5 +1069,571 @@ TEST(PanelSettings, WhatIsSavedNeverAsksForTheDefaultDockSizeAgain)
     qar_rviz_streaming::parse_saved_settings(saved, report);
     EXPECT_EQ(report.version, qar_rviz_streaming::kPanelSettingsVersion);
     EXPECT_FALSE(qar_rviz_streaming::wants_default_dock_size(report));
+  }
+}
+
+// --- Version 5: the AR copy keys, the pick topics and the AR state -----------------------------
+
+TEST(PanelSettings, Version5HasTheArCopyKeysWithDefaults)
+{
+  EXPECT_EQ(qar_rviz_streaming::kPanelSettingsVersion, 5);
+  const SettingSpec & size = spec_of(key::kArCopySize);
+  EXPECT_EQ(size.kind, SettingKind::Choice);
+  EXPECT_EQ(std::string(size.default_value), "enlarged");
+  EXPECT_EQ(size.choices, (std::vector<std::string>{"enlarged", "native"}));
+  const SettingSpec & factor = spec_of(key::kArCopyScale);
+  EXPECT_EQ(factor.kind, SettingKind::Double);
+  EXPECT_EQ(factor.decimals, 2);
+  EXPECT_DOUBLE_EQ(factor.min, qar_rviz_streaming::kArCopyScaleMin);
+  EXPECT_DOUBLE_EQ(factor.max, qar_rviz_streaming::kArCopyScaleMax);
+
+  // Nothing saved and nothing in the environment: both keys are in force with their defaults.
+  const ResolvedSettings settings = resolve({}, env_of({}));
+  EXPECT_EQ(settings.at(key::kArCopySize).value, "enlarged");
+  EXPECT_EQ(settings.at(key::kArCopySize).source, SettingSource::Default);
+  EXPECT_EQ(settings.at(key::kArCopyScale).value, factor.default_value);
+  EXPECT_DOUBLE_EQ(
+    qar_rviz_streaming::setting_double(settings, key::kArCopyScale),
+    qar_rviz_streaming::kArCopyScaleDefault);
+
+  // A saved choice and factor are kept and written back.
+  SettingsLoadReport report;
+  const SettingsText read = qar_rviz_streaming::parse_saved_settings(
+    {{"Settings Version", "4"}, {key::kArCopySize, "Native"}, {key::kArCopyScale, "1.5"}}, report);
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_EQ(read.at(key::kArCopySize), "native");
+  EXPECT_EQ(read.at(key::kArCopyScale), "1.50");
+  const SettingsText written =
+    qar_rviz_streaming::settings_to_save(read, resolve(read, env_of({})));
+  EXPECT_EQ(written.at(key::kArCopySize), "native");
+  EXPECT_EQ(written.at(key::kArCopyScale), "1.50");
+}
+
+TEST(PanelSettings, AnArCopyScaleOutsideTheRangeIsRefused)
+{
+  EXPECT_EQ(canonical(key::kArCopyScale, "1"), "1.00");
+  EXPECT_EQ(canonical(key::kArCopyScale, "3"), "3.00");
+  EXPECT_EQ(canonical(key::kArCopyScale, "1.75"), "1.75");
+  EXPECT_EQ(canonical(key::kArCopyScale, "0.99"), "!not a number from 1.00 to 3.00");
+  EXPECT_EQ(canonical(key::kArCopyScale, "3.01"), "!not a number from 1.00 to 3.00");
+  EXPECT_EQ(canonical(key::kArCopyScale, "-1"), "!not a number from 1.00 to 3.00");
+  EXPECT_EQ(canonical(key::kArCopyScale, "two"), "!not a number from 1.00 to 3.00");
+  EXPECT_EQ(canonical(key::kArCopySize, "huge"), "!not one of enlarged|native");
+
+  // A saved value outside the range is reported and the default applies.
+  SettingsLoadReport report;
+  const SettingsText read = qar_rviz_streaming::parse_saved_settings(
+    {{"Settings Version", "4"}, {key::kArCopyScale, "9"}}, report);
+  EXPECT_EQ(read.count(key::kArCopyScale), 0u);
+  ASSERT_EQ(report.warnings.size(), 1u);
+  EXPECT_NE(report.warnings[0].find("AR Copy Scale '9'"), std::string::npos);
+  EXPECT_EQ(resolve(read, env_of({})).at(key::kArCopyScale).source, SettingSource::Default);
+}
+
+TEST(PanelSettings, TheArCopySizeVariableWins)
+{
+  const SettingsText saved = {{key::kArCopySize, "enlarged"}, {key::kArCopyScale, "1.50"}};
+  std::vector<std::string> warnings;
+  const ResolvedSettings settings = resolve(
+    saved, env_of({{"QAR_PANEL_AR_COPY_SIZE", "Native"}, {"QAR_PANEL_AR_COPY_SCALE", "2.5"}}),
+    &warnings);
+  EXPECT_TRUE(warnings.empty());
+  EXPECT_EQ(settings.at(key::kArCopySize).value, "native");
+  EXPECT_EQ(settings.at(key::kArCopySize).source, SettingSource::Environment);
+  EXPECT_EQ(settings.at(key::kArCopySize).env_name, "QAR_PANEL_AR_COPY_SIZE");
+  EXPECT_EQ(settings.at(key::kArCopyScale).value, "2.50");
+  EXPECT_EQ(settings.at(key::kArCopyScale).source, SettingSource::Environment);
+
+  // The variable is never written back: the operator's own value comes back without it.
+  const SettingsText written = qar_rviz_streaming::settings_to_save(saved, settings);
+  EXPECT_EQ(written.at(key::kArCopySize), "enlarged");
+  EXPECT_EQ(written.at(key::kArCopyScale), "1.50");
+
+  // A variable that is not acceptable is reported and the saved value applies.
+  warnings.clear();
+  const ResolvedSettings refused = resolve(
+    saved, env_of({{"QAR_PANEL_AR_COPY_SIZE", "huge"}, {"QAR_PANEL_AR_COPY_SCALE", "7"}}),
+    &warnings);
+  EXPECT_EQ(warnings.size(), 2u);
+  EXPECT_EQ(refused.at(key::kArCopySize).value, "enlarged");
+  EXPECT_EQ(refused.at(key::kArCopySize).source, SettingSource::Saved);
+  EXPECT_EQ(refused.at(key::kArCopyScale).value, "1.50");
+}
+
+TEST(PanelSettings, TheOverallScaleHasItsDefaultAndRange)
+{
+  const SettingSpec & overall = spec_of(key::kArCopyOverallScale);
+  EXPECT_EQ(overall.kind, SettingKind::Double);
+  EXPECT_EQ(overall.decimals, 2);
+  EXPECT_EQ(std::string(overall.default_value), "1.50");
+  EXPECT_DOUBLE_EQ(overall.min, qar_rviz_streaming::kArCopyOverallScaleMin);
+  EXPECT_DOUBLE_EQ(overall.max, qar_rviz_streaming::kArCopyOverallScaleMax);
+  EXPECT_DOUBLE_EQ(overall.min, 1.0);
+  EXPECT_DOUBLE_EQ(overall.max, 2.0);
+  ASSERT_NE(overall.env, nullptr);
+  EXPECT_EQ(std::string(overall.env), "QAR_PANEL_AR_COPY_OVERALL_SCALE");
+
+  const ResolvedSettings settings = resolve({}, env_of({}));
+  EXPECT_EQ(settings.at(key::kArCopyOverallScale).value, "1.50");
+  EXPECT_EQ(settings.at(key::kArCopyOverallScale).source, SettingSource::Default);
+  EXPECT_DOUBLE_EQ(
+    qar_rviz_streaming::setting_double(settings, key::kArCopyOverallScale),
+    qar_rviz_streaming::kArCopyOverallScaleDefault);
+
+  EXPECT_EQ(canonical(key::kArCopyOverallScale, "1"), "1.00");
+  EXPECT_EQ(canonical(key::kArCopyOverallScale, "2"), "2.00");
+  EXPECT_EQ(canonical(key::kArCopyOverallScale, "1.25"), "1.25");
+  EXPECT_EQ(canonical(key::kArCopyOverallScale, "0.99"), "!not a number from 1.00 to 2.00");
+  EXPECT_EQ(canonical(key::kArCopyOverallScale, "2.01"), "!not a number from 1.00 to 2.00");
+  EXPECT_EQ(canonical(key::kArCopyOverallScale, "two"), "!not a number from 1.00 to 2.00");
+
+  // A saved value outside the range is reported and the default applies; a value inside is kept
+  // and written back.
+  SettingsLoadReport report;
+  const SettingsText bad = qar_rviz_streaming::parse_saved_settings(
+    {{"Settings Version", "4"}, {key::kArCopyOverallScale, "3"}}, report);
+  EXPECT_EQ(bad.count(key::kArCopyOverallScale), 0u);
+  ASSERT_EQ(report.warnings.size(), 1u);
+  EXPECT_NE(report.warnings[0].find("AR Copy Overall Scale '3'"), std::string::npos);
+  SettingsLoadReport good_report;
+  const SettingsText good = qar_rviz_streaming::parse_saved_settings(
+    {{"Settings Version", "4"}, {key::kArCopyOverallScale, "1.2"}}, good_report);
+  EXPECT_TRUE(good_report.warnings.empty());
+  EXPECT_EQ(good.at(key::kArCopyOverallScale), "1.20");
+  EXPECT_EQ(
+    qar_rviz_streaming::settings_to_save(good, resolve(good, env_of({})))
+    .at(key::kArCopyOverallScale), "1.20");
+}
+
+TEST(PanelSettings, TheOverallScaleVariableWins)
+{
+  const SettingsText saved = {{key::kArCopyOverallScale, "1.20"}};
+  std::vector<std::string> warnings;
+  const ResolvedSettings settings = resolve(
+    saved, env_of({{"QAR_PANEL_AR_COPY_OVERALL_SCALE", " 1.8 "}}), &warnings);
+  EXPECT_TRUE(warnings.empty());
+  EXPECT_EQ(settings.at(key::kArCopyOverallScale).value, "1.80");
+  EXPECT_EQ(settings.at(key::kArCopyOverallScale).source, SettingSource::Environment);
+  EXPECT_EQ(
+    settings.at(key::kArCopyOverallScale).env_name, "QAR_PANEL_AR_COPY_OVERALL_SCALE");
+
+  // The variable is never written back: the operator's own value comes back without it.
+  EXPECT_EQ(
+    qar_rviz_streaming::settings_to_save(saved, settings).at(key::kArCopyOverallScale), "1.20");
+
+  // A variable outside the range is reported and the saved value applies.
+  warnings.clear();
+  const ResolvedSettings refused = resolve(
+    saved, env_of({{"QAR_PANEL_AR_COPY_OVERALL_SCALE", "2.5"}}), &warnings);
+  EXPECT_EQ(warnings.size(), 1u);
+  EXPECT_EQ(refused.at(key::kArCopyOverallScale).value, "1.20");
+  EXPECT_EQ(refused.at(key::kArCopyOverallScale).source, SettingSource::Saved);
+
+  // An empty variable is the same as unset.
+  warnings.clear();
+  const ResolvedSettings empty = resolve(
+    saved, env_of({{"QAR_PANEL_AR_COPY_OVERALL_SCALE", ""}}), &warnings);
+  EXPECT_TRUE(warnings.empty());
+  EXPECT_EQ(empty.at(key::kArCopyOverallScale).source, SettingSource::Saved);
+}
+
+TEST(PanelSettings, AVersion4ConfigThatSaysEnlargedReadsUnchanged)
+{
+  // The word keeps its spelling and its place; a version-4 configuration that says enlarged has
+  // no overall scale and reads without a warning or a migration sentence.
+  const SettingsText config = {
+    {"Settings Version", "4"}, {"Class", "x"}, {"Name", "y"}, {"AR Copy Size", "enlarged"},
+    {"AR Copy Scale", "2.00"}, {"Resolution", "1920x1080"}};
+  SettingsLoadReport report;
+  const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(config, report);
+  EXPECT_EQ(report.version, 4);
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_TRUE(report.migrated.empty());
+  EXPECT_TRUE(report.unknown_keys.empty());
+  EXPECT_EQ(parsed.at(key::kArCopySize), "enlarged");
+  EXPECT_EQ(parsed.at(key::kArCopyScale), "2.00");
+  EXPECT_EQ(parsed.count(key::kArCopyOverallScale), 0u);
+  const ResolvedSettings settings = resolve(parsed, env_of({}));
+  EXPECT_EQ(settings.at(key::kArCopySize).value, "enlarged");
+  EXPECT_EQ(settings.at(key::kArCopySize).source, SettingSource::Saved);
+  EXPECT_EQ(settings.at(key::kArCopyScale).value, "2.00");
+  EXPECT_EQ(settings.at(key::kArCopyOverallScale).value, "1.50");
+  EXPECT_EQ(settings.at(key::kArCopyOverallScale).source, SettingSource::Default);
+  const SettingsText saved = qar_rviz_streaming::settings_to_save(parsed, settings);
+  EXPECT_EQ(saved.at("Settings Version"), "5");
+  EXPECT_EQ(saved.at(key::kArCopySize), "enlarged");
+  EXPECT_EQ(saved.at(key::kArCopyOverallScale), "1.50");
+}
+
+TEST(PanelSettings, AVersion3ConfigReadsWithoutWarnings)
+{
+  // A configuration of the previous version has none of the AR copy keys: it reads without a
+  // warning or a migration sentence, and both keys are in force with their defaults.
+  const SettingsText config = {
+    {"Settings Version", "3"}, {"Class", "x"}, {"Name", "y"}, {"Resolution", "1920x1080"},
+    {"FPS Cap", "30"}, {"AR Panel Close Mode", "notice"}, {"Web Panel Scale", "1.50"}};
+  SettingsLoadReport report;
+  const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(config, report);
+  EXPECT_EQ(report.version, 3);
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_TRUE(report.migrated.empty());
+  EXPECT_TRUE(report.unknown_keys.empty());
+  EXPECT_EQ(parsed.count(key::kArCopySize), 0u);
+  EXPECT_EQ(parsed.count(key::kArCopyScale), 0u);
+  const ResolvedSettings settings = resolve(parsed, env_of({}));
+  EXPECT_EQ(settings.at(key::kArCopySize).value, "enlarged");
+  EXPECT_EQ(settings.at(key::kArCopySize).source, SettingSource::Default);
+  EXPECT_EQ(settings.at(key::kArCopyScale).source, SettingSource::Default);
+  EXPECT_EQ(settings.at(key::kWebPanelScale).value, "1.50");
+
+  // Saving it writes version 5 with both keys.
+  const SettingsText saved = qar_rviz_streaming::settings_to_save(parsed, settings);
+  EXPECT_EQ(saved.at("Settings Version"), "5");
+  EXPECT_EQ(saved.count(key::kArCopySize), 1u);
+  EXPECT_EQ(saved.count(key::kArCopyScale), 1u);
+}
+
+TEST(PanelSettings, PickTopicsAcceptsTheListSyntax)
+{
+  EXPECT_EQ(qar_rviz_streaming::find_setting_spec(key::kPickTopics)->default_value[0], '\0');
+  EXPECT_EQ(canonical("Pick Topics", ""), "") << "empty = the conventional topics";
+  for (const char * text : {"point=/a", "point=/a,/b;nav_goal=/c;initial_pose=/d;area=/e",
+      "nav_goal=/my_ns/goal_2"})
+  {
+    EXPECT_EQ(canonical("Pick Topics", text), text) << text;
+  }
+  EXPECT_EQ(canonical("Pick Topics", std::string(1000, 'a')), std::string(1000, 'a'));
+  EXPECT_EQ(canonical("Pick Topics", "  point=/a \t"), "point=/a");
+
+  // The text is read back by parse_pick_topics: what the setting accepts is its input.
+  const SettingsText saved = {{key::kPickTopics, "point=/a;nav_goal=/c"}};
+  std::vector<std::string> warnings;
+  const ResolvedSettings settings = resolve(saved, env_of({}), &warnings);
+  EXPECT_TRUE(warnings.empty());
+  EXPECT_EQ(settings.at(key::kPickTopics).value, "point=/a;nav_goal=/c");
+  EXPECT_EQ(settings.at(key::kPickTopics).source, SettingSource::Saved);
+  const SettingsText written = qar_rviz_streaming::settings_to_save(saved, settings);
+  EXPECT_EQ(written.at(key::kPickTopics), "point=/a;nav_goal=/c");
+
+  // The variable wins and is never written back.
+  warnings.clear();
+  const ResolvedSettings env = resolve(
+    saved, env_of({{"QAR_PANEL_PICK_TOPICS", "point=/z"}}), &warnings);
+  EXPECT_TRUE(warnings.empty());
+  EXPECT_EQ(env.at(key::kPickTopics).value, "point=/z");
+  EXPECT_EQ(env.at(key::kPickTopics).source, SettingSource::Environment);
+  EXPECT_EQ(qar_rviz_streaming::settings_to_save(saved, env).at(key::kPickTopics),
+    "point=/a;nav_goal=/c");
+}
+
+TEST(PanelSettings, PickTopicsRefusesOtherCharacters)
+{
+  const std::string reason = "!not made of letters, digits and /_=,;";
+  for (const char * text : {"point=/a b", "point=/a-b", "point=/a.b", "point=/a:b", "point=/a!",
+      "point=/caf\xc3\xa9", "point=/a\tb", "point=\"/a\"", "point=/a|/b"})
+  {
+    EXPECT_EQ(canonical("Pick Topics", text), reason) << text;
+  }
+  EXPECT_EQ(canonical("Pick Topics", std::string("point=/a\0b", 10)), reason);
+  EXPECT_EQ(canonical("Pick Topics", std::string(1001, 'a')), "!longer than 1000 characters");
+  // A refused saved value is reported and the default applies.
+  std::vector<std::string> warnings;
+  const ResolvedSettings settings =
+    resolve({{key::kPickTopics, "point=/a b"}}, env_of({}), &warnings);
+  EXPECT_EQ(warnings.size(), 1u);
+  EXPECT_EQ(settings.at(key::kPickTopics).value, "");
+  EXPECT_EQ(settings.at(key::kPickTopics).source, SettingSource::Default);
+}
+
+TEST(PanelSettings, ArStateIsAKnownKey)
+{
+  EXPECT_STREQ(qar_rviz_streaming::kArStateKey, "AR State");
+  // The record of the AR state has its own place in the configuration: whatever text reaches the
+  // settings unit under its key is not an unknown key and not a setting.
+  SettingsLoadReport report;
+  const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(
+    {{"Settings Version", "5"}, {"Resolution", "1920x1080"}, {"AR State", ""}}, report);
+  EXPECT_TRUE(report.unknown_keys.empty());
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_EQ(parsed, (SettingsText{{"Resolution", "1920x1080"}}));
+  EXPECT_EQ(qar_rviz_streaming::find_setting_spec("AR State"), nullptr);
+
+  // A key that is not known is still reported next to it.
+  qar_rviz_streaming::parse_saved_settings(
+    {{"Settings Version", "5"}, {"AR State", ""}, {"Nonsense", "1"}}, report);
+  EXPECT_EQ(report.unknown_keys, (std::vector<std::string>{"Nonsense"}));
+}
+
+TEST(PanelSettings, Version5SavesSixteenKeys)
+{
+  EXPECT_EQ(qar_rviz_streaming::kPanelSettingsVersion, 5);
+  const SettingsText written = qar_rviz_streaming::settings_to_save({}, resolve({}, env_of({})));
+  // The 16 settings and the version key; the AR state is written by the panel, not here.
+  EXPECT_EQ(qar_rviz_streaming::panel_setting_specs().size(), 16u);
+  EXPECT_EQ(written.size(), 17u);
+  EXPECT_EQ(written.count("AR State"), 0u);
+  EXPECT_EQ(written.count("Hub Host"), 0u);
+  EXPECT_EQ(written.count("Hub Port"), 0u);
+  for (const char * name :
+    {"Resolution", "FPS Cap", "Hub Mode", "AR Copy Size", "AR Copy Scale", "AR Copy Overall Scale",
+      "Hidden Displays On Connect", "AR Control Panel", "AR Panel Close Mode", "AR Visibility",
+      "Web Panel Scale", "Pick Target", "Pick Frame", "Pick Topics", "Invite Device",
+      "Invite Hostname"})
+  {
+    EXPECT_EQ(written.count(name), 1u) << name;
+  }
+}
+
+TEST(PanelSettings, NeverSavedValuesAreNotInTheSpecs)
+{
+  // The pick mode, the confirmation of a pick, the priming of the next frame, the advanced
+  // options and the selected tab are choices of the moment: no setting holds them, so nothing
+  // writes them and nothing reads them back.
+  for (const char * never :
+    {"Pick Mode", "Publish without confirming", "Auto Confirm", "Prime next frame",
+      "Prime Next Frame", "Show advanced options", "Show Advanced Options", "Selected Tab",
+      "Current Tab", "Simulated Peers"})
+  {
+    EXPECT_EQ(qar_rviz_streaming::find_setting_spec(never), nullptr) << never;
+  }
+  const SettingsText written = qar_rviz_streaming::settings_to_save(
+    {{"Pick Mode", "point"}, {"Selected Tab", "2"}}, resolve({}, env_of({})));
+  EXPECT_EQ(written.count("Pick Mode"), 0u);
+  EXPECT_EQ(written.count("Selected Tab"), 0u);
+  for (const SettingSpec & spec : qar_rviz_streaming::panel_setting_specs()) {
+    const std::string key = spec.key;
+    EXPECT_TRUE(
+      key.find("Mode") == std::string::npos || key == "AR Panel Close Mode" || key == "Hub Mode")
+      << key;
+    EXPECT_TRUE(key.find("Confirm") == std::string::npos) << key;
+    EXPECT_TRUE(key.find("Prime") == std::string::npos) << key;
+    EXPECT_TRUE(key.find("advanced") == std::string::npos &&
+      key.find("Advanced") == std::string::npos) << key;
+    EXPECT_TRUE(key.find("Tab") == std::string::npos) << key;
+  }
+}
+
+TEST(PanelSettings, AVersion3PanelEntryOfAConfigFileGivesTheMigrationSentences)
+{
+  // The panel entry of a configuration file saved by a plugin of settings version 3 with a remote
+  // Hub, copied here as text: the flat "key: value" lines go to the settings unit the way the
+  // panel hands them over.
+  const std::string entry =
+    "Class: qar_rviz_streaming/QarStreamingPanel\n"
+    "Name: Qar Streaming\n"
+    "Settings Version: 3\n"
+    "Resolution: 1920x1080\n"
+    "FPS Cap: 60\n"
+    "Hidden Displays On Connect: true\n"
+    "AR Control Panel: true\n"
+    "AR Panel Close Mode: notice\n"
+    "AR Visibility: hide\n"
+    "Hub Mode: remote\n"
+    "Hub Host: hub.example.org\n"
+    "Hub Port: 19120\n"
+    "Pick Target: ground_plane\n";
+  SettingsText saved;
+  std::size_t start = 0;
+  while (start < entry.size()) {
+    const std::size_t end = entry.find('\n', start);
+    const std::string line = entry.substr(start, end - start);
+    const std::size_t colon = line.find(": ");
+    ASSERT_NE(colon, std::string::npos) << line;
+    saved[line.substr(0, colon)] = line.substr(colon + 2);
+    start = end + 1;
+  }
+  SettingsLoadReport report;
+  const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(saved, report);
+  EXPECT_EQ(report.version, 3);
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_TRUE(report.unknown_keys.empty());
+  ASSERT_EQ(report.migrated.size(), 3u);
+  EXPECT_EQ(
+    report.migrated[0],
+    "Hub Mode 'remote' (pairing with the Hub of another PC) is no longer supported by QAROS; it "
+    "is read as 'local'. To reach the Hub of another PC, make the Hub of this PC a member of it");
+  EXPECT_EQ(
+    report.migrated[1],
+    "Hub Host 'hub.example.org' has no meaning without the pairing with another PC and is not "
+    "kept");
+  EXPECT_EQ(
+    report.migrated[2],
+    "Hub Port '19120' has no meaning without the pairing with another PC and is not kept");
+  EXPECT_EQ(parsed.at("Resolution"), "1920x1080");
+  EXPECT_EQ(parsed.at("AR Panel Close Mode"), "notice");
+  EXPECT_EQ(parsed.at("Hub Mode"), "local");
+  EXPECT_EQ(parsed.count("Hub Host"), 0u);
+  EXPECT_EQ(parsed.count("Hub Port"), 0u);
+  // The old keys are replaced by defaults: no AR state, nothing to restore.
+  EXPECT_EQ(parsed.count("AR State"), 0u);
+}
+
+// --- The files of version 3, the vendor's version 4, the unshipped version 4 and version 5 ----
+
+namespace
+{
+
+/// The keys of a vendor version-4 file: the Hub Mode key, no AR copy keys, no pick topics.
+SettingsText vendor_v4_file()
+{
+  return {
+    {"Class", "qar_rviz_streaming/QarStreamingPanel"}, {"Name", "Qar Streaming"},
+    {"Settings Version", "4"}, {"Resolution", "1920x1080"}, {"FPS Cap", "30"},
+    {"Hub Mode", "local"}, {"Hidden Displays On Connect", "false"},
+    {"AR Panel Close Mode", "notice"}, {"Web Panel Scale", "1.50"}, {"Pick Target", "fixed_depth"}};
+}
+
+/// The keys of an unshipped version-4 file: the AR copy keys and the pick topics, no Hub Mode.
+SettingsText own_v4_file()
+{
+  return {
+    {"Class", "qar_rviz_streaming/QarStreamingPanel"}, {"Name", "Qar Streaming"},
+    {"Settings Version", "4"}, {"Resolution", "1920x1080"}, {"FPS Cap", "30"},
+    {"AR Copy Size", "native"}, {"AR Copy Scale", "2.00"}, {"AR Copy Overall Scale", "1.25"},
+    {"AR Panel Close Mode", "notice"}, {"Pick Topics", "point=/p;nav_goal=/g"},
+    {"AR State", ""}};
+}
+
+}  // namespace
+
+TEST(PanelSettings, AVendorVersion4FileLoadsUnchangedAndSavesVersion5)
+{
+  SettingsLoadReport report;
+  const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(vendor_v4_file(), report);
+  EXPECT_EQ(report.version, 4);
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_TRUE(report.migrated.empty());
+  EXPECT_TRUE(report.unknown_keys.empty());
+  EXPECT_EQ(parsed.at("Hub Mode"), "local");
+  EXPECT_EQ(parsed.at("Resolution"), "1920x1080");
+  EXPECT_EQ(parsed.at("FPS Cap"), "30");
+  EXPECT_EQ(parsed.at("Hidden Displays On Connect"), "false");
+  EXPECT_EQ(parsed.at("AR Panel Close Mode"), "notice");
+  EXPECT_EQ(parsed.at("Web Panel Scale"), "1.50");
+  EXPECT_EQ(parsed.at("Pick Target"), "fixed_depth");
+  EXPECT_EQ(parsed.size(), 7u) << "every value of the file, and nothing else";
+  EXPECT_FALSE(qar_rviz_streaming::wants_default_dock_size(report));
+
+  // The keys that version 5 added read as their defaults; the next save writes version 5 with
+  // every value kept.
+  const ResolvedSettings settings = resolve(parsed, env_of({}));
+  EXPECT_EQ(settings.at(key::kArCopySize).source, SettingSource::Default);
+  EXPECT_EQ(settings.at(key::kPickTopics).source, SettingSource::Default);
+  const SettingsText saved = qar_rviz_streaming::settings_to_save(parsed, settings);
+  EXPECT_EQ(saved.at("Settings Version"), "5");
+  for (const auto & entry : parsed) {
+    EXPECT_EQ(saved.at(entry.first), entry.second) << entry.first;
+  }
+  SettingsLoadReport again;
+  qar_rviz_streaming::parse_saved_settings(saved, again);
+  EXPECT_EQ(again.version, 5);
+  EXPECT_TRUE(again.warnings.empty());
+  EXPECT_TRUE(again.migrated.empty());
+  EXPECT_TRUE(again.unknown_keys.empty());
+}
+
+TEST(PanelSettings, AnUnshippedVersion4FileLoadsUnchangedAndSavesVersion5)
+{
+  SettingsLoadReport report;
+  const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(own_v4_file(), report);
+  EXPECT_EQ(report.version, 4);
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_TRUE(report.migrated.empty());
+  EXPECT_TRUE(report.unknown_keys.empty()) << "the AR State record is a known key";
+  EXPECT_EQ(parsed.at("AR Copy Size"), "native");
+  EXPECT_EQ(parsed.at("AR Copy Scale"), "2.00");
+  EXPECT_EQ(parsed.at("AR Copy Overall Scale"), "1.25");
+  EXPECT_EQ(parsed.at("Pick Topics"), "point=/p;nav_goal=/g");
+  EXPECT_EQ(parsed.at("AR Panel Close Mode"), "notice");
+  EXPECT_EQ(parsed.count("Hub Mode"), 0u);
+
+  // A missing Hub Mode reads as its default; the save writes version 5 and keeps every value.
+  const ResolvedSettings settings = resolve(parsed, env_of({}));
+  EXPECT_EQ(settings.at(key::kHubMode).value, "auto");
+  EXPECT_EQ(settings.at(key::kHubMode).source, SettingSource::Default);
+  const SettingsText saved = qar_rviz_streaming::settings_to_save(parsed, settings);
+  EXPECT_EQ(saved.at("Settings Version"), "5");
+  for (const auto & entry : parsed) {
+    EXPECT_EQ(saved.at(entry.first), entry.second) << entry.first;
+  }
+  EXPECT_EQ(saved.at("Hub Mode"), "auto");
+}
+
+TEST(PanelSettings, AVersion5FileRoundTripsWithEveryKey)
+{
+  SettingsText user = vendor_v4_file();
+  for (const auto & entry : own_v4_file()) {
+    user[entry.first] = entry.second;
+  }
+  user["Settings Version"] = "5";
+  SettingsLoadReport report;
+  const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(user, report);
+  EXPECT_EQ(report.version, 5);
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_TRUE(report.migrated.empty());
+  EXPECT_TRUE(report.unknown_keys.empty());
+  const SettingsText saved =
+    qar_rviz_streaming::settings_to_save(parsed, resolve(parsed, env_of({})));
+  EXPECT_EQ(saved.at("Settings Version"), "5");
+  for (const auto & entry : parsed) {
+    EXPECT_EQ(saved.at(entry.first), entry.second) << entry.first;
+  }
+  EXPECT_EQ(saved.at("Hub Mode"), "local");
+  EXPECT_EQ(saved.at("AR Copy Scale"), "2.00");
+  EXPECT_EQ(saved.at("Pick Topics"), "point=/p;nav_goal=/g");
+}
+
+TEST(PanelSettings, AVersion3FileWithARemoteHubLoadsAsLocal)
+{
+  SettingsLoadReport report;
+  const SettingsText parsed = qar_rviz_streaming::parse_saved_settings(
+    {{"Settings Version", "3"}, {"Resolution", "1920x1080"}, {"Hub Mode", "remote"},
+      {"Hub Host", "hub.example.org"}, {"Hub Port", "19120"}}, report);
+  EXPECT_EQ(report.version, 3);
+  EXPECT_EQ(parsed, (SettingsText{{"Resolution", "1920x1080"}, {"Hub Mode", "local"}}));
+  EXPECT_TRUE(report.warnings.empty());
+  EXPECT_TRUE(report.unknown_keys.empty());
+  EXPECT_EQ(report.migrated.size(), 3u);
+  const SettingsText saved =
+    qar_rviz_streaming::settings_to_save(parsed, resolve(parsed, env_of({})));
+  EXPECT_EQ(saved.at("Settings Version"), "5");
+  EXPECT_EQ(saved.at("Hub Mode"), "local");
+  EXPECT_EQ(saved.count("Hub Host"), 0u);
+  EXPECT_EQ(saved.count("Hub Port"), 0u);
+}
+
+TEST(PanelSettings, TheHubModeVariableIsRefusedForRemoteAndNeverWritten)
+{
+  std::vector<std::string> warnings;
+  const ResolvedSettings remote =
+    resolve({}, env_of({{"QAR_PANEL_HUB_MODE", "remote"}}), &warnings);
+  ASSERT_EQ(warnings.size(), 1u);
+  EXPECT_EQ(
+    warnings[0], "QAR_PANEL_HUB_MODE='remote' is not one of auto|local - using the default 'auto'");
+  EXPECT_EQ(remote.at(key::kHubMode).value, "auto");
+
+  // An acceptable variable decides the key and is not written; the operator's own value is.
+  const SettingsText user = {{"Hub Mode", "auto"}};
+  const ResolvedSettings local = resolve(user, env_of({{"QAR_PANEL_HUB_MODE", "local"}}));
+  EXPECT_EQ(local.at(key::kHubMode).value, "local");
+  EXPECT_EQ(local.at(key::kHubMode).source, SettingSource::Environment);
+  EXPECT_EQ(qar_rviz_streaming::settings_to_save(user, local).at("Hub Mode"), "auto");
+  EXPECT_EQ(qar_rviz_streaming::settings_to_save({}, local).count("Hub Mode"), 0u);
+}
+
+TEST(PanelSettings, TheArCopyVariablesAreNeverWritten)
+{
+  const SettingsText user = {{"AR Copy Scale", "1.50"}, {"AR Copy Overall Scale", "1.20"}};
+  const ResolvedSettings settings = resolve(
+    user, env_of({{"QAR_PANEL_AR_COPY_SCALE", "2.5"}, {"QAR_PANEL_AR_COPY_OVERALL_SCALE", "1.9"}}));
+  EXPECT_EQ(settings.at(key::kArCopyScale).value, "2.50");
+  EXPECT_EQ(settings.at(key::kArCopyScale).source, SettingSource::Environment);
+  EXPECT_EQ(settings.at(key::kArCopyOverallScale).value, "1.90");
+  const SettingsText saved = qar_rviz_streaming::settings_to_save(user, settings);
+  EXPECT_EQ(saved.at("AR Copy Scale"), "1.50");
+  EXPECT_EQ(saved.at("AR Copy Overall Scale"), "1.20");
+  for (const auto & entry : saved) {
+    EXPECT_NE(entry.second, "2.50") << entry.first;
+    EXPECT_NE(entry.second, "1.90") << entry.first;
   }
 }

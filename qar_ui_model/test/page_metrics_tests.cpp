@@ -194,6 +194,48 @@ TEST(PageMetrics, PerTypeHeightsAreOrderedLikeTheStylesheet)
   EXPECT_GE(number, static_cast<double>(theme.touch_target_px));
 }
 
+TEST(PageMetrics, AButtonHasNoCaptionRow)
+{
+  // `render_button` puts the text inside the button: the stack is the button
+  // (touch target + 8 px), the gap, and the acknowledgement line. Nothing above it.
+  const ArTheme theme;
+  const double small_line = theme.small_font_px * qar_ui_model::kPageLineHeight;
+  const double button = static_cast<double>(theme.touch_target_px + theme.gap_tight_px);
+  const double expected = button + theme.gap_tight_px + small_line;
+  EXPECT_NEAR(measure_widget_height(widgets::button("b", "Go", "act"), theme), expected, 1e-9);
+  EXPECT_NEAR(
+    measure_widget_height(widgets::button("b", "Go", "act").with_description("Help."), theme),
+    expected + theme.gap_tight_px + small_line, 1e-9);
+}
+
+TEST(PageMetrics, ACompactToggleDropsTheCaptionRow)
+{
+  const ArTheme theme;
+  const double small_line = theme.small_font_px * qar_ui_model::kPageLineHeight;
+  const double plain = measure_widget_height(widgets::toggle("t", "on", "Power"), theme);
+  const double compact =
+    measure_widget_height(widgets::toggle("t", "on", "Power").with_compact(), theme);
+  EXPECT_NEAR(plain, small_line + theme.gap_tight_px + theme.touch_target_px, 1e-9);
+  EXPECT_NEAR(compact, static_cast<double>(theme.touch_target_px), 1e-9)
+    << "a compact toggle is exactly one touch target high";
+  EXPECT_GE(compact, 64.0) << "the touch target of the default theme stays at least 64 px";
+  EXPECT_NEAR(plain - compact, small_line + theme.gap_tight_px, 1e-9);
+}
+
+TEST(PageMetrics, ACompactValueIsOneLineOfSmallText)
+{
+  const ArTheme theme;
+  const double small_line = theme.small_font_px * qar_ui_model::kPageLineHeight;
+  const Widget plain = widgets::value("v", "msg.a", "A");
+  const Widget compact = widgets::value("v", "msg.a", "A").with_compact();
+  EXPECT_NEAR(measure_widget_height(compact, theme), small_line, 1e-9);
+  EXPECT_LT(measure_widget_height(compact, theme), measure_widget_height(plain, theme));
+  // The other types ignore the flag.
+  EXPECT_NEAR(
+    measure_widget_height(widgets::number("n", "msg.a", "A").with_compact(), theme),
+    measure_widget_height(widgets::number("n", "msg.a", "A"), theme), 1e-9);
+}
+
 TEST(PageMetrics, OptionalPartsCostTheirOwnHeight)
 {
   const ArTheme theme;

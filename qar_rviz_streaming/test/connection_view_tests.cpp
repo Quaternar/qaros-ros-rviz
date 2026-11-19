@@ -3,7 +3,6 @@
 //
 // The texts and the states of the Connection tab and of the status strip (connection_view.hpp):
 // pure functions of a few facts, so every state of the join is checked here without a window.
-// The plugin joins the Hub of this PC as a local app; there is no pairing with another PC.
 
 #include "qar_rviz_streaming/connection_view.hpp"
 
@@ -89,7 +88,7 @@ TEST(ConnectionView, APausedSessionStaysConnectedAndSaysSo)
   local.target_count = 2;
   local.served_count = 2;
   local.streaming_paused = true;
-  const ConnectionView view = make_connection_view(local);
+  ConnectionView view = make_connection_view(local);
   EXPECT_EQ(
     view.state_text, "QarOS: connected (local app), streaming paused - 2 target(s), 2 served");
   EXPECT_EQ(view.identity_text, "This PC: approved local app (rviz2.exe)");
@@ -123,41 +122,38 @@ TEST(ConnectionView, ASessionBeingSetUpIsJoinedButNotYetStreaming)
 TEST(ConnectionView, CancelIsOfferedWhileTheJoinIsUnderWay)
 {
   for (const ConnectionPhase phase : {ConnectionPhase::Loading,
-      ConnectionPhase::WaitingForApproval})
+      ConnectionPhase::WaitingForApproval, ConnectionPhase::Reconnecting, ConnectionPhase::Lost})
   {
     EXPECT_TRUE(make_connection_view(input_of(phase)).cancel_enabled) << static_cast<int>(phase);
   }
   for (const ConnectionPhase phase : {ConnectionPhase::Preview, ConnectionPhase::Idle,
-      ConnectionPhase::Running, ConnectionPhase::Reconnecting, ConnectionPhase::Stopping,
-      ConnectionPhase::Failed})
+      ConnectionPhase::Running, ConnectionPhase::Stopping, ConnectionPhase::Failed})
   {
     EXPECT_FALSE(make_connection_view(input_of(phase)).cancel_enabled) << static_cast<int>(phase);
   }
 }
 
-TEST(ConnectionView, TheIdentityLineSaysWhoThisProgramIs)
+TEST(ConnectionView, TheIdentityIsThisPc)
 {
-  EXPECT_EQ(
-    make_connection_view(input_of(ConnectionPhase::Preview)).identity_text,
-    "preview (no QAROS)");
+  // Before the join, and in the preview, which has no join at all.
+  for (const ConnectionPhase phase : {ConnectionPhase::Preview, ConnectionPhase::Idle,
+      ConnectionPhase::Loading, ConnectionPhase::WaitingForApproval,
+      ConnectionPhase::Stopping, ConnectionPhase::Failed})
+  {
+    EXPECT_EQ(make_connection_view(input_of(phase)).identity_text, "This PC (not joined yet)")
+      << static_cast<int>(phase);
+  }
+  // Joined: the program the person finds in the Hub when revoking the approval.
   ConnectionInput local = input_of(ConnectionPhase::Running);
   local.program_name = "rviz2.exe";
-  EXPECT_EQ(
-    make_connection_view(local).identity_text, "This PC: approved local app (rviz2.exe)");
-  local.phase = ConnectionPhase::Reconnecting;
-  EXPECT_EQ(
-    make_connection_view(local).identity_text, "This PC: approved local app (rviz2.exe)");
-  for (const ConnectionPhase phase : {ConnectionPhase::Idle, ConnectionPhase::Loading,
-      ConnectionPhase::WaitingForApproval, ConnectionPhase::Failed})
+  for (const ConnectionPhase phase : {ConnectionPhase::Running, ConnectionPhase::Reconnecting,
+      ConnectionPhase::Lost})
   {
     local.phase = phase;
     EXPECT_EQ(
-      make_connection_view(local).identity_text,
-      "This PC: local app (rviz2.exe), approved once in the QAROS Hub") << static_cast<int>(phase);
+      make_connection_view(local).identity_text, "This PC: approved local app (rviz2.exe)")
+      << static_cast<int>(phase);
   }
-  // The tool tip of the line names the way to the Hub of another PC.
-  EXPECT_NE(
-    std::string(qar_rviz_streaming::kIdentityToolTip).find("a member of it"), std::string::npos);
 }
 
 TEST(ConnectionView, InvitesNeedASession)
@@ -173,11 +169,165 @@ TEST(ConnectionView, InvitesNeedASession)
 
   // No session: disabled, and the tool tip says what it needs.
   for (const ConnectionPhase phase : {ConnectionPhase::Preview, ConnectionPhase::Idle,
-      ConnectionPhase::Loading, ConnectionPhase::Reconnecting, ConnectionPhase::Failed})
+      ConnectionPhase::Loading, ConnectionPhase::Reconnecting, ConnectionPhase::Lost,
+      ConnectionPhase::Failed})
   {
     view = make_connection_view(input_of(phase));
     EXPECT_FALSE(view.invite_enabled) << static_cast<int>(phase);
     EXPECT_NE(view.invite_tooltip.find("needs a QarOS session"), std::string::npos)
       << static_cast<int>(phase);
   }
+}
+
+TEST(ConnectionView, ReconnectingCountsTheSilentSeconds)
+{
+  ConnectionInput input = input_of(ConnectionPhase::Reconnecting);
+  EXPECT_EQ(
+    make_connection_view(input).state_text,
+    "QarOS: Hub not reachable - waiting for it to come back");
+  input.hub_silent_s = 0;
+  EXPECT_EQ(
+    make_connection_view(input).state_text,
+    "QarOS: Hub not reachable - waiting for it to come back (0 s)");
+  input.hub_silent_s = 17;
+  EXPECT_EQ(
+    make_connection_view(input).state_text,
+    "QarOS: Hub not reachable - waiting for it to come back (17 s)");
+}
+
+TEST(ConnectionView, LostSaysWhenTheNextAttemptStarts)
+{
+  ConnectionInput input = input_of(ConnectionPhase::Lost);
+  input.auto_rejoin = true;
+  input.rejoin_attempt = 3;
+  input.rejoin_in_s = 8;
+  EXPECT_EQ(
+    make_connection_view(input).state_text,
+    "QarOS: the QAROS Hub is gone - joining it again in 8 s (attempt 3); RViz keeps working");
+  // An attempt that runs has no countdown.
+  input.rejoin_in_s = -1;
+  EXPECT_EQ(
+    make_connection_view(input).state_text,
+    "QarOS: the QAROS Hub is gone - joining it again (attempt 3); RViz keeps working");
+}
+
+TEST(ConnectionView, LostWhileReleasingSaysSo)
+{
+  ConnectionInput input = input_of(ConnectionPhase::Lost);
+  input.releasing = true;
+  input.auto_rejoin = true;
+  input.rejoin_in_s = 4;
+  EXPECT_EQ(
+    make_connection_view(input).state_text,
+    "QarOS: the QAROS Hub is gone - releasing the session ...");
+}
+
+TEST(ConnectionView, AnAutomaticAttemptSaysJoiningAgainUnlessAPromptIsOpen)
+{
+  {
+    const ConnectionPhase phase = ConnectionPhase::WaitingForApproval;
+    ConnectionInput input = input_of(phase);
+    input.auto_rejoin = true;
+    input.rejoin_attempt = 2;
+    ConnectionView view = make_connection_view(input);
+    EXPECT_EQ(view.state_text, "QarOS: joining the QAROS Hub again (attempt 2) ...");
+    EXPECT_EQ(view.cancel_text, "Stop rejoining");
+    EXPECT_TRUE(view.cancel_enabled);
+
+    // The Hub asks for Allow: the person reads the approval text with its countdown.
+    input.rejoin_prompt_open = true;
+    input.approval_seconds_left = 75;
+    view = make_connection_view(input);
+    EXPECT_NE(view.state_text.find("click Allow in the QAROS window"), std::string::npos)
+      << static_cast<int>(phase);
+    EXPECT_NE(view.state_text.find("1:15 left"), std::string::npos) << static_cast<int>(phase);
+    EXPECT_EQ(view.cancel_text, "Cancel");
+    EXPECT_TRUE(view.cancel_enabled);
+  }
+  // A join that the person started keeps today's words.
+  ConnectionInput manual = input_of(ConnectionPhase::WaitingForApproval);
+  EXPECT_EQ(
+    make_connection_view(manual).state_text,
+    "QarOS: waiting for approval in the QAROS Hub - click Allow in the QAROS window");
+  EXPECT_EQ(make_connection_view(manual).cancel_text, "Cancel");
+}
+
+TEST(ConnectionView, CancelIsJoinAgainWhileReconnectingAndStopRejoiningWhileLost)
+{
+  ConnectionView view = make_connection_view(input_of(ConnectionPhase::Reconnecting));
+  EXPECT_EQ(view.cancel_text, "Join again");
+  EXPECT_TRUE(view.cancel_enabled);
+  EXPECT_NE(view.cancel_tooltip.find("release it and join the Hub again"), std::string::npos);
+
+  for (const bool releasing : {true, false}) {
+    ConnectionInput lost = input_of(ConnectionPhase::Lost);
+    lost.releasing = releasing;
+    view = make_connection_view(lost);
+    EXPECT_EQ(view.cancel_text, "Stop rejoining") << releasing;
+    EXPECT_TRUE(view.cancel_enabled) << releasing;
+    EXPECT_NE(view.cancel_tooltip.find("Stop joining the QAROS Hub again"), std::string::npos)
+      << releasing;
+  }
+
+  // The other phases keep the plain button.
+  for (const ConnectionPhase phase : {ConnectionPhase::Idle, ConnectionPhase::Running,
+      ConnectionPhase::Loading, ConnectionPhase::Failed})
+  {
+    view = make_connection_view(input_of(phase));
+    EXPECT_EQ(view.cancel_text, "Cancel") << static_cast<int>(phase);
+    EXPECT_TRUE(view.cancel_tooltip.empty()) << static_cast<int>(phase);
+  }
+}
+
+TEST(ConnectionView, ADegradedStreamIsAddedToTheRunningText)
+{
+  ConnectionInput input = input_of(ConnectionPhase::Running);
+  input.target_count = 2;
+  input.served_count = 1;
+  const std::string plain = make_connection_view(input).state_text;
+  EXPECT_EQ(plain, "QarOS: connected (local app) - 2 target(s), 1 served");
+
+  input.degraded_text = "the receiver is reconnecting (5 s); the picture comes back by itself";
+  const ConnectionView view = make_connection_view(input);
+  EXPECT_EQ(
+    view.state_text,
+    plain + "; the receiver is reconnecting (5 s); the picture comes back by itself");
+  EXPECT_EQ(view.cancel_text, "Cancel");
+  EXPECT_FALSE(view.cancel_enabled);
+
+  // The text is for a session that runs; no other phase carries it.
+  input.phase = ConnectionPhase::Idle;
+  EXPECT_EQ(make_connection_view(input).state_text, "QarOS: not connected");
+}
+
+TEST(ConnectionView, InviteIsOffWhileLostOrReconnecting)
+{
+  for (const ConnectionPhase phase : {ConnectionPhase::Reconnecting, ConnectionPhase::Lost}) {
+    ConnectionInput input = input_of(phase);
+    input.auto_rejoin = true;
+    const ConnectionView view = make_connection_view(input);
+    EXPECT_FALSE(view.invite_enabled) << static_cast<int>(phase);
+    EXPECT_NE(view.invite_tooltip.find("needs a QarOS session"), std::string::npos)
+      << static_cast<int>(phase);
+  }
+}
+
+TEST(ConnectionView, LostReadsAsJoinedForTheIdentityLine)
+{
+  const ConnectionInput input = input_of(ConnectionPhase::Lost);
+  EXPECT_EQ(
+    make_connection_view(input).identity_text, "This PC: approved local app (rviz2.exe)");
+}
+
+TEST(ConnectionView, TheAbandonCapTextSaysRestartRviz)
+{
+  ConnectionInput input = input_of(ConnectionPhase::Failed);
+  input.failure_message =
+    "QAROS stopped answering inside a call (qar_session_get_my_spec) twice. RViz keeps working; "
+    "restart RViz to stream again.";
+  const ConnectionView view = make_connection_view(input);
+  EXPECT_EQ(view.state_text, "QarOS: " + input.failure_message);
+  EXPECT_NE(view.state_text.find("restart RViz to stream again."), std::string::npos);
+  EXPECT_EQ(view.cancel_text, "Cancel");
+  EXPECT_FALSE(view.cancel_enabled);
 }

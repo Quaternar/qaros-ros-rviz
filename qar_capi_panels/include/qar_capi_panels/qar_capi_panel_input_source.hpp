@@ -31,6 +31,7 @@
 #include <set>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,7 @@
 #include "qar_ar_core/qar_streaming_c.hpp"
 #include "qar_capi_panels/seam_c.hpp"
 #include "qar_qar_adapter/panel_state_log.hpp"
+#include "qar_qar_adapter/qar_capi_session_owner.hpp"
 #include "qar_qar_adapter/qar_capi_input_slots.hpp"
 #include "qar_qt_streaming/seam/panel_gesture_mapper.hpp"
 #include "qar_qt_streaming/seam/pointer_input.hpp"
@@ -155,7 +157,14 @@ class QarCApiPanelInputSource : public seam::IPanelInputSource
 {
 public:
   /// @param session Borrowed, owned by QarCApiSenderFactory; must outlive this.
-  explicit QarCApiPanelInputSource(QarSession * session);
+  /// @param lane The release lane of the session's owner, or null. With a lane, @ref
+  ///        unsubscribe_all (and so the destructor) and @ref unsubscribe_panel_on_lane only
+  ///        disown the callback slots on the calling thread and hand the cancel and the
+  ///        destroy of the tokens to the lane, so the thread that calls them never waits for the
+  ///        Hub. A lane that refuses has no thread left: the tokens stay as they are. Without a
+  ///        lane the tokens are cancelled and destroyed on the calling thread.
+  explicit QarCApiPanelInputSource(
+    QarSession * session, std::shared_ptr<qar_qar_adapter::IReleaseLane> lane = nullptr);
 
   /// Retires every live subscription first, so no callback can be running by
   /// the time the queue underneath it goes away.
@@ -195,7 +204,12 @@ public:
   /// so a widget cannot be left holding a press nobody will release.
   void unsubscribe_panel(const std::string & panel_key);
 
-  /// @brief Retire every subscription.
+  /// @brief @ref unsubscribe_panel for a thread that must not wait for the Hub: the slots are
+  /// disowned here, the tokens go to the lane (see the constructor). Without a lane it is the same
+  /// as @ref unsubscribe_panel.
+  void unsubscribe_panel_on_lane(const std::string & panel_key);
+
+  /// @brief Retire every subscription; the tokens go to the lane when there is one.
   void unsubscribe_all();
 
   /// @brief Append everything received since the previous call, oldest first.
@@ -240,6 +254,10 @@ public:
   /// @brief Panels currently subscribed.
   std::size_t subscription_count() const;
   bool has_panel(const std::string & panel_key) const;
+  /// @brief The id of the QarOS panel that @p panel_key is subscribed on now; empty when the key
+  /// has no subscription. A revived panel of the resize ring is another id than the one the key
+  /// was last subscribed on, which is how the sender adapter finds out it must subscribe again.
+  std::optional<QarGuiPanelId> subscribed_id(const std::string & panel_key) const;
 
   PanelInputStats stats() const;
   /// @brief The reason of the last refusal (a copy: subscribing may run on another thread).
@@ -251,6 +269,8 @@ private:
   /// its own slot, because the runtime keys a cancel to a subscription.
   struct PanelSubscription
   {
+    /// The panel the subscriptions are on.
+    QarGuiPanelId id{};
     qar_qar_adapter::detail::PointerSlot * gesture_slot = nullptr;
     /// Third subscription, and not an input one at all: panel UPDATES, watched
     /// so the library learns that the operator closed the panel in AR. It uses
@@ -318,10 +338,16 @@ private:
   /// Qt-thread half of the record lines: print and forget whatever @ref on_panel_update queued.
   void flush_runtime_records();
 
-  void retire(PanelSubscription & subscription);
+  /// Disowns the slots of @p subscription, then cancels and destroys its tokens: on this thread,
+  /// or, with @p on_lane and a lane, on the lane.
+  void retire(PanelSubscription & subscription, bool on_lane = false);
+  /// The body of @ref unsubscribe_panel and @ref unsubscribe_panel_on_lane.
+  void unsubscribe_panel_impl(const std::string & panel_key, bool on_lane);
   void set_last_error(std::string text);
 
   QarSession * session_ = nullptr;
+  /// The lane of the session's owner; null for a host without one.
+  std::shared_ptr<qar_qar_adapter::IReleaseLane> lane_;
 
   /// The seam's own queue — the single lock on the input path, reused rather
   /// than reinvented.

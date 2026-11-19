@@ -198,6 +198,51 @@ TEST(SpatialInteraction, PublishOverrideRedirectsAMode)
   EXPECT_EQ(controller.publish_config(SpatialMode::NavGoal).topic, "/goal_pose");
 }
 
+TEST(SpatialInteraction, AnOverrideTopicIsWhereTheConfirmedPickGoes)
+{
+  SpatialInteractionController controller;
+  controller.set_frame_id("odom");
+  SpatialPublishConfig other = default_publish_config(SpatialPublishTarget::Custom);
+  other.topic = "/my_point";
+  other.type_name = "geometry_msgs/msg/PointStamped";
+  controller.set_publish_override(SpatialMode::Point, other);
+  EXPECT_EQ(controller.publish_config(SpatialMode::Point).topic, "/my_point");
+  EXPECT_EQ(controller.publish_config(SpatialMode::Point).frame_id, "odom");
+  // The other modes keep their conventional topics.
+  EXPECT_EQ(controller.publish_config(SpatialMode::NavGoal).topic, "/goal_pose");
+
+  controller.set_mode(SpatialMode::Point);
+  controller.handle_pointer(pointer_at(1.0f, 2.0f, 0.0f, PointerPhase::Instant));
+  ASSERT_TRUE(controller.has_pending());
+  EXPECT_EQ(controller.pending().topic, "/my_point");
+  const qar_rviz_streaming::SpatialPublishRequest request = controller.confirm();
+  ASSERT_TRUE(request.ok) << request.error;
+  EXPECT_EQ(request.topic, "/my_point");
+  EXPECT_EQ(request.type_name, "geometry_msgs/msg/PointStamped");
+  EXPECT_EQ(at(at(request.message, "header"), "frame_id").as_string(), "odom");
+}
+
+TEST(SpatialInteraction, ClearingTheOverrideRestoresTheDefault)
+{
+  SpatialInteractionController controller;
+  SpatialPublishConfig other = default_publish_config(SpatialPublishTarget::Custom);
+  other.topic = "/my_point";
+  other.type_name = "geometry_msgs/msg/PointStamped";
+  controller.set_publish_override(SpatialMode::Point, other);
+  controller.clear_publish_override(SpatialMode::Point);
+  EXPECT_EQ(controller.publish_config(SpatialMode::Point).topic, "/clicked_point");
+  EXPECT_EQ(
+    controller.publish_config(SpatialMode::Point).type_name, "geometry_msgs/msg/PointStamped");
+
+  controller.set_mode(SpatialMode::Point);
+  controller.handle_pointer(pointer_at(1.0f, 2.0f, 0.0f, PointerPhase::Instant));
+  ASSERT_TRUE(controller.has_pending());
+  EXPECT_EQ(controller.pending().topic, "/clicked_point");
+  // Clearing an override that was never set changes nothing.
+  controller.clear_publish_override(SpatialMode::Area);
+  EXPECT_EQ(controller.publish_config(SpatialMode::Area).topic, "/qar/selected_area");
+}
+
 TEST(SpatialInteraction, AnUnbuildableTargetSurfacesAnErrorAndDoesNotHang)
 {
   SpatialInteractionController controller;

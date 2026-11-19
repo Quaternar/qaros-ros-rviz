@@ -227,6 +227,20 @@ constexpr float panel_slot_x(std::size_t slot)
   return kPanelSlotStepM * static_cast<float>(slot);
 }
 
+/// The distance between two neighbouring slots when the panels are enlarged @p factor times
+/// (@ref kPanelSlotStepM times the factor; a factor below 1, or one that is not a number, keeps
+/// the native step).
+constexpr float panel_slot_step_m(double factor)
+{
+  return factor > 1.0 ? kPanelSlotStepM * static_cast<float>(factor) : kPanelSlotStepM;
+}
+
+/// The x of the panel in slot @p slot when neighbouring slots are @p step_m apart.
+constexpr float panel_slot_x(std::size_t slot, float step_m)
+{
+  return step_m * static_cast<float>(slot);
+}
+
 /// ## The brightness field of the heartbeat
 ///
 /// The part of every streamed panel in the heartbeat line ends with the brightness of the frame it

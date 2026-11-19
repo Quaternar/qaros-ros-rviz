@@ -1001,3 +1001,25 @@ TEST(RenderDeviceLine, ADeviceThatIsNotNamedIsUnknownAndOnlyPrintableAsciiIsShow
     qar_rviz_streaming::render_device_line("Open\x01GL", "Card\n\xc3\xa9 1"),
     "RENDER: Open?GL, device 'Card??? 1'");
 }
+
+TEST(PanelGroundRule, TheSlotStepScales)
+{
+  using qar_rviz_streaming::kPanelSlotStepM;
+  using qar_rviz_streaming::panel_slot_step_m;
+  using qar_rviz_streaming::panel_slot_x;
+  // Native: the step and the slot positions of the one-argument form.
+  EXPECT_EQ(panel_slot_step_m(1.0), kPanelSlotStepM);
+  EXPECT_EQ(panel_slot_step_m(0.5), kPanelSlotStepM);
+  EXPECT_EQ(panel_slot_step_m(std::numeric_limits<double>::quiet_NaN()), kPanelSlotStepM);
+  for (std::size_t slot = 0; slot < 8; ++slot) {
+    EXPECT_FLOAT_EQ(panel_slot_x(slot, panel_slot_step_m(1.0)), panel_slot_x(slot));
+  }
+  // Enlarged: the step grows with the factor, so neighbours keep the gap they have at native size.
+  EXPECT_NEAR(panel_slot_step_m(2.0), 1.30f, 1e-6f);
+  EXPECT_NEAR(panel_slot_step_m(1.5), 0.975f, 1e-6f);
+  EXPECT_NEAR(panel_slot_x(3, panel_slot_step_m(2.0)), 3.90f, 1e-5f);
+  EXPECT_EQ(panel_slot_x(0, panel_slot_step_m(3.0)), 0.0f);
+  // A 0.6 m wide native panel is about 1.2 m wide at 2x (the frame does not grow, so this is an
+  // upper bound): the enlarged step still leaves a gap.
+  EXPECT_GE(panel_slot_step_m(2.0) - 2.0f * 0.60f, 0.05f - 1e-6f);
+}

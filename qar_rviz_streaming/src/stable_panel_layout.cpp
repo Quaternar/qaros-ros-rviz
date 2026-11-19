@@ -611,7 +611,7 @@ HeightFit fit_height_to_view(
 
 StableHints compute_stable_hints(
   const QTabWidget & tabs, const std::vector<QWidget *> & page_contents,
-  const QWidget & status_strip, int max_height)
+  const QWidget & status_strip, int max_height, int minimum_height_cap)
 {
   int widest = 0;
   for (const QWidget * content : page_contents) {
@@ -646,7 +646,30 @@ StableHints compute_stable_hints(
   StableHints hints;
   hints.hint = QSize(width, std::min(max_height, strip_height + chrome.height() + tallest));
   hints.minimum = QSize(kMinimumWidth, strip_height + bar_height + kMinimumPageHeight);
+  hints.minimum.setHeight(
+    capped_minimum_height(hints.minimum.height(), hints.hint.height(), minimum_height_cap));
   return hints;
+}
+
+int minimum_height_cap(int screen_height, int window_height)
+{
+  int cap = 0;
+  if (screen_height > 0) {
+    cap = screen_height * 6 / 10;
+  }
+  if (window_height > 0) {
+    const int by_window = window_height * 55 / 100;
+    cap = cap > 0 ? std::min(cap, by_window) : by_window;
+  }
+  return cap > 0 ? std::max(cap, kMinimumPageHeight) : 0;
+}
+
+int capped_minimum_height(int plain_minimum_height, int hint_height, int cap)
+{
+  if (cap <= 0) {
+    return plain_minimum_height;
+  }
+  return std::max(plain_minimum_height, std::min(hint_height, cap));
 }
 
 PageShortfall page_shortfall(

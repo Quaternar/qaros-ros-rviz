@@ -11,7 +11,7 @@
 ///
 /// ## Slots
 ///
-/// The page has six panel slots and four tool slots (ar_control_panel_model.hpp). A slot is
+/// The page has sixteen panel slots and eight tool slots (ar_control_panel_model.hpp). A slot is
 /// stable: a panel that is listed keeps its slot for as long as it is listed, and a panel that
 /// is new takes the lowest free slot. A slot whose panel has just left stays empty for one
 /// update, so a tap that the page sent before it learned of the change cannot reach the panel
@@ -44,6 +44,10 @@
 /// | `status.error` | "none", or the last error cut to 200 bytes |
 /// | `pick.mode` | "off", "point", "nav_goal" or "other" |
 /// | `pick.caption` | see @ref pick_caption |
+/// | `pick.topic`, `pick.topic_show` | "<topic> (<type>)" of the armed mode, shown while armed |
+/// | `pick.topics.s<n>.show` / `.title` / `.on` | a topic switch: shown, topic, in force |
+/// | `more.topics`, `more.topics_show` | the topics of the armed mode that no switch holds |
+/// | `settings.ar_copy_size` | "enlarged" or "native": the size of the AR copies of Qt panels |
 /// | `panels.s<n>.show` / `.title` / `.on` | a slot: shown, caption (null while free), switch |
 /// | `tools.s<n>.show` / `.title` / `.on` | a slot: shown, caption (null while free), switch |
 /// | `more.panels`, `more.panels_show`, `more.tools`, `more.tools_show` | the overflow lines |
@@ -86,6 +90,9 @@ struct ControlPanelPanelEntry
   std::string key;   ///< the stable key of the panel (the key of the desktop's list)
   std::string name;  ///< what the operator knows it as
   PanelArState state{};
+  /// The size of its AR copy as the caption names it ("2x", "1.5x" or "native"); empty for a
+  /// panel whose copy is not scaled (video).
+  std::string size_text;
 };
 
 struct ControlPanelToolEntry
@@ -109,6 +116,12 @@ struct ControlPanelSnapshot
   bool pick_auto_confirm = false;
   std::string pick_summary;            ///< the summary line of the pick status
   std::string pick_error;              ///< the last refusal of the pick status
+  std::string pick_topic;              ///< the topic the armed mode publishes to; empty = none
+  std::string pick_type;               ///< its message type, short ("PoseStamped")
+  std::vector<std::string> pick_topic_options;  ///< the topics offered, the first of them first
+  std::size_t pick_topic_index = 0;    ///< the index in pick_topic_options of the topic in force
+  bool pick_topic_dropped = false;     ///< a topic change dropped the waiting pick
+  std::string ar_copy_size = "enlarged";  ///< "enlarged" or "native": the setting in force
   std::vector<ControlPanelPanelEntry> panels;  ///< the desktop's list, in its order
   std::vector<ControlPanelToolEntry> tools;    ///< the AR tools, in their order
 };
@@ -116,6 +129,7 @@ struct ControlPanelSnapshot
 /// @brief The caption of the pick block:
 ///
 ///  * a pick waits for Confirm: "Waiting: <summary> - Confirm or Cancel";
+///  * a topic change dropped the waiting pick: "Topic changed: the waiting pick was dropped";
 ///  * the last pick was refused: "Refused: <error>";
 ///  * the desktop armed a mode of its own: "Armed on the desktop: <mode>";
 ///  * Off: "Choose Point or Nav goal, then aim in the scene";
@@ -126,7 +140,8 @@ struct ControlPanelSnapshot
 /// (desktop setting)" is added. Texts that come from the desktop are cut to 200 bytes.
 std::string pick_caption(const ControlPanelSnapshot & snapshot);
 
-/// The caption of a panel slot: the name, with " (starting)" or " (closed in AR)" added.
+/// The caption of a panel slot: the name, with the size of its AR copy (" (2x)", " (native)")
+/// when it has one, then " (starting)" or " (closed in AR)" added.
 std::string panel_slot_title(const ControlPanelPanelEntry & entry);
 /// The caption of a tool slot: the name, with " (pending)" added while the tool has no AR panel
 /// yet.

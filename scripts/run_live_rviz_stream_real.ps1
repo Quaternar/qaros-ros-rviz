@@ -120,6 +120,10 @@
                          Exported as QAR_PANEL_HUB_MODE. Without the parameter the variable is left
                          as it is. The pairing with the Hub of another PC (remote, -HubHost,
                          -HubPort) is gone: make the Hub of this PC a member of that Hub instead.
+.PARAMETER ArCopyScale   Factor of the enlarged AR copies of Qt panels, 1.0 to 3.0 (the "Qt panels"
+                         choice "Enlarged" uses it; without the parameter the plugin uses its
+                         saved value or 2.0). Exported as QAR_PANEL_AR_COPY_SCALE for this run
+                         only; the parameter wins over a value of your shell.
 .PARAMETER RuntimeDir    Folder that holds another QAROS runtime for the library lookup. Exported as
                          QAROS_RUNTIME_DIR. Not set unless you pass it.
 .PARAMETER TraceLogs     Collect FULL logs (what a bug report needs): QAR_LOG_SEVERITY=trace,
@@ -202,6 +206,8 @@ param(
     [string[]]$InvitePeers = @(),
     [ValidateSet('auto', 'local')]
     [string]$HubMode = "",
+    [ValidateRange(1.0, 3.0)]
+    [double]$ArCopyScale = 2.0,
     [string]$RuntimeDir = "",
     [switch]$TraceLogs,
     [switch]$KeepLogEnv,
@@ -218,6 +224,7 @@ $ErrorActionPreference = "Stop"
 $runStarted = Get-Date
 # True when the caller passed -QarLogSeverity: only then does it beat the shell and -TraceLogs.
 $qarLogSeverityGiven = $PSBoundParameters.ContainsKey('QarLogSeverity')
+$arCopyScaleGiven = $PSBoundParameters.ContainsKey('ArCopyScale')
 $stamp = $runStarted.ToString("yyyyMMdd_HHmmss")
 
 # The whole environment of the calling shell is saved here and put back in `finally` (dry run
@@ -623,6 +630,13 @@ if ($InvitePeers.Count -gt 0 -and -not $env:QAR_PANEL_INVITE_PEERS) {
     $env:QAR_PANEL_INVITE_PEERS = ($InvitePeers -join ',')
 }
 
+# The factor of the enlarged AR copies of Qt panels (1.0 to 3.0). An explicit -ArCopyScale wins
+# over the shell; the shell's value is put back when the script ends.
+if ($arCopyScaleGiven) {
+    $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+    $env:QAR_PANEL_AR_COPY_SCALE = $ArCopyScale.ToString('0.00', $invariant)
+}
+
 
 # Start position for the desktop Visualizer.
 #   QAR_PANEL_FIXED_POSES  room | ground. The docks, the panel itself, the video panels and the
@@ -677,6 +691,27 @@ Write-Host "  QAR_SCENE_LIGHT          = $env:QAR_SCENE_LIGHT (headlight: $(if (
 $hubVarShown = if ($env:QAR_PANEL_HUB_MODE) { $env:QAR_PANEL_HUB_MODE } else { '(not set: the Hub of this PC)' }
 Write-Host "  QAR_PANEL_HUB_MODE       = $hubVarShown"
 Write-Host "  QAR_PANEL_INVITE_PEERS   = $(if ($env:QAR_PANEL_INVITE_PEERS) { $env:QAR_PANEL_INVITE_PEERS } else { '(none - pass -InvitePeers to invite devices)' })"
+$arCopyScaleShown = '(not set: the saved value or 2.00 - pass -ArCopyScale 1.0..3.0 to change it)'
+if ($env:QAR_PANEL_AR_COPY_SCALE) {
+    $arCopyScaleFrom = if ($arCopyScaleGiven) { '(-ArCopyScale)' } else { '(your shell)' }
+    $arCopyScaleShown = "$env:QAR_PANEL_AR_COPY_SCALE $arCopyScaleFrom"
+}
+Write-Host "  QAR_PANEL_AR_COPY_SCALE  = $arCopyScaleShown"
+if ($env:QAR_PANEL_AR_COPY_SCALE -and -not $arCopyScaleGiven) {
+    # A shell value is read by the plugin as it is; one that is not a number from 1.0 to 3.0 is
+    # refused there and the saved value or 2.0 is used. The run goes on.
+    $arCopyScaleNumber = 0.0
+    $arCopyScaleOk = [double]::TryParse($env:QAR_PANEL_AR_COPY_SCALE,
+        [System.Globalization.NumberStyles]::Float,
+        [System.Globalization.CultureInfo]::InvariantCulture, [ref]$arCopyScaleNumber) -and
+        $arCopyScaleNumber -ge 1.0 -and $arCopyScaleNumber -le 3.0
+    if (-not $arCopyScaleOk) {
+        $arCopyScaleNote = "  QAR_PANEL_AR_COPY_SCALE note: '$env:QAR_PANEL_AR_COPY_SCALE' " +
+            "from your shell is not a number from 1.0 to 3.0; the plugin ignores it " +
+            "and uses the saved value or 2.00"
+        Write-Host $arCopyScaleNote -ForegroundColor Yellow
+    }
+}
 Write-Host "  QAR_PANEL_FIXED_POSES    = $env:QAR_PANEL_FIXED_POSES ($fixedPosesSource)"
 Write-Host "  QAR_PANEL_VOLUME_Y       = $env:QAR_PANEL_VOLUME_Y ($volumeYSource)"
 if ($markersMissing) {

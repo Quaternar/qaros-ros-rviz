@@ -272,6 +272,13 @@ Widget::with_integer(bool value)
 }
 
 Widget &
+Widget::with_compact(bool value)
+{
+  compact = value;
+  return *this;
+}
+
+Widget &
 Widget::with_rule(StatusRule rule)
 {
   rules.push_back(std::move(rule));
@@ -639,6 +646,9 @@ private:
     if (w.confirm && w.type != WidgetType::Button) {
       warning(id, "confirm is only honoured by buttons");
     }
+    if (w.compact && w.type != WidgetType::Toggle && w.type != WidgetType::ValueDisplay) {
+      warning(id, "compact is only honoured by toggles and value readouts");
+    }
 
     // Binding syntax; required for every bindable type except the inspector
     // (empty = whole document) and the button (may have none).
@@ -954,6 +964,9 @@ to_value(const Widget & w)
   if (w.integer) {
     out.set("integer", true);
   }
+  if (w.compact) {
+    out.set("compact", true);
+  }
   if (w.max_length) {
     out.set("max_length", static_cast<std::int64_t>(*w.max_length));
   }
@@ -1138,7 +1151,8 @@ from_value_impl(const UiValue & value, Widget & out, std::size_t depth, std::str
     !read_optional_double(value, "step", w.step, where, error) ||
     !read_bool(value, "editable", w.editable, where, error) ||
     !read_bool(value, "confirm", w.confirm, where, error) ||
-    !read_bool(value, "integer", w.integer, where, error))
+    !read_bool(value, "integer", w.integer, where, error) ||
+    !read_bool(value, "compact", w.compact, where, error))
   {
     return false;
   }

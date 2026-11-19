@@ -26,6 +26,7 @@
 #include <QComboBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -50,6 +51,8 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
+#include "qar_rviz_streaming/ar_copy_scale.hpp"
+#include "qar_rviz_streaming/ar_panel_list_widget.hpp"
 #include "qar_rviz_streaming/stable_panel_layout.hpp"
 
 using qar_rviz_streaming::ElidedLabel;
@@ -112,19 +115,12 @@ public:
         page->addWidget(invite);
         page->addWidget(width_neutral_label());
       });
-    // AR panels: a combo with a button, and a readout in a scroll area of a fixed height.
+    // AR panels: the list of AR panels (eight rows, a pager row and the buttons of the row).
     add_page("AR panels", [this](QVBoxLayout * page) {
-        auto * row = new QHBoxLayout();
-        row->addWidget(new QComboBox(), 1);
-        row->addWidget(new QPushButton("Refresh"));
-        page->addLayout(row);
-        auto * readout_label = width_neutral_label();
-        auto * readout = new QScrollArea();
-        readout->setWidget(readout_label);
-        readout->setWidgetResizable(true);
-        readout->setFixedHeight(readout->fontMetrics().lineSpacing() * 10 + 8);
-        readout->setSizePolicy(QSizePolicy::Ignored, readout->sizePolicy().verticalPolicy());
-        page->addWidget(readout);
+        ar_list = new qar_rviz_streaming::ArPanelListWidget();
+        // The size button names what a press does and keeps its width.
+        ar_copy_button = ar_list->size_button();
+        page->addWidget(ar_list);
       });
     // AR tools: two lists and a wrapped status line.
     add_page("AR tools", [this](QVBoxLayout * page) {
@@ -146,6 +142,25 @@ public:
       });
     // Settings: check boxes, and an advanced group that is hidden until it is asked for.
     add_page("Settings", [this](QVBoxLayout * page) {
+        auto * streams = new QGroupBox("Streams (apply to new streams)");
+        auto * streams_form = new QFormLayout(streams);
+        streams_form->addRow("Resolution:", new QComboBox());
+        streams_form->addRow("FPS cap:", new QComboBox());
+        ar_copy_combo = new QComboBox();
+        ar_copy_combo->addItem(
+          QString::fromStdString(
+            qar_rviz_streaming::ar_copy_enlarged_item_text(
+              qar_rviz_streaming::kArCopyScaleDefault)),
+          QString::fromLatin1(
+            qar_rviz_streaming::to_string(qar_rviz_streaming::ArCopySize::Enlarged)));
+        ar_copy_combo->addItem(
+          qar_rviz_streaming::kArCopyNativeItemText,
+          QString::fromLatin1(
+            qar_rviz_streaming::to_string(qar_rviz_streaming::ArCopySize::Native)));
+        ar_copy_combo->setToolTip(qar_rviz_streaming::kArCopyRowToolTip);
+        streams_form->addRow(qar_rviz_streaming::kArCopyRowLabel, ar_copy_combo);
+        ar_copy_form = streams_form;
+        page->addWidget(streams);
         page->addWidget(new QCheckBox("Start the hidden Displays copy when connecting"));
         page->addWidget(new QCheckBox("Show the AR control panel when connecting"));
         auto * advanced = new QGroupBox("Advanced");
@@ -168,11 +183,23 @@ public:
         qar_rviz_streaming::retain_size_when_hidden(peers);
         retained.push_back(peers);
         page->addWidget(peers);
+        // The AR panel counters: a readout in a scroll area of a fixed height.
+        auto * counters = new QGroupBox("AR panel counters");
+        auto * counters_layout = new QVBoxLayout(counters);
+        auto * readout_label = width_neutral_label();
+        auto * readout = new QScrollArea();
+        readout->setWidget(readout_label);
+        readout->setWidgetResizable(true);
+        readout->setFixedHeight(readout->fontMetrics().lineSpacing() * 10 + 8);
+        readout->setSizePolicy(QSizePolicy::Ignored, readout->sizePolicy().verticalPolicy());
+        counters_layout->addWidget(readout);
+        page->addWidget(counters);
         log = new QPlainTextEdit();
         page->addWidget(log, 1);
       });
 
-    hints = qar_rviz_streaming::compute_stable_hints(*tabs, contents, *strip.frame);
+    // The same cap as the panel: the Diagnostics page holds the ten-line counters.
+    hints = qar_rviz_streaming::compute_stable_hints(*tabs, contents, *strip.frame, 900);
   }
 
   QSize sizeHint() const override { return hints.hint; }
@@ -215,6 +242,10 @@ public:
   std::vector<QGroupBox *> retained;
   std::vector<QListWidget *> lists;
   QCheckBox * checkable = nullptr;
+  QComboBox * ar_copy_combo = nullptr;
+  QFormLayout * ar_copy_form = nullptr;
+  qar_rviz_streaming::ArPanelListWidget * ar_list = nullptr;
+  QPushButton * ar_copy_button = nullptr;
   QPushButton * plain_button = nullptr;
   QPlainTextEdit * log = nullptr;
   StableHints hints;
@@ -298,6 +329,70 @@ TEST(StablePanelLayout, HintsConstantAcrossTextChanges)
   panel.strip.second->setStyleSheet("color: #c0392b;");
   panel.strip.first->setFullText("Qar runtime: RUNNING (live)");
   EXPECT_EQ(measure(panel), before);
+}
+
+TEST(StablePanelLayout, TheArCopyControlsHaveTheirTextsAndKeepThePanelSize)
+{
+  using qar_rviz_streaming::ar_copy_enlarged_item_text;
+  Skeleton panel;
+  panel.present();
+
+  // The row of the Settings tab: the label, the two items with the words of the setting as their
+  // data, and the tool tip.
+  ASSERT_NE(panel.ar_copy_combo, nullptr);
+  ASSERT_NE(panel.ar_copy_form, nullptr);
+  const QWidget * label = panel.ar_copy_form->labelForField(panel.ar_copy_combo);
+  ASSERT_NE(qobject_cast<const QLabel *>(label), nullptr);
+  EXPECT_EQ(qobject_cast<const QLabel *>(label)->text().toStdString(), "Qt panels in AR:");
+  ASSERT_EQ(panel.ar_copy_combo->count(), 2);
+  EXPECT_EQ(
+    panel.ar_copy_combo->itemText(0).toStdString(),
+    ar_copy_enlarged_item_text(qar_rviz_streaming::kArCopyScaleDefault));
+  EXPECT_EQ(panel.ar_copy_combo->itemData(0).toString().toStdString(), "enlarged");
+  EXPECT_EQ(panel.ar_copy_combo->itemText(1).toStdString(), "Native size");
+  EXPECT_EQ(panel.ar_copy_combo->itemData(1).toString().toStdString(), "native");
+  EXPECT_EQ(panel.ar_copy_combo->currentIndex(), 0) << "enlarged is the default";
+  EXPECT_NE(panel.ar_copy_combo->toolTip().indexOf("text keeps its size"), -1);
+  EXPECT_NE(panel.ar_copy_combo->toolTip().indexOf("desktop does not change"), -1);
+  EXPECT_NE(panel.ar_copy_combo->toolTip().indexOf("at most 1.8 m tall"), -1);
+
+  // The factor of the first item: whole numbers have no decimal.
+  EXPECT_EQ(ar_copy_enlarged_item_text(2.0), "Enlarged controls (2x)");
+  EXPECT_EQ(ar_copy_enlarged_item_text(1.5), "Enlarged controls (1.5x)");
+  EXPECT_EQ(ar_copy_enlarged_item_text(3.0), "Enlarged controls (3x)");
+  EXPECT_EQ(ar_copy_enlarged_item_text(1.25), "Enlarged controls (1.25x)");
+  EXPECT_EQ(ar_copy_enlarged_item_text(1.07), "Enlarged controls (1.07x)");
+
+  // The size button of the list on the AR panels tab names what a press does.
+  ASSERT_NE(panel.ar_copy_button, nullptr);
+  EXPECT_EQ(panel.ar_copy_button->text().toStdString(), "Native size in AR");
+
+  // No choice, no text and no factor of these controls moves a size the outside reads.
+  const std::string before = measure(panel);
+  const QSize page_hint = panel.ar_copy_button->parentWidget()->sizeHint();
+  panel.ar_copy_button->setText(qar_rviz_streaming::kArCopyButtonToEnlargedText);
+  EXPECT_EQ(panel.ar_copy_button->text().toStdString(), "Enlarged in AR");
+  EXPECT_EQ(measure(panel), before);
+  panel.ar_copy_button->setText(one_long_word());
+  EXPECT_EQ(measure(panel), before);
+  panel.ar_copy_button->setText(qar_rviz_streaming::kArCopyButtonToNativeText);
+  EXPECT_EQ(measure(panel), before);
+  EXPECT_EQ(panel.ar_copy_button->parentWidget()->sizeHint(), page_hint)
+    << "the text of the button is not part of the page's hint";
+  panel.ar_copy_button->setEnabled(false);
+  EXPECT_EQ(measure(panel), before);
+  panel.ar_copy_button->setEnabled(true);
+
+  for (const int index : {1, 0, 1, 0}) {
+    panel.ar_copy_combo->setCurrentIndex(index);
+    EXPECT_EQ(measure(panel), before) << "after choosing item " << index;
+  }
+  panel.ar_copy_combo->setItemText(0, QString::fromStdString(ar_copy_enlarged_item_text(1.5)));
+  EXPECT_EQ(measure(panel), before);
+  for (int i = 0; i < panel.tabs->count(); ++i) {
+    panel.tabs->setCurrentIndex(i);
+    EXPECT_EQ(measure(panel), before) << "tab " << i;
+  }
 }
 
 TEST(StablePanelLayout, HintsConstantAcrossHideShow)
@@ -538,6 +633,84 @@ TEST(StablePanelLayout, StableHintsFollowThePagesOnceAndHonourTheCap)
     *panel.tabs, panel.contents, *panel.strip.frame);
   EXPECT_EQ(panel.sizeHint(), first);
   EXPECT_GE(again.hint.width(), first.width());
+}
+
+TEST(StablePanelLayout, TheMinimumHeightCapKeepsAPanelHighAgainstANeighbourDock)
+{
+  Skeleton panel;
+  // A page that needs 604 pixels at its smallest, like the Connection page.
+  panel.add_page("Tall", [](QVBoxLayout * page) {
+      auto * tall = new QWidget();
+      tall->setMinimumHeight(604);
+      page->addWidget(tall);
+    });
+  panel.present();
+  const int strip = panel.strip.frame->height();
+  const int bar = qar_rviz_streaming::tab_bar_height(*panel.tabs);
+
+  // Cap 0: the rule of the 120 pixels, as before.
+  const StableHints plain = qar_rviz_streaming::compute_stable_hints(
+    *panel.tabs, panel.contents, *panel.strip.frame, 100000, 0);
+  EXPECT_EQ(plain.minimum.height(), strip + bar + 120);
+  EXPECT_GT(plain.hint.height(), 604);
+
+  // A cap above the hint: the minimum is the hint.
+  const StableHints high = qar_rviz_streaming::compute_stable_hints(
+    *panel.tabs, panel.contents, *panel.strip.frame, 100000, 2000);
+  EXPECT_EQ(high.hint, plain.hint);
+  EXPECT_EQ(high.minimum.height(), high.hint.height());
+  EXPECT_EQ(high.minimum.width(), plain.minimum.width());
+
+  // A cap below the hint: the minimum is the cap.
+  const StableHints capped = qar_rviz_streaming::compute_stable_hints(
+    *panel.tabs, panel.contents, *panel.strip.frame, 100000, 300);
+  EXPECT_EQ(capped.hint, plain.hint);
+  EXPECT_EQ(capped.minimum.height(), 300);
+
+  // A cap below the 120 pixel rule never makes the minimum lower than that rule.
+  const StableHints tiny = qar_rviz_streaming::compute_stable_hints(
+    *panel.tabs, panel.contents, *panel.strip.frame, 100000, 50);
+  EXPECT_EQ(tiny.minimum.height(), strip + bar + 120);
+
+  // The default arguments keep today's behaviour.
+  const StableHints defaults = qar_rviz_streaming::compute_stable_hints(
+    *panel.tabs, panel.contents, *panel.strip.frame);
+  EXPECT_EQ(defaults.minimum.height(), strip + bar + 120);
+}
+
+TEST(StablePanelLayout, TheMinimumHeightCapFollowsTheScreenAndTheWindow)
+{
+  // Nothing known: no cap.
+  EXPECT_EQ(qar_rviz_streaming::minimum_height_cap(0, 0), 0);
+  EXPECT_EQ(qar_rviz_streaming::minimum_height_cap(-1, -5), 0);
+  // Only the screen: 6/10 of its available height.
+  EXPECT_EQ(qar_rviz_streaming::minimum_height_cap(1000, 0), 600);
+  EXPECT_EQ(qar_rviz_streaming::minimum_height_cap(1170, 0), 702);
+  // Only the window: 55/100 of its height.
+  EXPECT_EQ(qar_rviz_streaming::minimum_height_cap(0, 1000), 550);
+  // Both: the lower one. A tall screen with a lower window is held to the window (the case of a
+  // window that fills 700 of 1200 pixels), and a low screen is held to the screen.
+  EXPECT_EQ(qar_rviz_streaming::minimum_height_cap(1200, 700), 385);
+  EXPECT_EQ(qar_rviz_streaming::minimum_height_cap(700, 1200), 420);
+  // Never below the 120 pixel rule, however small the window.
+  EXPECT_EQ(qar_rviz_streaming::minimum_height_cap(1200, 100), 120);
+  EXPECT_EQ(qar_rviz_streaming::minimum_height_cap(100, 0), 120);
+}
+
+TEST(StablePanelLayout, TheCappedMinimumHeightIsTheHintBelowTheCapAndNeverBelowThePlainRule)
+{
+  using qar_rviz_streaming::capped_minimum_height;
+  EXPECT_EQ(capped_minimum_height(200, 700, 0), 200);
+  EXPECT_EQ(capped_minimum_height(200, 700, 2000), 700);
+  EXPECT_EQ(capped_minimum_height(200, 700, 385), 385);
+  EXPECT_EQ(capped_minimum_height(200, 700, 120), 200);
+  EXPECT_EQ(capped_minimum_height(200, 150, 385), 200);
+  // A panel that moves to a screen with another height: the same hint gives another minimum.
+  EXPECT_EQ(capped_minimum_height(200, 700, qar_rviz_streaming::minimum_height_cap(1440, 0)), 700);
+  EXPECT_EQ(capped_minimum_height(200, 700, qar_rviz_streaming::minimum_height_cap(800, 0)), 480);
+  // A tall screen and a window of 800 pixels: the window holds the minimum to 440.
+  EXPECT_EQ(
+    capped_minimum_height(200, 700, qar_rviz_streaming::minimum_height_cap(1440, 800)), 440);
 }
 
 /// Sends a wheel step (one notch towards the user) to @p target; returns whether it was accepted.
@@ -2611,11 +2784,13 @@ TEST(SettledHeightFit, AStuckLookThatTheNextOneDoesNotRepeatIsNotAGiveUp)
 
 constexpr const char * kMoreFormat = "... and %1 more panel(s); all counters are in the log";
 
-/// A page-like parent for the readout box, as wide as the panel.
+/// A page-like parent for the readout box. The default width is wide enough that no line of the
+/// offscreen font wraps (it is a 12 pt font, larger than the panel's); the panel's own width is
+/// used by the test that counts wrapped lines.
 class ReadoutHost : public QWidget
 {
 public:
-  explicit ReadoutHost(int width = 460)
+  explicit ReadoutHost(int width = 1000)
   {
     auto * layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
@@ -2642,8 +2817,8 @@ QStringList panel_lines(int count, const QString & suffix = QString())
 
 QStringList readout_head()
 {
-  return {"AR panels:", "input: in 0, missed 0, dropped 0",
-    "panels: live=4 closed=0 (destroyed) notice=0"};
+  return {QStringLiteral("input: in 0, missed 0, dropped 0"),
+    QStringLiteral("panels: live=4 closed=0 (destroyed) notice=0")};
 }
 
 TEST(ReadoutBox, IsBuiltSoThatNothingCanMoveItOrScrollIt)
@@ -2672,7 +2847,7 @@ TEST(ReadoutBox, FourPanelsFitWithoutABarOrAMoreLine)
     host.box, readout_head(), panel_lines(4), kMoreFormat);
   QApplication::processEvents();
   EXPECT_EQ(dropped, 0);
-  EXPECT_EQ(host.box.label->text().split('\n').size(), 7);
+  EXPECT_EQ(host.box.label->text().split('\n').size(), 6);
   EXPECT_FALSE(host.box.label->text().contains("more panel(s)"));
   EXPECT_EQ(host.box.area->verticalScrollBar()->maximum(), 0) << "nothing to scroll";
   EXPECT_FALSE(host.box.area->verticalScrollBar()->isVisible());
@@ -2715,6 +2890,42 @@ TEST(ReadoutBox, AWrappedLineCountsForAllTheLinesItTakes)
   const int narrow = qar_rviz_streaming::set_readout_text(
     host.box, readout_head(), panel_lines(30), kMoreFormat, 160);
   EXPECT_GT(narrow, wide);
+}
+
+/// The lines @p text takes in @p width_px with the label's own font and word wrap.
+int rows_taken(const QLabel & label, const QString & text, int width_px)
+{
+  const QFontMetrics metrics(label.font());
+  int rows = 0;
+  for (const QString & line : text.split(QLatin1Char(10))) {
+    const QRect box = metrics.boundingRect(0, 0, width_px, 100000, Qt::TextWordWrap, line);
+    rows += std::max(1, (box.height() + metrics.lineSpacing() - 1) / metrics.lineSpacing());
+  }
+  return rows;
+}
+
+TEST(ReadoutBox, AtThePanelWidthTheLinesTheTextTakesAreCountedWithTheFontMetrics)
+{
+  // The panel's width. The offscreen font is wider than the panel's own, so lines wrap here: the
+  // box must count the wrapped lines, hold at most kReadoutLines of them and never show a bar.
+  ReadoutHost host(460);
+  const int width = host.box.area->viewport()->width();
+  ASSERT_GT(width, 0);
+  for (const int count : {0, 1, 4, 8, 16}) {
+    const QStringList all = readout_head() + panel_lines(count);
+    const int wanted = rows_taken(*host.box.label, all.join(QLatin1Char(10)), width);
+    const int dropped = qar_rviz_streaming::set_readout_text(
+      host.box, readout_head(), panel_lines(count), kMoreFormat);
+    QApplication::processEvents();
+    const int shown = rows_taken(*host.box.label, host.box.label->text(), width);
+    EXPECT_LE(shown, qar_rviz_streaming::kReadoutLines) << count << " panels";
+    EXPECT_EQ(host.box.area->verticalScrollBar()->maximum(), 0) << count << " panels";
+    if (wanted <= qar_rviz_streaming::kReadoutLines) {
+      EXPECT_EQ(dropped, 0) << count << " panels take " << wanted << " rows";
+    } else if (wanted > qar_rviz_streaming::kReadoutLines + 1) {
+      EXPECT_GT(dropped, 0) << count << " panels take " << wanted << " rows";
+    }
+  }
 }
 
 TEST(ReadoutBox, TheMeasureAgreesWithTheLabelItself)

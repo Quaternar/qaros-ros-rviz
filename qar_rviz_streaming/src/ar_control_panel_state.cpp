@@ -124,7 +124,17 @@ std::size_t assign_slots(
 
 std::string more_text(std::size_t count)
 {
-  return count == 0 ? std::string() : std::to_string(count) + " more on the desktop";
+  if (count == 0) {
+    return std::string();
+  }
+  return "... and " + std::to_string(count) + " more: switch them on the desktop";
+}
+
+/// "<topic> (<type>)", or the topic alone when the type is not known.
+std::string topic_line(const ControlPanelSnapshot & snapshot)
+{
+  const std::string topic = cut(snapshot.pick_topic);
+  return snapshot.pick_type.empty() ? topic : topic + " (" + cut(snapshot.pick_type) + ")";
 }
 
 void add_leaf(std::vector<PatchEntry> & leaves, std::string path, UiValue value)
@@ -184,6 +194,8 @@ std::string pick_caption(const ControlPanelSnapshot & snapshot)
   if (snapshot.pick_pending) {
     text = "Waiting: " + (snapshot.pick_summary.empty() ? std::string("pick") :
         cut(snapshot.pick_summary)) + " - Confirm or Cancel";
+  } else if (snapshot.pick_topic_dropped) {
+    text = ar_control::kCaptionTopicDropped;
   } else if (!snapshot.pick_error.empty()) {
     text = "Refused: " + cut(snapshot.pick_error);
   } else if (snapshot.pick_mode_other) {
@@ -203,6 +215,9 @@ std::string pick_caption(const ControlPanelSnapshot & snapshot)
 std::string panel_slot_title(const ControlPanelPanelEntry & entry)
 {
   std::string title = name_of(entry);
+  if (!entry.size_text.empty()) {
+    title += " (" + cut(entry.size_text) + ")";
+  }
   if (entry.state == PanelArState::Starting) {
     title += " (starting)";
   } else if (entry.state == PanelArState::ClosedInAr) {
@@ -261,6 +276,40 @@ std::vector<PatchEntry> ArControlPanelState::update(const ControlPanelSnapshot &
     leaves, ar_control::kPathPickMode,
     snapshot.pick_mode_other ? "other" : to_string(snapshot.pick_mode));
   add_leaf(leaves, ar_control::kPathPickCaption, pick_caption(snapshot));
+  // The topic block follows the pick mode, not the QarOS session: the picks of a preview go to
+  // the same topics.
+  const bool armed = snapshot.pick_mode_other || snapshot.pick_mode != ArPickMode::Off;
+  const bool topic_shown = armed && !snapshot.pick_topic.empty();
+  add_leaf(
+    leaves, ar_control::kPathPickTopic,
+    topic_shown ? topic_line(snapshot) : std::string());
+  // A switch that is on names the topic in force, so the line is shown only while no switch does:
+  // the topic is not among the offered switches, or there are none. The line then adds the type.
+  const bool switch_names_topic = topic_shown &&
+    snapshot.pick_topic_index < std::min(
+    snapshot.pick_topic_options.size(), ar_control::kPickTopicSlots);
+  add_leaf(leaves, ar_control::kPathPickTopicShow, topic_shown && !switch_names_topic);
+  for (std::size_t slot = 0; slot < ar_control::kPickTopicSlots; ++slot) {
+    const bool used = topic_shown && slot < snapshot.pick_topic_options.size();
+    add_leaf(leaves, ar_control::pick_topic_path(slot, "show"), used);
+    add_leaf(
+      leaves, ar_control::pick_topic_path(slot, "title"),
+      used ? UiValue(cut(snapshot.pick_topic_options[slot])) : UiValue());
+    add_leaf(
+      leaves, ar_control::pick_topic_path(slot, "on"),
+      used && slot == snapshot.pick_topic_index);
+  }
+  // The topics that the switches do not hold are chosen on the desktop.
+  const std::size_t more_topics = topic_shown &&
+    snapshot.pick_topic_options.size() > ar_control::kPickTopicSlots ?
+    snapshot.pick_topic_options.size() - ar_control::kPickTopicSlots : 0;
+  add_leaf(
+    leaves, ar_control::kPathMoreTopics,
+    more_topics > 0 ? std::to_string(more_topics) : std::string());
+  add_leaf(leaves, ar_control::kPathMoreTopicsShow, more_topics > 0);
+  add_leaf(
+    leaves, ar_control::kPathArCopySize,
+    snapshot.ar_copy_size == "native" ? "native" : "enlarged");
   for (std::size_t slot = 0; slot < ar_control::kPanelSlots; ++slot) {
     const ControlPanelPanelEntry * entry = panel_entry[slot];
     add_leaf(leaves, ar_control::panel_path(slot, "show"), entry != nullptr);

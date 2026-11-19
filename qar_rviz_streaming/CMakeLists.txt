@@ -85,9 +85,9 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/plugin_version" "${QAR_RVIZ_PLUGIN_VERSI
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qaros_version" "${QAR_QAROS_VERSION}\n")
 message(STATUS "qar_rviz_streaming ${QAR_RVIZ_PLUGIN_VERSION_RESOLVED}, built against the C API of QAROS ${QAR_QAROS_VERSION}")
 
-qar_find_upstream(qar_ogre_adapter VERSION 0.2.1
+qar_find_upstream(qar_ogre_adapter VERSION 0.2.0
   COMPONENTS qar_ar_core qar_ogre_streaming capi session render url gestures)
-qar_find_upstream(qar_qt_streaming VERSION 0.2.1 COMPONENTS seam qar_qt_streaming)
+qar_find_upstream(qar_qt_streaming VERSION 0.2.0 COMPONENTS seam qar_qt_streaming)
 add_subdirectory("${QAR_REPO_ROOT}/qar_ui_model" "${CMAKE_BINARY_DIR}/qar_ui_model")
 add_subdirectory("${QAR_REPO_ROOT}/qar_ros_ui" "${CMAKE_BINARY_DIR}/qar_ros_ui")
 find_package(Qt5 REQUIRED COMPONENTS Network WebSockets)
@@ -110,6 +110,11 @@ add_library(qar_rviz_streaming SHARED
   # streamed into AR without ever appearing on the desktop. Needs rviz_common and so only
   # builds here (see the QT_NO_KEYWORDS note below).
   src/hidden_rviz_panel.cpp
+  # The item delegate of the property trees of an enlarged AR copy of an RViz panel (needs
+  # rviz_common, so it builds here only) and the painting of a colour row it uses (Qt Widgets
+  # only, no RViz; also compiled into qar_rviz_streaming_widget_tests).
+  src/ar_copy_property_delegate.cpp
+  src/ar_copy_color_row.cpp
   src/qar_offscreen_capture.cpp
   # ROS topic browser (the two pure helpers are also unit-tested from the
   # repo-root CMake project — see qar_rviz_streaming/test).
@@ -141,6 +146,18 @@ add_library(qar_rviz_streaming SHARED
   # full-screen window (the QarOS Visualizer) covers it. Pure Win32 (no-op
   # elsewhere), also compiled into qar_rviz_streaming_tests.
   src/windows_scheduling.cpp
+  # Names the step the Qt thread was in when it stops serving the render tick: a watchdog
+  # thread, a clock/sink/dump interface and their Win32 implementations. Pure (standard
+  # library and Win32 only); also compiled into qar_rviz_streaming_tests.
+  src/qt_stall_watchdog.cpp
+  # The speed of the render tick: the decisions (standard library only) and the application of a
+  # plan to a QTimer (QtCore only). Also compiled into qar_rviz_streaming_tick_tests.
+  src/render_tick_pacing.cpp
+  src/render_tick_timer.cpp
+  # Ends the process itself when RViz was asked to quit and does not end in 5 s: one thread made
+  # before the first QAROS load, a clock/sink/terminator interface and their Win32 implementations.
+  # Pure (standard library and Win32 only); also compiled into qar_rviz_streaming_tests.
+  src/exit_guard.cpp
 src/spatial_publish.cpp
 src/spatial_interaction.cpp
   # Floor plane: the pure placement math plus the Ogre/
@@ -155,21 +172,52 @@ src/spatial_interaction.cpp
   # qar_rviz_streaming_tests (qar_rviz_streaming/test).
   src/panel_settings.cpp
   src/connection_view.cpp
+  src/connection_health.cpp
   src/ar_control_panel_router.cpp
   src/ar_control_panel_model.cpp
   src/ar_control_panel_state.cpp
   src/ar_control_panel_placement.cpp
   # The rule that keeps an AR panel above the ground (standard library and qar_ar_core only).
   src/panel_ground_rule.cpp
+  # How large the AR copy of a Qt panel is (standard library only). Also compiled into
+  # qar_rviz_streaming_tests.
+  src/ar_copy_scale.cpp
+  # Which RViz panels get an AR copy and how wide it is (standard library only). Also compiled
+  # into qar_rviz_streaming_tests.
+  src/ar_copy_panels.cpp
+  # What the panel keeps of the AR side in the RViz configuration and restores from it (standard
+  # library only). Also compiled into qar_rviz_streaming_tests.
+  src/ar_restore_state.cpp
+  # Which topic a pick is published to: the options of a pick mode, the check of a name, the
+  # setting text (standard library only). Also compiled into qar_rviz_streaming_tests.
+  src/pick_topic_choice.cpp
+  # Which AR tools publish by default (the table of keyboard-free topic types; standard library
+  # only). Also compiled into qar_rviz_streaming_tests and qar_rviz_streaming_widget_tests.
+  src/ar_tool_writability.cpp
   # The tabbed layout of the panel: scroll pages, the elided status lines and the constant size
   # hints (Qt Widgets only, no RViz). Also compiled into qar_rviz_streaming_widget_tests.
   src/stable_panel_layout.cpp
+  # The widgets of the Qar Streaming panel as a function, and the off-screen AR copy of the panel
+  # built from it (Qt Widgets and the layout helpers above, no RViz). Also compiled into
+  # qar_rviz_streaming_widget_tests.
+  src/qar_panel_view.cpp
+  src/qar_panel_ar_copy.cpp
+  # The docks of RViz's main window as a list: which are open, their unique keys and a signature
+  # that tells the host the list changed (Qt Widgets only, no RViz). Also compiled into
+  # qar_rviz_streaming_widget_tests.
+  src/dock_census.cpp
+  # The list of AR panels of the "AR panels" tab: the rows (standard library only) and the widget
+  # (Qt Widgets only, no RViz). Also compiled into qar_rviz_streaming_tests and
+  # qar_rviz_streaming_widget_tests.
+  src/ar_panel_list.cpp
+  src/ar_panel_list_widget.cpp
   # The "QAROS Hub" group of the Connection tab (Qt Widgets only, no RViz). Also compiled into
   # qar_rviz_streaming_widget_tests.
   src/hub_connection_widget.cpp
   # Listed so AUTOMOC processes the Q_OBJECT headers.
   include/qar_rviz_streaming/qar_streaming_panel.hpp
   include/qar_rviz_streaming/hub_connection_widget.hpp
+  include/qar_rviz_streaming/ar_panel_list_widget.hpp
   include/qar_rviz_streaming/add_topic_dialog.hpp
 )
 

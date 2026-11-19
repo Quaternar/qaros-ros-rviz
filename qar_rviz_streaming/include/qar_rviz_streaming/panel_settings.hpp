@@ -26,6 +26,12 @@
 /// @ref settings_to_save returns the operator's own values and never a value that only the
 /// environment supplied, so removing the variable brings the operator's choice back.
 ///
+/// ## What is not a setting
+///
+/// The record "AR State" (the AR panels that are on, the AR tools, the watched topics; see
+/// ar_restore_state.hpp) has its own place in the configuration. It is a known key here, so it
+/// is never reported as an unknown one.
+///
 /// ## Texts
 ///
 /// Every value travels as text (`SettingsText`): the panel copies between the RViz `Config`
@@ -48,7 +54,7 @@ namespace qar_rviz_streaming
 {
 
 /// The value of the version key that @ref settings_to_save writes.
-constexpr int kPanelSettingsVersion = 4;
+constexpr int kPanelSettingsVersion = 5;
 /// The lowest settings version whose configuration does not ask for the default dock size; see
 /// @ref wants_default_dock_size.
 constexpr int kDefaultDockSizeSettingsVersion = 2;
@@ -63,6 +69,9 @@ constexpr const char * kResolution = "Resolution";
 constexpr const char * kFpsCap = "FPS Cap";
 /// Kept so that older configurations load; every value joins the Hub of this PC as a local app.
 constexpr const char * kHubMode = "Hub Mode";
+constexpr const char * kArCopySize = "AR Copy Size";
+constexpr const char * kArCopyScale = "AR Copy Scale";
+constexpr const char * kArCopyOverallScale = "AR Copy Overall Scale";
 constexpr const char * kHiddenDisplaysOnConnect = "Hidden Displays On Connect";
 constexpr const char * kArControlPanel = "AR Control Panel";
 constexpr const char * kArPanelCloseMode = "AR Panel Close Mode";
@@ -70,6 +79,7 @@ constexpr const char * kArVisibility = "AR Visibility";
 constexpr const char * kWebPanelScale = "Web Panel Scale";
 constexpr const char * kPickTarget = "Pick Target";
 constexpr const char * kPickFrame = "Pick Frame";
+constexpr const char * kPickTopics = "Pick Topics";
 constexpr const char * kInviteDevice = "Invite Device";
 constexpr const char * kInviteHostname = "Invite Hostname";
 }  // namespace settings_key
@@ -166,7 +176,9 @@ bool canonicalize_setting(
 /// no longer offers to an app: "Hub Mode" `remote` is read as `local`, and "Hub Host" and
 /// "Hub Port" are dropped. To reach the Hub of another PC, make the Hub of this PC a member of
 /// it and join the Hub of this PC.
-/// Each change is a sentence in @ref SettingsLoadReport::migrated.
+/// Each change is a sentence in @ref SettingsLoadReport::migrated. The keys that version 5 added
+/// ("AR Copy Size", "AR Copy Scale", "AR Copy Overall Scale", "Pick Topics") are missing from an
+/// older configuration, and a missing key reads as its default without a warning.
 SettingsText parse_saved_settings(const SettingsText & config, SettingsLoadReport & report);
 
 /// @brief Whether a loaded configuration wants the default dock size of the panel once.
@@ -197,6 +209,11 @@ bool setting_bool(const ResolvedSettings & settings, const char * key);
 int setting_int(const ResolvedSettings & settings, const char * key);
 double setting_double(const ResolvedSettings & settings, const char * key);
 const std::string & setting_text(const ResolvedSettings & settings, const char * key);
+
+/// @brief Whether an edit of @p key by the operator may be kept for the RViz configuration:
+/// false while an acceptable environment variable decides the key, because the value in force is
+/// then the variable's and writing an edit would put it into the file as the operator's own.
+bool setting_edit_is_kept(const ResolvedSettings & settings, const char * key);
 
 /// @brief The environment variables that have no effect with this QAROS.
 const std::vector<std::string> & removed_environment_variables();

@@ -12,12 +12,17 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -72,12 +77,14 @@ constexpr std::size_t kErrorLogDistinct = 128;
 /// @return true if this occurrence of @p message should be printed, and its
 ///         1-based occurrence count in @p out_count.
 ///
-/// The panel adapter is Qt-GUI-thread-only (see the class docs), so the counters
-/// need no lock; the static itself is initialised thread-safely regardless.
+/// Failures are reported by the GUI thread, the frame workers and the threads that own the
+/// session, so the counters are guarded.
 bool
 should_log_panel_error(const std::string & message, std::uint64_t & out_count)
 {
+  static std::mutex guard;
   static std::map<std::string, std::uint64_t> seen;
+  std::lock_guard<std::mutex> lock(guard);
   if (seen.size() >= kErrorLogDistinct && seen.find(message) == seen.end()) {
     seen.clear();
   }
@@ -299,7 +306,95 @@ make_panel_layout(const seam::PanelDesc & desc)
   return layout;
 }
 
+/// The value of the environment variable @p name, trimmed and in lower case; empty when unset.
+std::string
+lower_environment(const char * name)
+{
+  std::string value;
+#ifdef _WIN32
+  char * raw = nullptr;
+  std::size_t length = 0;
+  if (_dupenv_s(&raw, &length, name) == 0 && raw != nullptr) {
+    value = raw;
+  }
+  std::free(raw);
+#else
+  const char * raw = std::getenv(name);
+  if (raw != nullptr) {
+    value = raw;
+  }
+#endif
+  const char * const kSpace = " \t\r\n";
+  const std::size_t first = value.find_first_not_of(kSpace);
+  if (first == std::string::npos) {
+    return std::string();
+  }
+  value = value.substr(first, value.find_last_not_of(kSpace) - first + 1);
+  for (char & c : value) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return value;
+}
+
+/// Checks the destination of a frame against the captured pixels and copies them row by row.
+/// @return empty when the copy was made, otherwise why it was not.
+std::string
+write_panel_pixels(
+  const seam::PanelDesc & desc, const QarVideoTextureCpu & dst, const seam::PanelPixels & pixels)
+{
+  // The sender owns the destination and its layout is fixed at creation, so a
+  // mismatch means our geometry and the sender have drifted apart — copying
+  // anyway would write past the destination.
+  if (dst.size.width != desc.buffer_width || dst.size.height != desc.buffer_height) {
+    return "panel frame size mismatch: sender has " +
+           std::to_string(dst.size.width) + "x" + std::to_string(dst.size.height) +
+           ", we captured " + std::to_string(desc.buffer_width) + "x" +
+           std::to_string(desc.buffer_height);
+  }
+
+  const std::uint32_t row_bytes = desc.buffer_width * 4u;
+  const std::uint32_t dst_pitch = dst.pitch != 0 ? dst.pitch : row_bytes;
+  if (dst_pitch < row_bytes || pixels.stride_bytes < row_bytes) {
+    return "panel frame pitch is smaller than a row of pixels";
+  }
+  const std::size_t needed = static_cast<std::size_t>(dst_pitch) * (desc.buffer_height - 1) +
+    row_bytes;
+  if (dst.texture_data_size < needed) {
+    return "panel destination buffer is too small for the captured frame";
+  }
+
+  // Row-by-row: Qt's scanline stride and QAR's pitch are independently chosen,
+  // so a single flat memcpy would shear the image whenever they differ.
+  for (std::uint32_t y = 0; y < desc.buffer_height; ++y) {
+    std::memcpy(
+      dst.texture_data + static_cast<std::size_t>(y) * dst_pitch,
+      pixels.data + static_cast<std::size_t>(y) * pixels.stride_bytes,
+      row_bytes);
+  }
+  return std::string();
+}
+
 }  // namespace
+
+bool
+default_panel_frame_calls_on_worker()
+{
+  static const bool on_worker = [] {
+      const std::string value = lower_environment("QAR_FRAME_CALLS");
+      if (value.empty() || value == "worker") {
+        return true;
+      }
+      if (value == "gui") {
+        return false;
+      }
+      std::fprintf(
+        stderr, "[qar-panel-adapter] %s QAR_FRAME_CALLS='%s' is neither worker nor gui; the frame "
+        "calls run on one worker thread per panel\n", local_time_hms_ms().c_str(), value.c_str());
+      std::fflush(stderr);
+      return true;
+    }();
+  return on_worker;
+}
 
 // What the panel's tasks and the GUI thread share. The tasks hold it by shared_ptr, so it outlives
 // an adapter that was released while its tasks are queued. The video sender and the panel are
@@ -307,7 +402,9 @@ make_panel_layout(const seam::PanelDesc & desc)
 // frame calls only between the moment `frames_open` is set (the panel exists and shows the
 // stream) or `phase` reads Ready, and the moment it closes the adapter. After that moment the
 // thread that owns the session touches the sender in the teardown only, which a close of the
-// adapter queues behind the create task.
+// adapter queues behind the create task. With a frame worker the worker makes the frame calls in
+// the GUI thread's place, until it has left; it is also the other user of the sender when the
+// teardown runs, and of the two the last one destroys it (see `sender_users`).
 struct QarCApiPanelSenderAdapter::Core
 {
   enum class Phase { kCreating, kReady, kFailed, kClosed };
@@ -343,11 +440,250 @@ struct QarCApiPanelSenderAdapter::Core
   bool retired_logged = false;
   /// Keeps the panel in the state the adapter asked for; see panel_state_guard.hpp. Never null.
   std::shared_ptr<qar_qar_adapter::PanelStateKeeper> keeper;
+
+  /// The breaker of the frame calls: two slow ones within a window pause them, and after the
+  /// pause one probe frame decides. Its state is touched by whichever thread makes the frame
+  /// calls, and its lock is never held across a QarOS call.
+  struct Breaker
+  {
+    std::mutex mutex;
+    FrameBreakerTimings timings;
+    /// The frame calls are paused (read by any thread).
+    std::atomic<bool> tripped{false};
+    bool have_slow_call = false;
+    std::chrono::steady_clock::time_point last_slow_call;
+    /// The pause after the next slow probe, and when the current pause ends.
+    std::chrono::milliseconds pause{5000};
+    std::chrono::steady_clock::time_point resume_at;
+    /// A probe frame is let through and no call has judged it yet.
+    bool probing = false;
+    /// When the frame calls were paused first, for the line about the resume.
+    std::chrono::steady_clock::time_point first_trip_at;
+
+    void set_timings(const FrameBreakerTimings & wanted)
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      timings = wanted;
+      pause = wanted.pause_first;
+    }
+
+    /// True while the frame calls must not be made. When the pause is over it lets one probe
+    /// frame through.
+    bool blocked()
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      if (!tripped.load() || probing) {
+        return false;
+      }
+      if (std::chrono::steady_clock::now() < resume_at) {
+        return true;
+      }
+      // The pause is over: the next frame call is the probe, note() judges it.
+      probing = true;
+      return false;
+    }
+
+    /// True when the pause of the frame calls has ended: the next frame call is the probe. Read
+    /// by the GUI thread, which stages a frame for the probe only then.
+    bool pause_over()
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      return std::chrono::steady_clock::now() >= resume_at;
+    }
+
+    /// Times one frame call that started at @p started; two slow ones pause the frame calls,
+    /// and the call that follows a pause is judged as the probe.
+    void note(
+      const std::string & key, const char * call, std::chrono::steady_clock::time_point started)
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+      const auto as_ms = [](std::chrono::steady_clock::duration d) {
+          return std::chrono::duration_cast<std::chrono::milliseconds>(d);
+        };
+      const std::chrono::milliseconds took = as_ms(now - started);
+      const bool slow = took >= timings.slow_call;
+      if (probing) {
+        probing = false;
+        if (slow) {
+          // The Hub still stalls the frame calls: pause longer.
+          last_slow_call = now;
+          pause = std::min(pause * 2, timings.pause_cap);
+          resume_at = now + pause;
+          return;
+        }
+        // The slow calls before the pause still count: a slow call soon after the resume pauses
+        // the frame calls again. The line comes first, so that a reader who sees the panel
+        // running has the line.
+        std::fprintf(
+          stderr, "[qar-panel-adapter] %s panel '%s' frame calls resumed after %.1f s\n",
+          local_time_hms_ms().c_str(), key.c_str(),
+          std::chrono::duration<double>(now - first_trip_at).count());
+        std::fflush(stderr);
+        tripped.store(false);
+        return;
+      }
+      if (tripped.load()) {
+        return;
+      }
+      if (pause != timings.pause_first && now - last_slow_call >= timings.calm_reset) {
+        pause = timings.pause_first;
+      }
+      if (!slow) {
+        return;
+      }
+      const bool second = have_slow_call && as_ms(now - last_slow_call) <= timings.window;
+      last_slow_call = now;
+      have_slow_call = true;
+      if (!second) {
+        return;
+      }
+      first_trip_at = now;
+      resume_at = now + pause;
+      std::fprintf(
+        stderr, "[qar-panel-adapter] %s panel '%s' frame calls stopped: %s took %lld ms twice\n",
+        local_time_hms_ms().c_str(), key.c_str(), call, static_cast<long long>(took.count()));
+      std::fflush(stderr);
+      tripped.store(true);
+    }
+  };
+  Breaker breaker;
+
+  /// The hand-off between the GUI thread and the frame worker: one staged frame. The lock is held
+  /// for copying a few values or the rows of one frame, never across a QarOS call.
+  struct Frame
+  {
+    std::mutex mutex;
+    /// The newest frame the GUI thread handed over: rows of buffer_width * 4 bytes without padding,
+    /// valid while `has_staged`. Its storage is reused.
+    std::vector<std::uint8_t> staged;
+    bool has_staged = false;
+    /// The frame the worker is sending. Only the worker touches it, outside the lock.
+    std::vector<std::uint8_t> working;
+    /// Why the staged frame has no destination yet: the answer of the worker's last attempt.
+    seam::PanelNotReadyCause cause = seam::PanelNotReadyCause::NoDestination;
+    /// A failure of the worker's frame calls, reported once by the next try_begin_frame.
+    std::string error;
+
+    /// The worker found no destination: the frame it holds stays staged for the next attempt,
+    /// unless a newer one was staged meanwhile, which replaces it.
+    void park(seam::PanelNotReadyCause why)
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      cause = why;
+      if (!has_staged) {
+        staged.swap(working);
+        has_staged = true;
+      }
+    }
+    /// The frame was shown.
+    void sent()
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      cause = seam::PanelNotReadyCause::NoDestination;
+    }
+    /// The frame is dropped; the failure is reported to the GUI thread.
+    void set_error(const std::string & text)
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      cause = seam::PanelNotReadyCause::NoDestination;
+      error = text;
+    }
+  };
+  Frame frame;
+
+  /// Of the teardown and the frame worker the last to call arrive() destroys the video sender.
+  /// 1 when no worker makes the frame calls.
+  std::atomic<int> sender_users{1};
+  bool arrive() { return sender_users.fetch_sub(1) == 1; }
+
+  /// Frames this sender has shown (a show_frame that succeeded).
+  std::atomic<std::uint64_t> frames_shown{0};
+  /// Lets the first frame shown print its line, and the first 603 after a frame print its line.
+  qar_qar_adapter::LogOnce first_show_noted;
+  qar_qar_adapter::LogOnce reconnect_noted;
+  qar_qar_adapter::LogOnce paused_noted;
+
+  enum class Begin { kReady, kNotReady, kError };
+
+  /// Sorts the answer of qar_video_sender_try_begin_frame. A not-ready answer is no failure:
+  /// the caller polls again. @p cause says which one; @p failure is set for a real failure.
+  Begin classify_begin(
+    const QarResult & r, bool sender_ready, seam::PanelNotReadyCause & cause,
+    std::string & failure)
+  {
+    cause = seam::PanelNotReadyCause::NoDestination;
+    if (!qar_result_is_error(r)) {
+      return sender_ready ? Begin::kReady : Begin::kNotReady;
+    }
+    // NOT a failure — a NOT-READY state, and the difference matters because the
+    // caller marks the panel broken on a failure and simply polls again on a
+    // not-ready.
+    //
+    // The header documents this call as "non-blocking attempt to begin
+    // producing a new frame. Sets out_ready to true when a send cycle was
+    // reserved. When false, no frame cycle exists and the caller should poll
+    // again later." A panel sender legitimately exists before anything in the
+    // headset has attached to its stream, and that is exactly what
+    // MEDIA_STREAMING_NO_ACTIVE_TRANSFERS (604) says: there is no transfer to
+    // reserve a destination on. STREAM_IS_RECONNECTING (603) is the same shape
+    // — transient, retried by polling, nothing the caller can fix. Both are
+    // therefore reported the documented way: success, out_ready == false.
+    const bool no_transfers =
+      qar_result_has_code(r, QAR_STATUS_MEDIA_STREAMING_NO_ACTIVE_TRANSFERS);
+    const bool reconnecting =
+      qar_result_has_code(r, QAR_STATUS_MEDIA_STREAMING_STREAM_IS_RECONNECTING);
+    // STREAM_IS_PAUSED (602): the receiver paused the stream. Nothing is wanted until it
+    // resumes, which is a state of the receiver and no fault of this sender.
+    const bool paused = qar_result_has_code(r, QAR_STATUS_MEDIA_STREAMING_STREAM_IS_PAUSED);
+    if (!(no_transfers || reconnecting || paused)) {
+      failure = panel_result_error("qar_video_sender_try_begin_frame", r);
+      return Begin::kError;
+    }
+    // All three are reported as not ready, and the caller counts them apart: nothing attached
+    // to the stream yet is a different fault from a receiver that lost a stream it had, and
+    // from one that paused it.
+    cause = paused ? seam::PanelNotReadyCause::Paused :
+      reconnecting ? seam::PanelNotReadyCause::Reconnecting :
+      seam::PanelNotReadyCause::NoActiveTransfers;
+    std::string stream_text;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      stream_text = stream_id_text;
+    }
+    if (paused && paused_noted.first()) {
+      std::fprintf(
+        stderr, "[qar-panel-adapter] %s panel '%s' stream %s: paused by the receiver\n",
+        local_time_hms_ms().c_str(), desc.key.c_str(), stream_text.c_str());
+      std::fflush(stderr);
+    }
+    const std::uint64_t shown = frames_shown.load();
+    if (reconnecting && shown > 0 && reconnect_noted.first()) {
+      std::fprintf(
+        stderr, "%s\n",
+        reconnecting_line(local_time_hms_ms(), desc.key, stream_text, shown).c_str());
+      std::fflush(stderr);
+    }
+    return Begin::kNotReady;
+  }
+
+  /// Counts a frame shown and prints the line of the first one, with the thread that showed it.
+  void note_shown()
+  {
+    frames_shown.fetch_add(1);
+    if (first_show_noted.first()) {
+      // The thread that shows frames, to be read next to the threads of the 3D stream's lines.
+      std::fprintf(
+        stderr, "%s\n",
+        first_panel_frame_line(local_time_hms_ms(), desc.key, thread_number()).c_str());
+      std::fflush(stderr);
+    }
+  }
 };
 
 QarCApiPanelSenderAdapter::QarCApiPanelSenderAdapter(
   qar_qar_adapter::IQarSessionOwner * owner, const seam::PanelDesc & desc,
-  std::shared_ptr<QarCApiPanelInputSource> input)
+  std::shared_ptr<QarCApiPanelInputSource> input, const FrameCallOptions & frame_calls)
 : owner_(owner),
   desc_(desc),
   input_(input),
@@ -358,6 +694,9 @@ QarCApiPanelSenderAdapter::QarCApiPanelSenderAdapter(
   core_->common_name = desc.common_name;
   core_->keeper = std::make_shared<qar_qar_adapter::PanelStateKeeper>(
     owner, "qar-panel-adapter", desc.key);
+  if (owner != nullptr) {
+    release_lane_ = owner->release_lane();
+  }
 
   // What can be checked without the runtime is refused at once.
   if (owner_ == nullptr) {
@@ -389,6 +728,34 @@ QarCApiPanelSenderAdapter::QarCApiPanelSenderAdapter(
     });
   if (!posted) {
     refuse("QAR session is not accepting calls");
+    return;
+  }
+
+  // The frame worker needs the lane: it posts the release of the video sender there when it
+  // leaves, and the owner waits for it before it destroys the session.
+  if (frame_calls.on_worker) {
+    if (release_lane_ != nullptr) {
+      core_->sender_users.store(2);
+      qar_qar_adapter::FrameWorker::Jobs jobs;
+      jobs.poll = [core] { run_send(core); };
+      jobs.show = [core] { run_send(core); };
+      jobs.leave = [core, lane = release_lane_] { release_sender_on_lane(core, lane); };
+      qar_qar_adapter::FrameWorkerLog log;
+      log.prefix = "[qar-panel-adapter]";
+      log.handle = "video sender";
+      worker_ = qar_qar_adapter::FrameWorker::start(
+        "panel '" + desc_.key + "'", release_lane_, std::move(jobs), frame_calls.worker_timings,
+        std::move(log));
+      if (worker_ == nullptr) {
+        core_->sender_users.store(1);
+      }
+    }
+    if (worker_ == nullptr) {
+      std::fprintf(
+        stderr, "[qar-panel-adapter] %s panel '%s' frame calls run on the GUI thread "
+        "(no frame worker could start)\n", local_time_hms_ms().c_str(), desc_.key.c_str());
+      std::fflush(stderr);
+    }
   }
 }
 
@@ -454,6 +821,7 @@ QarCApiPanelSenderAdapter::drain_results(std::vector<seam::PanelOpResult> & out)
   // The consumer calls this on every tick, which is when a panel that QarOS hid again inside the
   // hold of an ask and then left alone is asked about once more.
   core_->keeper->poll();
+  retry_staged_frame();
   std::vector<seam::PanelOpResult> taken;
   {
     std::lock_guard<std::mutex> lock(core_->mutex);
@@ -756,6 +1124,74 @@ QarCApiPanelSenderAdapter::run_place(QarSession * session, const std::shared_ptr
 }
 
 void
+QarCApiPanelSenderAdapter::resubscribe_if_revived(
+  const std::shared_ptr<Core> & core, const QarGuiPanelId & panel_id)
+{
+  if (!core->input || core->phase.load() == Core::Phase::kClosed) {
+    return;
+  }
+  std::string key;
+  std::string stream_id_text;
+  std::uint32_t content_w = 0;
+  std::uint32_t content_h = 0;
+  {
+    std::lock_guard<std::mutex> lock(core->mutex);
+    key = core->desc.key;
+    stream_id_text = core->stream_id_text;
+    content_w = core->desc.content_width != 0 ? core->desc.content_width : core->desc.buffer_width;
+    content_h =
+      core->desc.content_height != 0 ? core->desc.content_height : core->desc.buffer_height;
+  }
+  if (key.empty()) {
+    return;
+  }
+  // The key keeps ONE subscription, on the panel that was made or reattached last. A kept panel
+  // of the resize ring that is shown again is another id: taps on it would be dropped.
+  const std::optional<QarGuiPanelId> now = core->input->subscribed_id(key);
+  if (now.has_value() && std::memcmp(now->data, panel_id.data, sizeof(panel_id.data)) == 0) {
+    return;
+  }
+  if (!core->input->subscribe_panel(key, panel_id, content_w, content_h, stream_id_text)) {
+    std::fprintf(stderr,
+      "[qar-panel-adapter] %s panel '%s' shown again but takes no AR input: %s\n",
+      local_time_hms_ms().c_str(), key.c_str(), core->input->last_error().c_str());
+    std::fflush(stderr);
+    return;
+  }
+  std::fprintf(stderr,
+    "[qar-panel-adapter] %s panel '%s' re-subscribed for AR click+hover: id='%s' (revived)\n",
+    local_time_hms_ms().c_str(), key.c_str(), panel_id_text(panel_id).c_str());
+  std::fflush(stderr);
+}
+
+void
+QarCApiPanelSenderAdapter::run_input(QarSession *, const std::shared_ptr<Core> & core)
+{
+  QarGuiPanelId panel_id{};
+  {
+    std::lock_guard<std::mutex> lock(core->mutex);
+    if (!core->has_panel || core->phase.load() == Core::Phase::kFailed) {
+      return;  // the panel was never made, or its creation failed: nothing to subscribe
+    }
+    panel_id = core->panel_id;
+  }
+  resubscribe_if_revived(core, panel_id);
+}
+
+void
+QarCApiPanelSenderAdapter::ensure_input()
+{
+  const Core::Phase phase = core_->phase.load(std::memory_order_acquire);
+  if (closed_ || (phase != Core::Phase::kCreating && phase != Core::Phase::kReady)) {
+    return;
+  }
+  const std::shared_ptr<Core> core = core_;
+  owner_->post_session_task(
+    ("panel-input:" + desc_.key).c_str(),
+    [core](QarSession * session) { run_input(session, core); });
+}
+
+void
 QarCApiPanelSenderAdapter::run_state(
   QarSession * session, const std::shared_ptr<Core> & core, QarGuiPanelState state)
 {
@@ -778,6 +1214,9 @@ QarCApiPanelSenderAdapter::run_state(
   seam::PanelOpResult result;
   result.op = seam::PanelOpResult::Op::State;
   result.state = to_seam(state);
+  if (state == QAR_GUI_PANEL_STATE_VISIBLE) {
+    resubscribe_if_revived(core, panel_id);
+  }
   const QarResult r = QAR_CALL(qar_gui_panels_set_state, session, &panel_id, state);
   if (qar_result_is_error(r)) {
     result.ok = false;
@@ -822,59 +1261,103 @@ QarCApiPanelSenderAdapter::try_begin_frame(bool & out_ready)
     return false;
   }
 
+  if (worker_ != nullptr) {
+    return try_begin_on_worker(out_ready);
+  }
+
+  if (core_->breaker.blocked()) {
+    // The frame calls are paused: nothing is asked of the sender meanwhile.
+    frame_reserved_ = false;
+    return true;
+  }
+
   bool sender_ready = false;
+  const auto begin_started = std::chrono::steady_clock::now();
   const QarResult r = QAR_CALL(qar_video_sender_try_begin_frame, sender_, &sender_ready);
-  if (qar_result_is_error(r)) {
-    // NOT a failure — a NOT-READY state, and the difference matters because the
-    // caller marks the panel broken on a failure and simply polls again on a
-    // not-ready.
-    //
-    // The header documents this call as "non-blocking attempt to begin
-    // producing a new frame. Sets out_ready to true when a send cycle was
-    // reserved. When false, no frame cycle exists and the caller should poll
-    // again later." A panel sender legitimately exists before anything in the
-    // headset has attached to its stream, and that is exactly what
-    // MEDIA_STREAMING_NO_ACTIVE_TRANSFERS (604) says: there is no transfer to
-    // reserve a destination on. STREAM_IS_RECONNECTING (603) is the same shape
-    // — transient, retried by polling, nothing the caller can fix. Both are
-    // therefore reported the documented way: success, out_ready == false.
-    const bool no_transfers =
-      qar_result_has_code(r, QAR_STATUS_MEDIA_STREAMING_NO_ACTIVE_TRANSFERS);
-    const bool reconnecting =
-      qar_result_has_code(r, QAR_STATUS_MEDIA_STREAMING_STREAM_IS_RECONNECTING);
-    // STREAM_IS_PAUSED (602): the receiver paused the stream. Nothing is wanted until it
-    // resumes, which is a state of the receiver and no fault of this sender.
-    const bool paused = qar_result_has_code(r, QAR_STATUS_MEDIA_STREAMING_STREAM_IS_PAUSED);
-    if (no_transfers || reconnecting || paused) {
-      // All three are reported as not ready, and the caller counts them apart: nothing attached
-      // to the stream yet is a different fault from a receiver that lost a stream it had, and
-      // from one that paused it.
-      not_ready_cause_ = paused ? seam::PanelNotReadyCause::Paused :
-        reconnecting ? seam::PanelNotReadyCause::Reconnecting :
-        seam::PanelNotReadyCause::NoActiveTransfers;
-      if (paused && paused_noted_.first()) {
-        std::fprintf(
-          stderr, "[qar-panel-adapter] %s panel '%s' stream %s: paused by the receiver\n",
-          local_time_hms_ms().c_str(), desc_.key.c_str(), stream_id_text().c_str());
-        std::fflush(stderr);
-      }
-      if (reconnecting && frames_shown_ > 0 && reconnect_noted_.first()) {
-        std::fprintf(
-          stderr, "%s\n",
-          reconnecting_line(local_time_hms_ms(), desc_.key, stream_id_text(), frames_shown_)
-          .c_str());
-        std::fflush(stderr);
-      }
+  core_->breaker.note(desc_.key, "try_begin_frame", begin_started);
+  if (core_->breaker.tripped.load()) {
+    frame_reserved_ = false;
+    return true;
+  }
+  std::string error;
+  switch (core_->classify_begin(r, sender_ready, not_ready_cause_, error)) {
+    case Core::Begin::kError:
+      last_error_ = error;
+      return false;
+    case Core::Begin::kNotReady:
       frame_reserved_ = false;
-      out_ready = false;
       return true;
+    case Core::Begin::kReady:
+      break;
+  }
+  frame_reserved_ = true;
+  out_ready = true;
+  return true;
+}
+
+bool
+QarCApiPanelSenderAdapter::try_begin_on_worker(bool & out_ready)
+{
+  Core::Frame & frame = core_->frame;
+  frame_reserved_ = false;
+  std::string error;
+  bool staged = false;
+  seam::PanelNotReadyCause cause = seam::PanelNotReadyCause::NoDestination;
+  {
+    std::lock_guard<std::mutex> lock(frame.mutex);
+    if (!frame.error.empty()) {
+      error.swap(frame.error);
+    } else {
+      staged = frame.has_staged;
+      cause = frame.cause;
     }
-    last_error_ = panel_result_error("qar_video_sender_try_begin_frame", r);
+  }
+  if (!error.empty()) {
+    last_error_ = error;
     return false;
   }
-  frame_reserved_ = sender_ready;
-  out_ready = sender_ready;
+  // The frame calls are paused, or the worker is inside a call that does not return: no frame is
+  // staged for them. After the pause a frame is let through for the worker to probe with.
+  const bool paused = core_->breaker.tripped.load() && !core_->breaker.pause_over();
+  if (worker_->waiting() || paused) {
+    return true;
+  }
+  if (staged) {
+    // A frame waits for a destination: that is what the consumer is told, and the worker tries
+    // the frame again. A worker inside a call that blocks does not delay this call.
+    not_ready_cause_ = cause;
+    last_kick_ = std::chrono::steady_clock::now();
+    worker_->kick();
+    return true;
+  }
+  // No cycle is reserved before there is a frame to send: the answer says that a staging slot is
+  // free, and the worker reserves the cycle when submit_frame hands the frame over.
+  frame_reserved_ = true;
+  out_ready = true;
   return true;
+}
+
+void
+QarCApiPanelSenderAdapter::retry_staged_frame()
+{
+  if (worker_ == nullptr || closed_) {
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last_kick_ < std::chrono::milliseconds(20)) {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(core_->frame.mutex);
+    if (!core_->frame.has_staged) {
+      return;
+    }
+  }
+  if (core_->breaker.tripped.load() && !core_->breaker.pause_over()) {
+    return;
+  }
+  last_kick_ = now;
+  worker_->kick();
 }
 
 bool
@@ -888,15 +1371,30 @@ QarCApiPanelSenderAdapter::submit_frame(const seam::PanelPixels & pixels)
   // make the next tick believe a cycle is still open.
   frame_reserved_ = false;
 
+  if (worker_ != nullptr) {
+    return submit_on_worker(pixels);
+  }
+
   if (pixels.data == nullptr) {
     last_error_ = "submit_frame got a null pixel buffer";
     return false;
   }
 
+  if (core_->breaker.blocked()) {
+    last_error_ = "frame calls stopped: a frame call blocked";
+    return false;
+  }
+
   QarVideoFrameCpu frame = qar_video_frame_cpu_default();
+  const auto frame_started = std::chrono::steady_clock::now();
   const QarResult r = QAR_CALL(qar_video_sender_frame_cpu, sender_, &frame);
+  core_->breaker.note(desc_.key, "frame_cpu", frame_started);
   if (qar_result_is_error(r)) {
     last_error_ = panel_result_error("qar_video_sender_frame_cpu", r);
+    return false;
+  }
+  if (core_->breaker.tripped.load()) {
+    last_error_ = "frame calls stopped: a frame call blocked";
     return false;
   }
   if (frame.textures_count == 0 || frame.textures[0].texture_data == nullptr) {
@@ -904,54 +1402,141 @@ QarCApiPanelSenderAdapter::submit_frame(const seam::PanelPixels & pixels)
     return false;
   }
 
-  const QarVideoTextureCpu & dst = frame.textures[0];
-  // The sender owns the destination and its layout is fixed at creation, so a
-  // mismatch means our geometry and the sender have drifted apart — copying
-  // anyway would write past the destination.
-  if (dst.size.width != desc_.buffer_width || dst.size.height != desc_.buffer_height) {
-    last_error_ = "panel frame size mismatch: sender has " +
-      std::to_string(dst.size.width) + "x" + std::to_string(dst.size.height) + ", we captured " +
-      std::to_string(desc_.buffer_width) + "x" + std::to_string(desc_.buffer_height);
+  const std::string copy_error = write_panel_pixels(desc_, frame.textures[0], pixels);
+  if (!copy_error.empty()) {
+    last_error_ = copy_error;
     return false;
   }
 
-  const std::uint32_t row_bytes = desc_.buffer_width * 4u;
-  const std::uint32_t dst_pitch = dst.pitch != 0 ? dst.pitch : row_bytes;
-  if (dst_pitch < row_bytes || pixels.stride_bytes < row_bytes) {
-    last_error_ = "panel frame pitch is smaller than a row of pixels";
-    return false;
-  }
-  const std::size_t needed = static_cast<std::size_t>(dst_pitch) * (desc_.buffer_height - 1) +
-    row_bytes;
-  if (dst.texture_data_size < needed) {
-    last_error_ = "panel destination buffer is too small for the captured frame";
-    return false;
-  }
-
-  // Row-by-row: Qt's scanline stride and QAR's pitch are independently chosen,
-  // so a single flat memcpy would shear the image whenever they differ.
-  for (std::uint32_t y = 0; y < desc_.buffer_height; ++y) {
-    std::memcpy(
-      dst.texture_data + static_cast<std::size_t>(y) * dst_pitch,
-      pixels.data + static_cast<std::size_t>(y) * pixels.stride_bytes,
-      row_bytes);
-  }
-
+  const auto show_started = std::chrono::steady_clock::now();
   const QarResult shown = QAR_CALL(qar_video_sender_show_frame, sender_);
+  core_->breaker.note(desc_.key, "show_frame", show_started);
   if (qar_result_is_error(shown)) {
     last_error_ = panel_result_error("qar_video_sender_show_frame", shown);
     return false;
   }
-  ++frames_shown_;
-  if (first_show_noted_.first()) {
-    // The thread that shows frames, to be read next to the threads of the 3D stream's lines.
-    std::fprintf(
-      stderr, "%s\n",
-      first_panel_frame_line(local_time_hms_ms(), desc_.key, thread_number()).c_str());
-    std::fflush(stderr);
-  }
+  core_->note_shown();
   last_error_.clear();
   return true;
+}
+
+bool
+QarCApiPanelSenderAdapter::submit_on_worker(const seam::PanelPixels & pixels)
+{
+  Core::Frame & frame = core_->frame;
+  if (pixels.data == nullptr) {
+    last_error_ = "submit_frame got a null pixel buffer";
+    return false;
+  }
+  const std::uint32_t row_bytes = desc_.buffer_width * 4u;
+  if (pixels.stride_bytes < row_bytes) {
+    last_error_ = "panel frame pitch is smaller than a row of pixels";
+    return false;
+  }
+  {
+    // The frame is copied into the staging buffer, which replaces a frame that is still staged.
+    // The worker takes the buffer under the same lock and never holds it across a QarOS call.
+    std::lock_guard<std::mutex> lock(frame.mutex);
+    frame.staged.resize(static_cast<std::size_t>(row_bytes) * desc_.buffer_height);
+    for (std::uint32_t y = 0; y < desc_.buffer_height; ++y) {
+      std::memcpy(
+        frame.staged.data() + static_cast<std::size_t>(y) * row_bytes,
+        pixels.data + static_cast<std::size_t>(y) * pixels.stride_bytes,
+        row_bytes);
+    }
+    frame.has_staged = true;
+  }
+  worker_->hand_over();
+  last_error_.clear();
+  return true;
+}
+
+// The job of the frame worker: sends the staged frame in one go (reserves the cycle, gets the
+// destination, copies the rows into it, shows the frame), so that no cycle outlives the job. A
+// frame that finds no destination stays staged. Every QarOS call is made here, none with a lock
+// held.
+void
+QarCApiPanelSenderAdapter::run_send(const std::shared_ptr<Core> & core)
+{
+  Core::Frame & frame = core->frame;
+  {
+    std::lock_guard<std::mutex> lock(frame.mutex);
+    if (!frame.has_staged) {
+      return;
+    }
+    frame.staged.swap(frame.working);
+    frame.has_staged = false;
+  }
+  const Core::Phase phase = core->phase.load(std::memory_order_acquire);
+  QarVideoSender * sender = nullptr;
+  if (phase == Core::Phase::kReady ||
+    (phase == Core::Phase::kCreating && core->frames_open.load(std::memory_order_acquire)))
+  {
+    std::lock_guard<std::mutex> lock(core->mutex);
+    sender = core->sender;
+  }
+  if (sender == nullptr || core->breaker.blocked()) {
+    frame.park(seam::PanelNotReadyCause::NoDestination);
+    return;
+  }
+
+  bool sender_ready = false;
+  const auto begin_started = std::chrono::steady_clock::now();
+  const QarResult r = QAR_CALL(qar_video_sender_try_begin_frame, sender, &sender_ready);
+  core->breaker.note(core->desc.key, "try_begin_frame", begin_started);
+  if (core->breaker.tripped.load()) {
+    frame.park(seam::PanelNotReadyCause::NoDestination);
+    return;
+  }
+  seam::PanelNotReadyCause cause = seam::PanelNotReadyCause::NoDestination;
+  std::string error;
+  switch (core->classify_begin(r, sender_ready, cause, error)) {
+    case Core::Begin::kError:
+      frame.set_error(error);
+      return;
+    case Core::Begin::kNotReady:
+      frame.park(cause);
+      return;
+    case Core::Begin::kReady:
+      break;
+  }
+
+  QarVideoFrameCpu cpu = qar_video_frame_cpu_default();
+  const auto cpu_started = std::chrono::steady_clock::now();
+  const QarResult got = QAR_CALL(qar_video_sender_frame_cpu, sender, &cpu);
+  core->breaker.note(core->desc.key, "frame_cpu", cpu_started);
+  if (qar_result_is_error(got)) {
+    frame.set_error(panel_result_error("qar_video_sender_frame_cpu", got));
+    return;
+  }
+  if (core->breaker.tripped.load()) {
+    frame.set_error("frame calls stopped: a frame call blocked");
+    return;
+  }
+  if (cpu.textures_count == 0 || cpu.textures[0].texture_data == nullptr) {
+    frame.set_error("qar_video_sender_frame_cpu returned no writable texture");
+    return;
+  }
+  // The destination belongs to the cycle this job reserved; it is written here and nowhere else.
+  seam::PanelPixels pixels;
+  pixels.data = frame.working.data();
+  pixels.width = core->desc.buffer_width;
+  pixels.height = core->desc.buffer_height;
+  pixels.stride_bytes = core->desc.buffer_width * 4u;
+  const std::string copy_error = write_panel_pixels(core->desc, cpu.textures[0], pixels);
+  if (!copy_error.empty()) {
+    frame.set_error(copy_error);
+    return;
+  }
+  const auto show_started = std::chrono::steady_clock::now();
+  const QarResult shown = QAR_CALL(qar_video_sender_show_frame, sender);
+  core->breaker.note(core->desc.key, "show_frame", show_started);
+  if (qar_result_is_error(shown)) {
+    frame.set_error(panel_result_error("qar_video_sender_show_frame", shown));
+    return;
+  }
+  core->note_shown();
+  frame.sent();
 }
 
 bool
@@ -1053,6 +1638,11 @@ QarCApiPanelSenderAdapter::teardown(bool panel_closed_in_ar, bool keep_panel)
   // destroy it.
   core_->phase.store(Core::Phase::kClosed, std::memory_order_release);
   core_->keeper->retire();
+  if (worker_ != nullptr) {
+    // The worker makes no further frame call after the one it is in; it then posts the release
+    // of the video sender, which the teardown task below leaves to it when it is the last one.
+    worker_->stop();
+  }
 
   if (input_ && !desc_.key.empty()) {
     report.input_unsubscribed = input_->has_panel(desc_.key);
@@ -1061,16 +1651,70 @@ QarCApiPanelSenderAdapter::teardown(bool panel_closed_in_ar, bool keep_panel)
     return report;
   }
   const std::shared_ptr<Core> core = core_;
+  const std::shared_ptr<qar_qar_adapter::IReleaseLane> lane = release_lane_;
   const bool posted = owner_->post_session_task(
     ((keep_panel ? "panel-detach:" : "panel-close:") + desc_.key).c_str(),
     [core, panel_closed_in_ar, keep_panel](QarSession * session) {
       run_teardown(session, core, panel_closed_in_ar, keep_panel);
     },
-    [core] { core->keeper->abandon(); });
+    [core, lane] {
+      // The task will not run: the session it was for is gone or going.
+      core->keeper->release_on(lane);
+      release_sender_on_lane(core, lane);
+    });
   if (posted) {
     report.panel = seam::PanelCloseOutcome::Queued;
+    return report;
   }
+  // No task can be queued (the session is lost or ending). The video sender and the input tokens
+  // belong to the session, so they go to the thread that owns it, the watch of the panel's state
+  // with them. The panel in the Hub is left as it is; the next session finds it again under its
+  // common name.
+  core->keeper->release_on(lane);
+  if (input_ && !desc_.key.empty() && !refused_) {
+    input_->unsubscribe_panel_on_lane(desc_.key);
+  }
+  release_sender_on_lane(core, lane);
   return report;
+}
+
+void
+QarCApiPanelSenderAdapter::release_sender_on_lane(
+  const std::shared_ptr<Core> & core, const std::shared_ptr<qar_qar_adapter::IReleaseLane> & lane)
+{
+  if (!core->arrive() || lane == nullptr) {
+    return;
+  }
+  const bool posted = lane->post_release(
+    ("panel-video-sender-release:" + core->desc.key).c_str(), [core] {
+      QarVideoSender * sender = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(core->mutex);
+        sender = core->sender;
+        core->sender = nullptr;
+      }
+      if (sender != nullptr) {
+        QAR_CALL(qar_video_sender_handle_destroy, sender);
+      }
+    });
+  if (!posted) {
+    std::fprintf(
+      stderr, "[qar-panel-adapter] %s panel '%s' video sender left unreleased (the owner thread "
+      "is gone)\n", local_time_hms_ms().c_str(), core->desc.key.c_str());
+    std::fflush(stderr);
+  }
+}
+
+bool
+QarCApiPanelSenderAdapter::frame_calls_stopped() const
+{
+  return core_->breaker.tripped.load() || (worker_ != nullptr && worker_->waiting());
+}
+
+void
+QarCApiPanelSenderAdapter::set_frame_breaker_timings(const FrameBreakerTimings & timings)
+{
+  core_->breaker.set_timings(timings);
 }
 
 // The one teardown, in the one safe order, on the thread that owns the session. Idempotent per
@@ -1090,7 +1734,6 @@ QarCApiPanelSenderAdapter::run_teardown(
     panel_id = core->panel_id;
     stream_id_text = core->stream_id_text;
     has_panel = core->has_panel;
-    core->sender = nullptr;
     core->has_panel = false;
   }
   const std::string & key = core->desc.key;
@@ -1132,10 +1775,17 @@ QarCApiPanelSenderAdapter::run_teardown(
   // retires the panel-UPDATE subscription, which is what keeps the CLOSED state
   // the runtime republishes for OUR close_panel below from coming back to us as
   // "the operator closed this panel in AR".
+  //
+  // Only the subscription that names THIS panel ends. The key keeps one subscription, on the
+  // panel made or shown last: when that is another panel (a newer adapter took the key), it is
+  // not ours to cancel.
   if (core->input && !key.empty()) {
-    const bool had_input = core->input->has_panel(key);
-    core->input->unsubscribe_panel(key);
+    const std::optional<QarGuiPanelId> subscribed = core->input->subscribed_id(key);
+    const bool had_input =
+      has_panel && subscribed.has_value() &&
+      std::memcmp(subscribed->data, panel_id.data, sizeof(panel_id.data)) == 0;
     if (had_input) {
+      core->input->unsubscribe_panel(key);
       step_line("step 1/3: AR input + panel-update subscriptions cancelled");
     }
   }
@@ -1180,11 +1830,25 @@ QarCApiPanelSenderAdapter::run_teardown(
   }
 
   // STEP 3 — the video sender, unconditionally. Announced BEFORE the call (the
-  // riskiest of the three: it is the one a crash dump has been about).
-  if (sender != nullptr) {
-    step_line("step 3/3: destroying the video sender");
-    QAR_CALL(qar_video_sender_handle_destroy, sender);
-    report.sender_destroyed = true;
+  // riskiest of the three: it is the one a crash dump has been about). A frame worker that is
+  // still inside a call on the sender destroys it, through the lane, when it has left: the last
+  // of this step and the worker's exit is the one that destroys it.
+  bool left_to_worker = false;
+  if (core->arrive()) {
+    QarVideoSender * doomed = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(core->mutex);
+      doomed = core->sender;
+      core->sender = nullptr;
+    }
+    if (doomed != nullptr) {
+      step_line("step 3/3: destroying the video sender");
+      QAR_CALL(qar_video_sender_handle_destroy, doomed);
+      report.sender_destroyed = true;
+    }
+  } else if (sender != nullptr) {
+    step_line("step 3/3: the video sender is destroyed when the frame worker has left");
+    left_to_worker = true;
   }
 
   // The retirement line, and the counterpart to the creation line above: what this
@@ -1230,7 +1894,8 @@ QarCApiPanelSenderAdapter::run_teardown(
       "video sender %s\n",
       local_time_hms_ms().c_str(), key.c_str(), panel_id_text(panel_id).c_str(),
       stream_id_text.c_str(), took_ms, gui_panel,
-      report.sender_destroyed ? "destroyed" : "none to destroy");
+      report.sender_destroyed ? "destroyed" :
+      left_to_worker ? "released by the frame worker" : "none to destroy");
     std::fflush(stderr);
   }
 }
@@ -1254,9 +1919,21 @@ QarCApiPanelSenderFactory::create_panel_sender(const seam::PanelDesc & desc)
     return nullptr;
   }
 
+  // The threads of frame workers that have ended are joined here.
+  qar_qar_adapter::FrameWorker::reap();
+  if (frame_calls_noted_.first()) {
+    std::fprintf(
+      stderr, "[qar-panel-adapter] %s frame calls run on %s (QAR_FRAME_CALLS=%s)\n",
+      local_time_hms_ms().c_str(),
+      frame_calls_.on_worker ? "one worker thread per panel" : "the GUI thread",
+      frame_calls_.on_worker ? "worker" : "gui");
+    std::fflush(stderr);
+  }
+
   // The panel and its video sender are made on the thread that owns the session; the adapter
   // is handed back at once, still "creating".
-  auto adapter = std::make_shared<QarCApiPanelSenderAdapter>(session_owner_, desc, input_);
+  auto adapter = std::make_shared<QarCApiPanelSenderAdapter>(
+    session_owner_, desc, input_, frame_calls_);
   if (adapter->refused()) {
     last_error_ = adapter->last_error();
     return nullptr;

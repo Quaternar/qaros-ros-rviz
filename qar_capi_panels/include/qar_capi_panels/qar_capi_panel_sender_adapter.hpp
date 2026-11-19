@@ -27,6 +27,8 @@
 #ifndef QAR_CAPI_PANELS__QAR_CAPI_PANEL_SENDER_ADAPTER_HPP_
 #define QAR_CAPI_PANELS__QAR_CAPI_PANEL_SENDER_ADAPTER_HPP_
 
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -35,6 +37,7 @@
 #include "qar_ar_core/qar_streaming_c.hpp"
 #include "qar_capi_panels/qar_capi_panel_input_source.hpp"
 #include "qar_capi_panels/seam_c.hpp"
+#include "qar_qar_adapter/frame_worker.hpp"
 #include "qar_qar_adapter/log_time.hpp"
 #include "qar_qar_adapter/panel_state_guard.hpp"
 #include "qar_qar_adapter/qar_capi_session_owner.hpp"
@@ -43,14 +46,39 @@
 namespace qar_capi_panels
 {
 
+/// @brief Where the frame calls of the panel senders are made: true (the default) on one frame
+/// worker thread per panel, false when QAR_FRAME_CALLS is `gui`: then on the GUI thread. Any other
+/// value is the default, with one warning line. Read once.
+bool default_panel_frame_calls_on_worker();
+
+/// @brief How a panel sender makes its QarOS frame calls (try-begin, the frame access, show).
+struct FrameCallOptions
+{
+  /// True: a frame worker makes them and the GUI thread only reads and writes a hand-off slot.
+  /// False: the GUI thread makes them itself. A lane that refuses the worker also leaves the
+  /// calls on the GUI thread.
+  bool on_worker = default_panel_frame_calls_on_worker();
+  /// The limits of the frame worker; a test shortens them.
+  qar_qar_adapter::FrameWorkerTimings worker_timings;
+};
+
 /// @brief One QarOS GUI panel fed by one producer-owned CPU video stream.
 ///
 /// Lifetime is create -> N x (try_begin_frame + submit_frame) -> close. Every call of this class
 /// is for the Qt GUI thread, and none of them waits for the Hub. The panel and its video sender
 /// are made, changed and destroyed by tasks on the thread that owns the session (see
 /// qar_qar_adapter::IQarSessionOwner::post_session_task), in the order the calls were made; the
-/// outcomes come back through @ref drain_results. `qar_video_sender_try_begin_frame` is documented
-/// non-blocking, so the per-frame calls stay on the GUI thread and never stall it.
+/// outcomes come back through @ref drain_results.
+///
+/// The frame calls of the video sender are made by a frame worker (qar_qar_adapter::FrameWorker),
+/// one thread per panel. The GUI thread copies the captured pixels into a staging buffer of the
+/// adapter and hands the frame over; one job of the worker then reserves the send cycle, gets the
+/// destination, copies the staged pixels into it and shows the frame, so a cycle is reserved only
+/// when there is a frame to send and none outlives the job. A frame that finds no destination (no
+/// receiver, a reconnecting or a paused stream) stays staged and is tried again. The GUI thread
+/// takes a mutex that no thread holds across a QarOS call and never waits for the worker, so a
+/// frame call that blocks stops the frames of that panel only. With FrameCallOptions::on_worker
+/// false the GUI thread makes the calls itself.
 class QarCApiPanelSenderAdapter : public seam::IPanelSender
 {
 public:
@@ -63,10 +91,12 @@ public:
   ///        tying the subscription's life to the panel's exactly,
   ///        which is what keeps a callback from arriving for a panel that no
   ///        longer exists. Shared, because the source outlives any one panel.
+  /// @param frame_calls  Where the frame calls are made.
   QarCApiPanelSenderAdapter(
     qar_qar_adapter::IQarSessionOwner * owner,
     const seam::PanelDesc & desc,
-    std::shared_ptr<QarCApiPanelInputSource> input = nullptr);
+    std::shared_ptr<QarCApiPanelInputSource> input = nullptr,
+    const FrameCallOptions & frame_calls = FrameCallOptions());
   ~QarCApiPanelSenderAdapter() override;
 
   QarCApiPanelSenderAdapter(const QarCApiPanelSenderAdapter &) = delete;
@@ -100,8 +130,47 @@ public:
 
   /// @brief Reserves a frame cycle once @ref pending is false: while the creation is still
   /// running (probe, reattach) as well as after it. A creation that fails ends the frames at the
-  /// next call.
+  /// next call. With a frame worker nothing is reserved here: the answer is "ready" while a
+  /// staging slot is free, and the worker reserves the cycle when the frame is handed over. A
+  /// frame that is staged and waits for a destination makes the answer "not ready", with the
+  /// cause the worker found.
   bool try_begin_frame(bool & out_ready) override;
+
+  /// @brief True while the frame calls of this panel are paused: two calls of the frame path
+  /// (begin-frame, frame, show-frame) each took @ref FrameBreakerTimings::slow_call or longer
+  /// within @ref FrameBreakerTimings::window. No frame call is made during the pause and
+  /// @ref try_begin_frame reports no destination. After the pause one probe frame is tried: a
+  /// fast probe resumes the panel, a slow one doubles the pause (up to
+  /// @ref FrameBreakerTimings::pause_cap). It is also true while the frame worker has been inside
+  /// one QarOS call for FrameWorkerTimings::wait_notice or longer. GUI thread.
+  bool frame_calls_stopped() const;
+
+  /// True when a frame worker makes the frame calls of this panel.
+  bool frame_calls_on_worker() const { return worker_ != nullptr; }
+
+  /// How many jobs the frame worker has started (0 without a worker): a panel with nothing to
+  /// send starts none.
+  unsigned long long frame_worker_jobs() const
+  {
+    return worker_ != nullptr ? worker_->polls() + worker_->shows() : 0ull;
+  }
+
+  /// The times of the frame-call breaker; a test shortens them.
+  struct FrameBreakerTimings
+  {
+    /// A frame call at least this long counts as slow.
+    std::chrono::milliseconds slow_call{250};
+    /// Two slow frame calls within this time pause the frame calls.
+    std::chrono::milliseconds window{10000};
+    /// The first pause; every further slow probe doubles it.
+    std::chrono::milliseconds pause_first{5000};
+    std::chrono::milliseconds pause_cap{60000};
+    /// A time without a slow call after which the next pause is the first one again.
+    std::chrono::milliseconds calm_reset{60000};
+  };
+
+  /// Replaces the times of the breaker. GUI thread, before the frame calls start.
+  void set_frame_breaker_timings(const FrameBreakerTimings & timings);
 
   /// @brief Which of the five answers the last @ref try_begin_frame gave when it reported no
   /// destination: success without a reserved cycle, no active transfers (604), a transfer that
@@ -128,6 +197,11 @@ public:
   bool set_state(seam::PanelState state) override;
   bool supports_state() const override { return true; }
 
+  /// @brief Queues the AR input subscription of this panel when its key is subscribed on
+  /// another panel; the task runs on the thread that owns the session. Nothing is queued for a
+  /// closed adapter, and a key that is subscribed on this panel already is left as it is.
+  void ensure_input() override;
+
   /// @brief Replaces the clock by which the adapter decides whether a report of the runtime that
   /// contradicts the state it set is still contested (5 seconds after its own change, at most
   /// 3 asks within 10 seconds). The steady clock is the default. For tests.
@@ -146,6 +220,10 @@ public:
   ///  2. `qar_gui_panels_close_panel` — skipped when @p panel_closed_in_ar, and a
   ///     failure is reported rather than hidden;
   ///  3. `qar_video_sender_handle_destroy` — always, whatever step 2 did.
+  ///
+  /// When no task can be queued (the session is lost, or ends), the video sender and the input
+  /// tokens are handed to the release lane of the owner instead (the panel in the Hub stays and is
+  /// found again by the next session); a host without a lane leaves them as they are.
   ///
   /// Idempotent: the destructor calls it again and finds nothing to do. That
   /// matters beyond tidiness — a SECOND unsubscribe for this key would tear down
@@ -174,11 +252,31 @@ private:
   /// What the tasks and the GUI thread share. Defined in the .cpp.
   struct Core;
 
+  /// The job of the frame worker, for a hand-over and for a kick alike. Runs on the worker's
+  /// thread: sends the staged frame with all its QarOS calls, or does nothing when none is staged;
+  /// a frame that finds no destination stays staged.
+  static void run_send(const std::shared_ptr<Core> & core);
+
+  /// The two frame calls of the GUI thread when a worker makes the QarOS calls.
+  bool try_begin_on_worker(bool & out_ready);
+  bool submit_on_worker(const seam::PanelPixels & pixels);
+
+  /// Asks the worker to try a staged frame again, at most once in a few milliseconds and only
+  /// while a frame is staged: a panel with nothing to send makes no QarOS call.
+  void retry_staged_frame();
+
   /// The tasks. Each runs on the thread that owns the session.
   static void run_create(QarSession * session, const std::shared_ptr<Core> & core);
   static void run_place(QarSession * session, const std::shared_ptr<Core> & core);
   static void run_state(
     QarSession * session, const std::shared_ptr<Core> & core, QarGuiPanelState state);
+
+  /// Subscribes the panel of @p core for AR input again when its key is subscribed on another
+  /// panel (a kept panel of the resize ring that is shown again); runs inside the state task and
+  /// inside the input task of ensure_input().
+  static void resubscribe_if_revived(
+    const std::shared_ptr<Core> & core, const QarGuiPanelId & panel_id);
+  static void run_input(QarSession * session, const std::shared_ptr<Core> & core);
   static void run_teardown(
     QarSession * session, const std::shared_ptr<Core> & core, bool panel_closed_in_ar,
     bool keep_panel);
@@ -186,10 +284,23 @@ private:
   /// The one teardown behind close() and detach(); @p keep_panel skips step 2.
   seam::PanelCloseReport teardown(bool panel_closed_in_ar, bool keep_panel);
 
+  /// Hands the video sender of @p core to @p lane for the thread that owns the session to destroy;
+  /// used when that thread cannot run the teardown task (the session is lost, or the task was
+  /// dropped) and by the frame worker when it leaves. Of the teardown and the frame worker the
+  /// last one to get here destroys the sender, so that it is never destroyed while the worker
+  /// can still be inside a call on it. The sender is read on the lane's thread, so a creation
+  /// that still runs is waited for. A lane that refuses has no thread left: the sender stays as
+  /// it is and one line says so.
+  static void release_sender_on_lane(
+    const std::shared_ptr<Core> & core,
+    const std::shared_ptr<qar_qar_adapter::IReleaseLane> & lane);
+
   /// Marks the panel as refused by the constructor.
   void refuse(const std::string & reason);
 
   qar_qar_adapter::IQarSessionOwner * owner_ = nullptr;
+  /// The lane of the owner, taken when the adapter was made; null for a host without one.
+  std::shared_ptr<qar_qar_adapter::IReleaseLane> release_lane_;
   seam::PanelDesc desc_;
   /// Null when the host wants a stream-only panel (input off).
   std::shared_ptr<QarCApiPanelInputSource> input_;
@@ -206,12 +317,9 @@ private:
   std::string last_error_;
   /// The answer of the last try_begin_frame when it reported no destination.
   seam::PanelNotReadyCause not_ready_cause_ = seam::PanelNotReadyCause::NoDestination;
-  /// Frames this sender has shown (a show_frame that succeeded).
-  std::uint64_t frames_shown_ = 0;
-  /// Lets the first frame shown print its line, and the first 603 after a frame print its line.
-  qar_qar_adapter::LogOnce first_show_noted_;
-  qar_qar_adapter::LogOnce reconnect_noted_;
-  qar_qar_adapter::LogOnce paused_noted_;
+  /// The thread that makes the frame calls; null when the GUI thread makes them.
+  std::shared_ptr<qar_qar_adapter::FrameWorker> worker_;
+  std::chrono::steady_clock::time_point last_kick_;
 };
 
 /// @brief Mints QarCApiPanelSenderAdapters against a live QarCApiSenderFactory.
@@ -237,9 +345,16 @@ public:
   /// @brief The input source this factory subscribes its panels through, if any.
   const std::shared_ptr<QarCApiPanelInputSource> & input() const { return input_; }
 
+  /// @brief Where the panels made after this call make their frame calls. GUI thread.
+  void set_frame_call_options(const FrameCallOptions & options) { frame_calls_ = options; }
+  const FrameCallOptions & frame_call_options() const { return frame_calls_; }
+
 private:
   qar_qar_adapter::IQarSessionOwner * session_owner_ = nullptr;
   std::shared_ptr<QarCApiPanelInputSource> input_;
+  FrameCallOptions frame_calls_;
+  /// Lets the first panel print the line that says where the frame calls are made.
+  qar_qar_adapter::LogOnce frame_calls_noted_;
   std::string last_error_;
 };
 

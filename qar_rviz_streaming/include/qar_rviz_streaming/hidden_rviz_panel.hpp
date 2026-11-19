@@ -5,17 +5,17 @@
 #define QAR_RVIZ_STREAMING__HIDDEN_RVIZ_PANEL_HPP_
 
 /// @file hidden_rviz_panel.hpp
-/// @brief A NEW instance of RViz's own Displays panel, made without a dock, for
-/// streaming into AR - never shown on the desktop.
+/// @brief A second instance of one of RViz's own panels (Displays, Views, Tool Properties,
+/// Selection, Help), made without a dock, for streaming into AR - never shown on the desktop.
 ///
 /// ## Why this reaches into RViz the way it does
 ///
-/// `rviz_common::DisplaysPanel` is not part of RViz's installed API: its header is
-/// not installed and the class is not exported. RViz makes it through
-/// `rviz_common::PanelFactory`, which registers it as a BUILT-IN class
+/// `rviz_common::DisplaysPanel` and its siblings are not part of RViz's installed API: their
+/// headers are not installed and the classes are not exported. RViz makes them through
+/// `rviz_common::PanelFactory`, which registers them as BUILT-IN classes
 /// (`addBuiltInClass("rviz_common", "Displays", ...)`, class id
-/// `rviz_common/Displays`) - it is not a pluginlib plugin, so no manifest names it
-/// and nothing here can ask pluginlib for it. The factory is owned by
+/// `rviz_common/Displays`) - they are not pluginlib plugins, so no manifest names them
+/// and nothing here can ask pluginlib for them. The factory is owned by
 /// `rviz_common::VisualizationFrame` (`panel_factory_`), which is `protected`, has no
 /// getter, and whose type `PanelFactory` is only forward-declared in the installed
 /// headers.
@@ -45,10 +45,11 @@
 ///     STATICALLY when it is the first use of that template in the translation unit,
 ///     so it always answers with the static type and a guard written that way rejects
 ///     every factory, the right one included;
-///  4. `make("rviz_common/Displays")` builds the panel and `initialize(context)`
-///     binds it to the SAME display tree model the real Displays dock shows - so a
-///     checkbox toggled, a property edited or a display added/removed/renamed through
-///     this copy acts on the real displays.
+///  4. `make(class_id)` builds the panel and `initialize(context)` binds it to the SAME
+///     model the real dock of that class shows (the display tree, the view manager, the
+///     tool manager, the selection manager) - so a checkbox toggled, a property edited or a
+///     display added/removed/renamed through this copy acts on the real objects. Which
+///     classes are made this way is ar_copy_panels.hpp.
 ///
 /// This depends on the installed headers matching the installed RViz binaries
 /// (the plugin is built against the same distro, so they do), and a mismatch is
@@ -65,6 +66,7 @@
 #include <memory>
 #include <string>
 
+#include "qar_rviz_streaming/ar_copy_panels.hpp"
 #include "rviz_common/panel.hpp"
 
 namespace rviz_common
@@ -103,33 +105,48 @@ struct HiddenRvizPanel
   /// reason.
   std::string class_name;
 
-  /// True when item dragging was switched off on the copy's property tree, so that
-  /// synthetic AR input can never start a native drag-and-drop loop.
+  /// True when item dragging was switched off on every property tree of the copy, so that
+  /// synthetic AR input can never start a native drag-and-drop loop. False for a class without a
+  /// property tree (the Help panel), which has no drag to switch off.
   bool item_drag_disabled = false;
 
   /// True when the help area under the copy's property tree (a text browser) was hidden, so
-  /// that the tree gets the whole height of the copy. The Displays panel of the desktop is not
-  /// touched.
+  /// that the tree gets the whole height of the copy (only the Displays copy has that area).
+  /// The panel of the desktop is not touched.
   bool help_area_hidden = false;
 
   /// Why there is no panel. Empty on success.
   std::string error;
 };
 
-/// @brief Create a new instance of RViz's Displays panel and bind it to @p context.
+/// @brief Create a new instance of the RViz panel class @p cls and bind it to @p context.
 ///
 /// GUI thread only. @p context must be the live display context of the running RViz
 /// (the one `rviz_common::Panel::getDisplayContext()` gave this plugin) and must stay
-/// valid for as long as the returned panel lives; the panel's view of the display
-/// tree follows the VisualizationManager's own lifetime, so the caller destroys it
-/// no later than the plugin panel that owns it (see QarStreamingPanel::hidden_displays_).
+/// valid for as long as the returned panel lives; the panel's view of its model follows
+/// the VisualizationManager's own lifetime, so the caller destroys it no later than the
+/// plugin panel that owns it (see QarStreamingPanel::hidden_displays_).
 ///
-/// On the returned copy only, item dragging is turned off: RViz's Displays tree lets
-/// the operator drag a display to reorder it, and a drag started by synthetic AR
-/// pointer input must never reach the operating system's drag-and-drop loop. Its help
-/// area is hidden too, so that the property tree has the whole height of the copy and a
-/// copy that is made as high as its tree needs shows no scroll bar.
+/// On the returned copy only, item dragging is turned off on every property tree: RViz's
+/// property trees let the operator drag a row to reorder it, and a drag started by synthetic AR
+/// pointer input must never reach the operating system's drag-and-drop loop. A copy without a
+/// property tree is an error (the class check of the Selection panel, which Qt names by its base
+/// class, is only as strong as that; a class without a property tree must hold a text browser
+/// instead). Its help area (Displays only, see
+/// ArCopyPanelClass::hide_help_area) is hidden, so that the property tree has the whole height of
+/// the copy and a copy that is made as high as its tree needs shows no scroll bar. The window
+/// title is `<Name> (AR copy)`.
+HiddenRvizPanel create_hidden_rviz_panel(
+  rviz_common::DisplayContext * context, const ArCopyPanelClass & cls);
+
+/// @brief Create the Displays copy: create_hidden_rviz_panel for `rviz_common/Displays`.
 HiddenRvizPanel create_hidden_displays_panel(rviz_common::DisplayContext * context);
+
+/// @brief Gives @p to the view state of @p from (the open rows of a property tree and the
+/// splitter of a panel that has one): `from.save(config)` followed by `to.load(config)`. The
+/// copy of a dock opens with the rows the dock has open. Values and enable states are not part
+/// of it: they live in RViz's models, which both panels show.
+void copy_panel_view_state(const rviz_common::Panel & from, rviz_common::Panel & to);
 
 }  // namespace qar_rviz_streaming
 

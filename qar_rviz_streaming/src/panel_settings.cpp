@@ -8,6 +8,8 @@
 #include <cstring>
 #include <utility>
 
+#include "qar_rviz_streaming/ar_copy_scale.hpp"
+#include "qar_rviz_streaming/ar_restore_state.hpp"
 #include "qar_rviz_streaming/spatial_interaction.hpp"
 
 namespace qar_rviz_streaming
@@ -230,6 +232,35 @@ std::vector<SettingSpec> build_specs()
 
   specs.push_back(choice_spec(
       settings_key::kHubMode, "QAR_PANEL_HUB_MODE", "auto", {"auto", "local"}));
+  specs.push_back(choice_spec(
+      settings_key::kArCopySize, "QAR_PANEL_AR_COPY_SIZE", "enlarged", {"enlarged", "native"}));
+
+  // The text of the default lives as long as the table: the spec keeps a pointer to it.
+  static const std::string kCopyScaleDefault =
+    format_scaled(std::llround(kArCopyScaleDefault * 100.0), 2);
+  SettingSpec copy_scale;
+  copy_scale.key = settings_key::kArCopyScale;
+  copy_scale.env = "QAR_PANEL_AR_COPY_SCALE";
+  copy_scale.kind = SettingKind::Double;
+  copy_scale.default_value = kCopyScaleDefault.c_str();
+  copy_scale.min = kArCopyScaleMin;
+  copy_scale.max = kArCopyScaleMax;
+  copy_scale.decimals = 2;
+  specs.push_back(copy_scale);
+
+  // The factor of the whole AR copy of a panel whose controls are drawn larger.
+  static const std::string kOverallScaleDefault =
+    format_scaled(std::llround(kArCopyOverallScaleDefault * 100.0), 2);
+  SettingSpec overall_scale;
+  overall_scale.key = settings_key::kArCopyOverallScale;
+  overall_scale.env = "QAR_PANEL_AR_COPY_OVERALL_SCALE";
+  overall_scale.kind = SettingKind::Double;
+  overall_scale.default_value = kOverallScaleDefault.c_str();
+  overall_scale.min = kArCopyOverallScaleMin;
+  overall_scale.max = kArCopyOverallScaleMax;
+  overall_scale.decimals = 2;
+  specs.push_back(overall_scale);
+
   specs.push_back(bool_spec(
       settings_key::kHiddenDisplaysOnConnect, "QAR_PANEL_HIDDEN_DISPLAYS", "true"));
   specs.push_back(bool_spec(settings_key::kArControlPanel, "QAR_PANEL_AR_CONTROL", "true"));
@@ -261,6 +292,19 @@ std::vector<SettingSpec> build_specs()
   frame.max_length = 128;
   frame.allowed_chars = "_/.-";
   specs.push_back(frame);
+
+  // The topic each pick mode publishes to: "point=/a,/b;nav_goal=/c" (pick_topic_choice.hpp). The
+  // first topic of a mode is the one in force; the others are options. Empty = the conventional
+  // topics.
+  SettingSpec topics;
+  topics.key = settings_key::kPickTopics;
+  topics.env = "QAR_PANEL_PICK_TOPICS";
+  topics.kind = SettingKind::Text;
+  topics.default_value = "";
+  topics.min_length = 0;
+  topics.max_length = 1000;
+  topics.allowed_chars = "/_=,;";
+  specs.push_back(topics);
 
   specs.push_back(choice_spec(
       settings_key::kInviteDevice, nullptr, "hololens", {"hololens", "headset"}));
@@ -555,7 +599,7 @@ SettingsText parse_saved_settings(const SettingsText & saved_config, SettingsLoa
 
   for (const auto & entry : config) {
     if (entry.first == "Class" || entry.first == "Name" || entry.first == kSettingsVersionKey ||
-      find_setting_spec(entry.first) != nullptr)
+      entry.first == kArStateKey || find_setting_spec(entry.first) != nullptr)
     {
       continue;
     }
@@ -635,6 +679,12 @@ SettingsText settings_to_save(const SettingsText & user, const ResolvedSettings 
     }
   }
   return out;
+}
+
+bool setting_edit_is_kept(const ResolvedSettings & settings, const char * key)
+{
+  const auto found = settings.find(key);
+  return found == settings.end() || found->second.source != SettingSource::Environment;
 }
 
 bool setting_bool(const ResolvedSettings & settings, const char * key)

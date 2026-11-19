@@ -4,9 +4,12 @@
 #include "qar_rviz_streaming/qar_streaming_panel.hpp"
 
 #include "qar_rviz_streaming/ar_semantic_templates.hpp"
+#include "qar_rviz_streaming/ar_tool_writability.hpp"
+#include "qar_rviz_streaming/exit_guard.hpp"
 #include "qar_rviz_streaming/panel_display_names.hpp"
 #include "qar_rviz_streaming/panel_ground_rule.hpp"
 #include "qar_rviz_streaming/panel_settings.hpp"
+#include "qar_rviz_streaming/render_tick_timer.hpp"
 #include "qar_rviz_streaming/stable_panel_layout.hpp"
 
 #include <algorithm>
@@ -17,9 +20,11 @@
 #include <exception>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
+#include <QAbstractButton>
 #include <QAbstractItemModel>
 #include <QAbstractScrollArea>
 #include <QApplication>
@@ -65,7 +70,6 @@
 #include <QTextStream>
 #include <QThread>
 #include <QTimer>
-#include <optional>
 #include <QTreeView>
 #include <QVariant>
 #include <QVBoxLayout>
@@ -73,6 +77,7 @@
 
 #include <pluginlib/class_list_macros.hpp>
 
+#include <OgreFrameListener.h>
 #include <OgreRenderSystem.h>
 #include <OgreRenderSystemCapabilities.h>
 #include <OgreRoot.h>
@@ -129,6 +134,7 @@
 // RViz side that makes the panel (needs rviz_common, so it lives in this package).
 #include "qar_qt_streaming/offscreen_panel.hpp"
 #include "qar_qt_streaming/seam/timing_log.hpp"
+#include "qar_rviz_streaming/ar_copy_property_delegate.hpp"
 #include "qar_rviz_streaming/hidden_rviz_panel.hpp"
 
 #include "qar_rviz_streaming/rviz_display_context_adapter.hpp"
@@ -149,6 +155,10 @@ namespace
 /// Without it, or with a value that is not a size, the copy starts at 480x756 and is made as high
 /// as its display tree needs.
 constexpr const char * kHiddenDisplaysSizeEnv = "QAR_PANEL_HIDDEN_DISPLAYS_SIZE";
+
+/// The variable that switches the AR copy of this panel off: `off`, `false` or `0` streams the
+/// panel itself, enlarged as a whole. Read once, when the settings are resolved.
+constexpr const char * kSelfArCopyEnv = "QAR_PANEL_SELF_AR_COPY";
 
 /// The size the hidden Displays copy starts at: the dock-shaped surface of the library (480 x
 /// 720), 5 % taller.
@@ -201,28 +211,6 @@ constexpr const char * kHiddenDisplaysPanelName = "Displays (AR)";
 QString hiddenDisplaysLabel()
 {
   return QStringLiteral("Displays (AR copy ") + QChar(0x2014) + QStringLiteral(" hidden in RViz)");
-}
-
-/// @brief Stop a widget's content from deciding this panel's width.
-///
-/// This panel streams ITSELF to AR, and QtPanelStream rebuilds the whole QarOS
-/// panel (sender + panel + click/hover subscription) whenever the captured
-/// buffer size changes. So any status widget in here whose text can change is a
-/// potential feedback loop: longer text -> wider size hint -> wider dock ->
-/// buffer size change -> panel rebuilt -> status rewritten. QSizePolicy::Ignored
-/// on the horizontal axis is the direct answer — the layout stops asking the
-/// widget how wide it would like to be and simply gives it what is available.
-///
-/// heightForWidth is preserved rather than reset, so a word-wrapped label still
-/// reflows into whatever width it is handed instead of being clipped.
-void makeWidthNeutral(QWidget * widget)
-{
-  if (widget == nullptr) {
-    return;
-  }
-  QSizePolicy policy = widget->sizePolicy();
-  policy.setHorizontalPolicy(QSizePolicy::Ignored);
-  widget->setSizePolicy(policy);
 }
 
 /// "WxH", the spelling of the Resolution setting and of the "PANEL SIZE:" lines.
@@ -292,21 +280,6 @@ void markEnvironmentControl(
   widget->setToolTip(rest.isEmpty() ? sentence : sentence + "\n\n" + rest);
 }
 
-/// A list box that asks its layout for half the height a QListWidget asks for by default. The AR
-/// tools page holds two of them, and with the stock height they were most of that page.
-class CompactList : public QListWidget
-{
-public:
-  explicit CompactList(QWidget * parent = nullptr)
-  : QListWidget(parent) {}
-
-  QSize sizeHint() const override
-  {
-    const QSize stock = QListWidget::sizeHint();
-    return QSize(stock.width(), stock.height() / 2);
-  }
-};
-
 /// The process of the test markers: a QProcess that can be told that its process is over without
 /// asking the system (see QarStreamingPanel::releaseTestMarkersProcess()). Not a QObject class
 /// of its own: it adds no signal or slot.
@@ -325,6 +298,25 @@ constexpr const char * kProgramTag = "rviz2-plugin";
 
 /// The longest a render tick waits between two refreshes of the approval countdown.
 constexpr std::chrono::milliseconds kCountdownRefresh{500};
+
+/// Runs a callable when the scope ends, on every return of the function.
+template<typename F>
+class AtScopeEnd
+{
+public:
+  explicit AtScopeEnd(F f)
+  : f_(std::move(f)) {}
+  ~AtScopeEnd() {f_();}
+  AtScopeEnd(const AtScopeEnd &) = delete;
+  AtScopeEnd & operator=(const AtScopeEnd &) = delete;
+
+private:
+  F f_;
+};
+
+/// How far above kArCopyMaxHeightM a committed panel height may be before an enlarged copy is
+/// lowered again (the factor is cut to hundredths and the heights are floats).
+constexpr float kArCopyHeightSlackM = 0.01f;
 
 /// The phase of the Connection tab that a state of the session owner stands for.
 ConnectionPhase phaseOf(qar_qar_adapter::SessionState state)
@@ -345,8 +337,67 @@ ConnectionPhase phaseOf(qar_qar_adapter::SessionState state)
       return ConnectionPhase::Stopping;
     case SessionState::kFailed:
       return ConnectionPhase::Failed;
+    case SessionState::kLost:
+      return ConnectionPhase::Lost;
   }
   return ConnectionPhase::Idle;
+}
+
+/// The word the heartbeat prints for a state of the session owner.
+const char * ownerStateWord(qar_qar_adapter::SessionState state)
+{
+  using qar_qar_adapter::SessionState;
+  switch (state) {
+    case SessionState::kIdle:
+      return "idle";
+    case SessionState::kLoading:
+      return "loading";
+    case SessionState::kWaitingForApproval:
+      return "waiting_for_approval";
+    case SessionState::kRunning:
+      return "running";
+    case SessionState::kReconnecting:
+      return "reconnecting";
+    case SessionState::kStopping:
+      return "stopping";
+    case SessionState::kFailed:
+      return "failed";
+    case SessionState::kLost:
+      return "lost";
+  }
+  return "unknown";
+}
+
+/// How often the streams are sampled for the words of the status strip.
+constexpr std::chrono::milliseconds kStreamSamplePeriod{250};
+
+/// The Hub answers again but no stream comes back: the session is given up at most this often.
+constexpr std::chrono::seconds kDeclareLostSpacing{60};
+
+/// Seconds the Hub may answer again without a stream coming back before the session is given up
+/// (QAR_PANEL_REJOIN_AFTER_HUB_S; 0 never gives it up).
+int rejoinAfterHubSeconds()
+{
+  constexpr int kDefaultSeconds = 45;
+  const QString text = qEnvironmentVariable("QAR_PANEL_REJOIN_AFTER_HUB_S").trimmed();
+  if (text.isEmpty()) {
+    return kDefaultSeconds;
+  }
+  bool ok = false;
+  const int seconds = text.toInt(&ok);
+  return ok && seconds >= 0 ? seconds : kDefaultSeconds;
+}
+
+/// The name a person knows a target by.
+std::string targetLabel(const qar_qar_adapter::TargetInfo & target)
+{
+  if (!target.device_name.empty()) {
+    return target.device_name;
+  }
+  if (!target.display_name.empty()) {
+    return target.display_name;
+  }
+  return qar_ogre_streaming::peer_id_to_hex(target.id).substr(0, 8);
 }
 
 /// The words of a device category in the target list.
@@ -394,6 +445,12 @@ const char * presenceWords(QarPeerPresence presence)
 constexpr const char * kCloseModeUnusedToolTip =
   "Used only when \"Hide panels in AR instead of closing them\" is off: hiding parks every "
   "closed window.";
+
+/// Why the publish toggle is grey in the close mode while a QarOS session runs.
+constexpr const char * kWritableToggleNeedsHidingToolTip =
+  "Needs \"Hide panels in AR instead of closing them\" on while a QarOS session runs: with it "
+  "off, the toggle would close the AR panel of the tool and make a new one. Turn it on, or "
+  "end the session, to change the publish flag.";
 
 /// The two environment variables of the test markers: the python to run and the script it runs.
 constexpr const char * kTestMarkersPythonEnv = "QAR_PANEL_TEST_MARKERS_PYTHON";
@@ -552,6 +609,75 @@ const seam::PanelStreamDiagnostics * findPanelDiagnostics(
   return nullptr;
 }
 
+/// A copy of @p config for the record of the AR state (the tree of RViz is not copyable into
+/// the pure unit).
+ConfigNode nodeOfConfig(const rviz_common::Config & config)
+{
+  ConfigNode node;
+  switch (config.getType()) {
+    case rviz_common::Config::Map:
+      node.kind = ConfigNode::Kind::Map;
+      for (rviz_common::Config::MapIterator entry = config.mapIterator(); entry.isValid();
+        entry.advance())
+      {
+        node.map_keys.push_back(entry.currentKey().toStdString());
+        node.map_values.push_back(nodeOfConfig(entry.currentChild()));
+      }
+      break;
+    case rviz_common::Config::List:
+      node.kind = ConfigNode::Kind::List;
+      for (int i = 0; i < config.listLength(); ++i) {
+        node.list.push_back(nodeOfConfig(config.listChildAt(i)));
+      }
+      break;
+    case rviz_common::Config::Value:
+      node.kind = ConfigNode::Kind::Value;
+      node.value = config.getValue().toString().toStdString();
+      break;
+    default:
+      break;
+  }
+  return node;
+}
+
+/// The value @p text is written as: a bool and a whole number keep their type in the file, any
+/// other text is a string.
+QVariant variantOfText(const std::string & text)
+{
+  if (text == "true" || text == "false") {
+    return QVariant(text == "true");
+  }
+  const bool digits = !text.empty() && text.size() <= 6 &&
+    std::all_of(text.begin(), text.end(), [](char c) {return c >= '0' && c <= '9';});
+  if (digits) {
+    return QVariant(std::stoi(text));
+  }
+  return QVariant(QString::fromStdString(text));
+}
+
+/// Writes @p node into @p target (a map, a list or a value).
+void fillConfig(rviz_common::Config target, const ConfigNode & node)
+{
+  switch (node.kind) {
+    case ConfigNode::Kind::Map:
+      for (std::size_t i = 0; i < node.map_keys.size(); ++i) {
+        fillConfig(
+          target.mapMakeChild(QString::fromStdString(node.map_keys[i])), node.map_values[i]);
+      }
+      break;
+    case ConfigNode::Kind::List:
+      for (const ConfigNode & element : node.list) {
+        fillConfig(target.listAppendNew(), element);
+      }
+      break;
+    case ConfigNode::Kind::Value:
+      target.setValue(variantOfText(node.value));
+      break;
+    case ConfigNode::Kind::Empty:
+      break;
+  }
+}
+
 }  // namespace
 
 QarStreamingPanel::QarStreamingPanel(QWidget * parent)
@@ -578,7 +704,9 @@ QarStreamingPanel::QarStreamingPanel(QWidget * parent)
   // puts the pick where the AR user was not pointing, silently.
   spatial_.set_transform(qar_ar_core::room_to_ros_from_environment());
   refreshSpatialUi();
-  appendLog(QString("Qar streaming panel constructed (qar_rviz_streaming %1).").arg(QAR_RVIZ_PLUGIN_VERSION));
+  appendLog(
+    QString("Qar streaming panel constructed (qar_rviz_streaming %1).")
+    .arg(QAR_RVIZ_PLUGIN_VERSION));
   reportSettings();
   // The variables that have no effect with this QAROS say so, once.
   for (const std::string & sentence : removed_environment_sentences(
@@ -609,13 +737,151 @@ QarStreamingPanel::QarStreamingPanel(QWidget * parent)
   }
 }
 
+/// Names RViz's own frame for the stall watchdog: an Ogre frame listener on Ogre's root. RViz
+/// renders its main window through Ogre::Root::renderOneFrame (the documentation of
+/// VisualizationManager::lockRender() says so; the call itself is in rviz_common, which is
+/// not available as source), so frameStarted opens the frame, frameRenderingQueued comes when
+/// every render target has been drawn and the buffers are about to be swapped, and frameEnded
+/// closes it. The step that was current before the frame is put back at its end. The listener
+/// never touches Ogre, Qt or QAROS; it only sets the step of the watchdog.
+///
+/// It is also the gate of the frames of RViz: frameStarted answers false, which makes
+/// renderOneFrame render nothing, while the GPU progress watch says that the GPU has not finished
+/// the frames queued so far, so the GUI thread issues no GL command that would wait for the GPU.
+/// The gate is read-only on the GUI thread (atomics of the watch); frameEnded tells the watch that
+/// one more frame was queued.
+class RvizFrameBreadcrumbs : public Ogre::FrameListener
+{
+public:
+  RvizFrameBreadcrumbs(QtStallWatchdog * watchdog, Ogre::Root * root, GpuFrameGate * gate)
+  : watchdog_(watchdog), root_(root), gate_(gate)
+  {
+    root_->addFrameListener(this);
+  }
+
+  ~RvizFrameBreadcrumbs() override
+  {
+    // RViz may have shut Ogre down before the panel ends; then the listener list is gone too.
+    if (Ogre::Root::getSingletonPtr() == root_) {
+      root_->removeFrameListener(this);
+    }
+  }
+
+  bool frameStarted(const Ogre::FrameEvent &) override
+  {
+    frames_.fetch_add(1, std::memory_order_relaxed);
+    // A stopped frame fires neither frameRenderingQueued nor frameEnded, so it leaves the step as
+    // it found it.
+    if (gate_ != nullptr && !gate_->frame_may_start()) {
+      return false;
+    }
+    const char * const current = watchdog_->step();
+    if (current != kRender && current != kSwap) {
+      outer_ = current;
+    }
+    watchdog_->set_step(kRender);
+    return true;
+  }
+
+  bool frameRenderingQueued(const Ogre::FrameEvent &) override
+  {
+    watchdog_->set_step(kSwap);
+    return true;
+  }
+
+  bool frameEnded(const Ogre::FrameEvent &) override
+  {
+    watchdog_->set_step(outer_);
+    if (gate_ != nullptr) {
+      gate_->frame_ended();
+    }
+    return true;
+  }
+
+  /// The frames of RViz that the listener has seen.
+  std::uint64_t frames() const {return frames_.load(std::memory_order_relaxed);}
+
+private:
+  static constexpr const char kRender[] = "RViz frame: render";
+  static constexpr const char kSwap[] = "RViz frame: swap";
+
+  QtStallWatchdog * watchdog_;
+  Ogre::Root * root_;
+  GpuFrameGate * gate_;
+  const char * outer_ = kStallStepOutsideTick;
+  std::atomic<std::uint64_t> frames_{0};
+};
+
+namespace
+{
+
+/// One tick of the panel for the stall watchdog: counts the tick when it begins and puts the
+/// step back to "outside the plugin tick" on every way out of onRenderTick().
+class StallTickScope
+{
+public:
+  explicit StallTickScope(QtStallWatchdog * watchdog)
+  : watchdog_(watchdog)
+  {
+    if (watchdog_ != nullptr) {
+      watchdog_->tick();
+    }
+  }
+
+  ~StallTickScope()
+  {
+    if (watchdog_ != nullptr) {
+      watchdog_->set_step(kStallStepOutsideTick);
+    }
+  }
+
+  StallTickScope(const StallTickScope &) = delete;
+  StallTickScope & operator=(const StallTickScope &) = delete;
+
+private:
+  QtStallWatchdog * watchdog_;
+};
+
+/// A slot or posted call of the panel that runs outside onRenderTick(): names its work for the
+/// stall watchdog and puts the step that was current back when it ends (a slot that runs inside
+/// the nested event loop of a tick step leaves that step as it found it).
+class StallSlotScope
+{
+public:
+  StallSlotScope(QtStallWatchdog * watchdog, const char * step)
+  : watchdog_(watchdog), previous_(watchdog != nullptr ? watchdog->step() : nullptr)
+  {
+    if (watchdog_ != nullptr) {
+      watchdog_->set_step(step);
+    }
+  }
+
+  ~StallSlotScope()
+  {
+    if (watchdog_ != nullptr) {
+      watchdog_->set_step(previous_);
+    }
+  }
+
+  StallSlotScope(const StallSlotScope &) = delete;
+  StallSlotScope & operator=(const StallSlotScope &) = delete;
+
+private:
+  QtStallWatchdog * watchdog_;
+  const char * previous_;
+};
+
+}  // namespace
+
 QarStreamingPanel::~QarStreamingPanel()
 {
+  stallStep("panel teardown");
   // The test-marker process is let go first: none of its signals reaches this panel any more,
   // and one that still runs is killed without waiting for it.
   releaseTestMarkersProcess();
   for (QTimer * timer : {default_dock_timer_, default_dock_release_timer_, dock_start_timer_,
-      start_fit_timer_, hidden_displays_fit_timer_, hidden_displays_census_timer_})
+      start_fit_timer_, hidden_displays_fit_timer_, hidden_displays_census_timer_,
+      ar_copy_fit_timer_})
   {
     if (timer != nullptr) {
       timer->stop();
@@ -628,6 +894,20 @@ QarStreamingPanel::~QarStreamingPanel()
       disconnect(tree, nullptr, this, nullptr);
       if (const QAbstractItemModel * const model = tree->model()) {
         disconnect(model, nullptr, this, nullptr);
+      }
+    }
+  }
+  // The AR copy of this panel is cut from it the same way: its binder stops forwarding, and the
+  // signals of its widgets that reach this panel end, while every member is still alive.
+  if (self_ar_copy_) {
+    self_ar_copy_->binder().release();
+    const QarPanelView & twin = self_ar_copy_->view();
+    for (QObject * object : {static_cast<QObject *>(self_ar_copy_.get()),
+        static_cast<QObject *>(twin.tabs), static_cast<QObject *>(twin.ar_panel_list),
+        static_cast<QObject *>(twin.hub_widget)})
+    {
+      if (object != nullptr) {
+        disconnect(object, nullptr, this, nullptr);
       }
     }
   }
@@ -656,6 +936,8 @@ QarStreamingPanel::~QarStreamingPanel()
     render_timer_->stop();
     disconnect(render_timer_, nullptr, this, nullptr);
   }
+  // The listener on Ogre's root goes before the watchdog it reports to.
+  frame_breadcrumbs_.reset();
   // The control page's session outlives the members of this panel that its signals and its
   // control sink reach (the server that holds it is declared earlier and dies later, and closes
   // its viewers while it does): cut both now, while every member is still alive.
@@ -667,16 +949,24 @@ QarStreamingPanel::~QarStreamingPanel()
   // panels are hidden and let go, never closed), and then the session owner: its thread is
   // joined here, so no thread of this plugin outlives it. The owner cancels a wait for approval
   // or for the Hub that is still in progress, and every step is bounded.
+  stallStep("panel teardown: session consumers");
   releaseSessionConsumers(QStringLiteral("RViz is closing"), /*update_ui=*/false);
+  stallStep("panel teardown: session owner exit");
   session_owner_.reset();
+  // The GL contexts of the render factories are deleted here, on the thread that owns the GL
+  // context, and only those whose streams the owner thread has released.
+  stallStep("panel teardown: GL contexts");
+  qar_qar_adapter::QarCApiSenderFactory::delete_released_gl_contexts();
   // The ROS entities on RViz's node, and the callback group that holds them, go while this
   // library is loaded: RViz destroys its node only after it has freed the library.
+  stallStep("panel teardown: ROS entities");
   releaseRosEntities();
   // Pairs the timeBeginPeriod(1) taken in onInitialize (no-op if it never ran).
   scheduling_guard_.release();
   // Per-frame timing CSVs (QAR_VIDEO_TIMING_DIR): stop the writer thread and write what is
   // still queued. The thread must not outlive this plugin's code (RViz may unload the
   // library), so this is a join, not a detach. A later panel simply restarts it.
+  stallStep("panel teardown: timing logs");
   gui_gap_timing_.reset();
   // qar_qt_streaming keeps a timing log of its own (the video_*.csv files of its streams) with a
   // writer thread of its own. Its streams went with the session consumers above; the log is
@@ -694,523 +984,86 @@ void QarStreamingPanel::buildUi()
   // the page it sits on changed. Why every page is a scroll page and why the panel's size hints
   // are constants: see stable_panel_layout.hpp. In short, this panel streams ITSELF to AR, and a
   // change of its size rebuilds the AR panel, so nothing a page shows may reach the panel's size.
-  auto * root = new QVBoxLayout(this);
-  root->setContentsMargins(0, 0, 0, 0);
-  root->setSpacing(0);
+  // The widgets come from build_qar_panel_view(), which also builds the second view of the AR copy
+  // of this panel (qar_panel_ar_copy.hpp). The inputs are kept for that second build.
+  view_inputs_.spatial_targets.clear();
+  for (const SpatialTargetOption & option : spatial_target_options()) {
+    view_inputs_.spatial_targets.push_back(
+      {QString::fromUtf8(option.label), QString::fromUtf8(option.help), option.id});
+  }
+  view_inputs_.spatial_target_default_id = default_spatial_target_id();
+  view_inputs_.invite_tool_tip =
+    QString::fromStdString(make_connection_view(ConnectionInput()).invite_tooltip);
+  view_inputs_.rows_by_style = false;
+  const QarPanelView view = build_qar_panel_view(*this, view_inputs_);
+  status_strip_ = view.status_strip;
+  runtime_state_label_ = view.runtime_state_label;
+  last_error_label_ = view.last_error_label;
+  tabs_ = view.tabs;
+  start_qar_button_ = view.start_qar_button;
+  stop_qar_button_ = view.stop_qar_button;
+  hub_widget_ = view.hub_widget;
+  invite_group_ = view.invite_group;
+  peer_kind_combo_ = view.peer_kind_combo;
+  peer_hostname_edit_ = view.peer_hostname_edit;
+  add_peer_button_ = view.add_peer_button;
+  ar_control_status_label_ = view.ar_control_status_label;
+  ar_control_show_button_ = view.ar_control_show_button;
+  ar_control_copy_button_ = view.ar_control_copy_button;
+  ar_panel_list_ = view.ar_panel_list;
+  add_topic_button_ = view.add_topic_button;
+  remove_topic_button_ = view.remove_topic_button;
+  topic_watch_list_ = view.topic_watch_list;
+  exposure_list_ = view.exposure_list;
+  remove_exposure_button_ = view.remove_exposure_button;
+  toggle_writable_button_ = view.toggle_writable_button;
+  reopen_exposure_button_ = view.reopen_exposure_button;
+  copy_url_button_ = view.copy_url_button;
+  ar_panel_scale_spin_ = view.ar_panel_scale_spin;
+  exposure_status_label_ = view.exposure_status_label;
+  spatial_mode_combo_ = view.spatial_mode_combo;
+  spatial_target_combo_ = view.spatial_target_combo;
+  spatial_topic_combo_ = view.spatial_topic_combo;
+  spatial_frame_edit_ = view.spatial_frame_edit;
+  spatial_auto_confirm_ = view.spatial_auto_confirm;
+  spatial_confirm_button_ = view.spatial_confirm_button;
+  spatial_cancel_button_ = view.spatial_cancel_button;
+  spatial_close_polygon_button_ = view.spatial_close_polygon_button;
+  spatial_status_label_ = view.spatial_status_label;
+  resolution_combo_ = view.resolution_combo;
+  fps_combo_ = view.fps_combo;
+  ar_copy_size_combo_ = view.ar_copy_size_combo;
+  hidden_displays_checkbox_ = view.hidden_displays_checkbox;
+  ar_control_checkbox_ = view.ar_control_checkbox;
+  show_advanced_checkbox_ = view.show_advanced_checkbox;
+  advanced_group_ = view.advanced_group;
+  prime_checkbox_ = view.prime_checkbox;
+  close_mode_combo_ = view.close_mode_combo;
+  ar_visibility_checkbox_ = view.ar_visibility_checkbox;
+  context_status_label_ = view.context_status_label;
+  refresh_button_ = view.refresh_button;
+  capture_button_ = view.capture_button;
+  stereo_capture_button_ = view.stereo_capture_button;
+  test_markers_button_ = view.test_markers_button;
+  sim_peers_group_ = view.sim_peers_group;
+  add_sim_peer_button_ = view.add_sim_peer_button;
+  remove_peer_button_ = view.remove_peer_button;
+  peer_list_ = view.peer_list;
+  start_stream_button_ = view.start_stream_button;
+  stop_stream_button_ = view.stop_stream_button;
+  ar_panel_status_scroll_ = view.ar_panel_status_scroll;
+  ar_panel_status_label_ = view.ar_panel_status_label;
+  diagnostics_view_ = view.diagnostics_view;
+  page_contents_ = view.page_contents;
 
-  // --- Status strip --------------------------------------------------------
-  const StatusStrip strip = make_status_strip(this);
-  status_strip_ = strip.frame;
-  runtime_state_label_ = strip.first;
-  last_error_label_ = strip.second;
-  runtime_state_label_->setFullText("Qar runtime: STOPPED");
-  last_error_label_->setFullText("Last error: <none>");
-  root->addWidget(status_strip_);
-
-  tabs_ = make_tab_widget(this);
-  root->addWidget(tabs_, 1);
-
-  // One page: a plain widget with a vertical layout, wrapped by make_scroll_page().
-  auto add_page = [this](const QString & title, QWidget * content) {
-      page_contents_.push_back(content);
-      tabs_->addTab(make_scroll_page(content, tabs_), title);
-    };
-  // A list or a log is never lower than a few rows. The log takes any height its page has to
-  // spare; the two lists of the AR tools page do not (see there).
-  auto set_minimum_rows = [](QWidget * widget, int rows = 4) {
-      widget->setMinimumHeight(widget->fontMetrics().lineSpacing() * rows + 6);
-    };
-
-  // =========================================================================
-  // Connection
-  // =========================================================================
-  auto * connection_page = new QWidget();
-  auto * connection_layout = new QVBoxLayout(connection_page);
-  connection_layout->setContentsMargins(6, 6, 6, 6);
-  connection_layout->setSpacing(6);
-
-  auto * runtime_buttons = new QHBoxLayout();
-  start_qar_button_ = new QPushButton("Start Qar", connection_page);
-  stop_qar_button_ = new QPushButton("Stop Qar", connection_page);
-  runtime_buttons->addWidget(start_qar_button_);
-  runtime_buttons->addWidget(stop_qar_button_);
-  connection_layout->addLayout(runtime_buttons);
-
-  // The join to the Hub of this PC (a local app) and the devices the Hub
-  // lists as targets. The group shows in every mode.
-  hub_widget_ = new HubConnectionWidget(connection_page);
-  connection_layout->addWidget(hub_widget_);
-
-  // Which kind of real device "Invite peer" asks the Hub to start an app for. The group is shown
-  // in every mode, so that the way to invite a device can always be found; the button is enabled
-  // only in this-PC mode while connected (refreshConnectionView()) and says what it needs when
-  // it is not.
-  invite_group_ = new QGroupBox("Invite a device", connection_page);
-  auto * invite_layout = new QVBoxLayout(invite_group_);
-  auto * invite_row = new QHBoxLayout();
-  peer_kind_combo_ = new QComboBox(invite_group_);
-  peer_kind_combo_->addItem("HoloLens 2", "hololens");
-  peer_kind_combo_->addItem("Headset (Quest, Android)", "headset");
-  peer_kind_combo_->setToolTip(
-    "Device type whose app the QAROS Hub is asked to start. The device then joins as a target "
-    "and gets its own stereo stream of the RViz scene.");
-  peer_hostname_edit_ = new QLineEdit(invite_group_);
-  peer_hostname_edit_->setMaxLength(253);
-  peer_hostname_edit_->setPlaceholderText("device host name or address");
-  peer_hostname_edit_->setToolTip(
-    "Required for both kinds: the host name or address of the HoloLens 2 or of the headset.");
-  invite_row->addWidget(peer_kind_combo_);
-  invite_row->addWidget(peer_hostname_edit_, 1);
-  add_peer_button_ = new QPushButton("Invite peer", invite_group_);
-  add_peer_button_->setToolTip("Inviting a device needs a QarOS session.");  // no session yet
-  invite_layout->addLayout(invite_row);
-  invite_layout->addWidget(add_peer_button_);
-  connection_layout->addWidget(invite_group_);
-
-  // The AR control panel: the page that puts the panel's main controls into AR. The label
-  // says whether it exists; the two buttons follow its state and stay disabled while there is
-  // no control panel.
-  auto * control_group = new QGroupBox("AR control panel", connection_page);
-  auto * control_layout = new QVBoxLayout(control_group);
-  ar_control_status_label_ = new QLabel(
-    "AR control panel: not created (connect to QarOS)", control_group);
-  ar_control_status_label_->setWordWrap(true);
-  ar_control_status_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  // Its text changes at run time and the panel streams itself: same rule as every status label.
-  makeWidthNeutral(ar_control_status_label_);
-  auto * control_buttons = new QHBoxLayout();
-  ar_control_show_button_ = new QPushButton("Show AR control panel", control_group);
-  ar_control_show_button_->setToolTip(
-    "Show the AR control panel again if it was closed in AR. If QarOS cannot show it, the line "
-    "above says so. With \"Hide panels in AR instead of closing them\" on, no panel is made "
-    "again and the button asks QarOS to show it once more; with it off, pressing the button "
-    "again within ten seconds makes the panel again. Available once the control panel exists.");
-  ar_control_show_button_->setEnabled(false);
-  ar_control_copy_button_ = new QPushButton("Copy page URL", control_group);
-  ar_control_copy_button_->setToolTip(
-    "Copy the address of the control panel's page, to open it in a desktop browser. "
-    "Available once the page is served.");
-  ar_control_copy_button_->setEnabled(false);
-  control_buttons->addWidget(ar_control_show_button_);
-  control_buttons->addWidget(ar_control_copy_button_);
-  control_layout->addWidget(ar_control_status_label_);
-  control_layout->addLayout(control_buttons);
-  connection_layout->addWidget(control_group);
-  connection_layout->addStretch(1);
-  add_page("Connection", connection_page);
-
-  // =========================================================================
-  // AR panels
-  // =========================================================================
-  auto * panels_page = new QWidget();
-  auto * panels_layout = new QVBoxLayout(panels_page);
-  panels_layout->setContentsMargins(6, 6, 6, 6);
-  panels_layout->setSpacing(6);
-
-  // Any RViz dock panel can be streamed, not just this one - the combo is
-  // repopulated from the live dock widgets each time it is opened.
-  auto * panel_pick_row = new QHBoxLayout();
-  ar_panel_combo_ = new QComboBox(panels_page);
-  ar_panel_combo_->setToolTip(
-    "Which Qt panel to publish as a QarOS GUI panel. Any RViz dock panel works; "
-    "this QAR panel is listed first.");
-  refresh_panels_button_ = new QPushButton("Refresh", panels_page);
-  refresh_panels_button_->setToolTip("Re-scan RViz for dock panels (they come and go).");
-  panel_pick_row->addWidget(ar_panel_combo_, 1);
-  panel_pick_row->addWidget(refresh_panels_button_);
-
-  auto * panel_buttons = new QHBoxLayout();
-  stream_panel_button_ = new QPushButton("Stream panel to AR", panels_page);
-  stream_panel_button_->setToolTip(
-    "Publish the selected panel as a QarOS GUI panel, so it is visible and clickable "
-    "in AR. Needs a running QarOS session.");
-  stream_panel_button_->setEnabled(false);
-  stop_panel_button_ = new QPushButton("Stop streaming", panels_page);
-  stop_panel_button_->setToolTip(
-    "Stop streaming the selected panel to AR. With \"Hide panels in AR instead of closing "
-    "them\" on, its AR panel is hidden and parked: its QarOS panel and video sender are kept "
-    "until the session ends, and \"Stream panel to AR\" shows it again. With it off, the AR "
-    "panel is closed (or shows a notice, as \"Closed AR panels\" says).");
-  panel_buttons->addWidget(stream_panel_button_);
-  panel_buttons->addWidget(stop_panel_button_);
-
-  // The live "AR panels:" readout. Built to be LAYOUT-NEUTRAL and READABLE, in
-  // that order of priority, because this panel streams ITSELF to AR:
-  //
-  //  * layout-neutral, or the readout drives the very feedback loop it exists to
-  //    diagnose. The text is rewritten several times a second with counters of
-  //    changing width and line count; a plain word-wrapped QLabel turns that
-  //    into a changing size hint -> a changing dock width -> a changing capture
-  //    buffer -> QtPanelStream tearing down and rebuilding the AR panel -> the
-  //    status line being rewritten again. That loop freezes the panel stream and
-  //    starves the 3D stream of its sender.
-  //    An Ignored horizontal policy means the label's own width preference is
-  //    never consulted, and the box's fixed height pins the other axis, so no
-  //    text can move this widget's geometry by a pixel.
-  //
-  //  * free of scroll bars, because a scroll bar in AR cannot be used: the
-  //    pointer there is a ray. The box holds sixteen lines of the widget's own
-  //    font, both bars are off, and updateArPanelStatus() shortens the text
-  //    until it fits and says how many panel lines it left out. The text is
-  //    selectable for copying into a report.
-  const ReadoutBox readout = make_readout_box(
-    panels_page, QStringLiteral("AR panels: none"),
-    QStringLiteral(
-      "Live AR panel counters. This box never resizes and never scrolls: it is inside the "
-      "widget being streamed, and a resize here would rebuild the AR panel it is reporting on. "
-      "The long counters of every panel are in the log."));
-  ar_panel_status_label_ = readout.label;
-  ar_panel_status_scroll_ = readout.area;
-
-  panels_layout->addLayout(panel_pick_row);
-  panels_layout->addLayout(panel_buttons);
-  panels_layout->addWidget(ar_panel_status_scroll_);
-  panels_layout->addStretch(1);
-  add_page("AR panels", panels_page);
-
-  // =========================================================================
-  // AR tools
-  // =========================================================================
-  auto * tools_page = new QWidget();
-  auto * tools_layout = new QVBoxLayout(tools_page);
-  tools_layout->setContentsMargins(6, 6, 6, 6);
-  tools_layout->setSpacing(6);
-
-  auto * watched_group = new QGroupBox("Watched topics", tools_page);
-  auto * watched_layout = new QVBoxLayout(watched_group);
-  auto * topic_buttons = new QHBoxLayout();
-  add_topic_button_ = new QPushButton("Add from ROS graph...", watched_group);
-  add_topic_button_->setToolTip(
-    "Browse the live ROS 2 graph — topics, services and actions — add a topic to "
-    "RViz, and/or expose any of them as a QAR AR tool.");
-  remove_topic_button_ = new QPushButton("Remove topic", watched_group);
-  topic_buttons->addWidget(add_topic_button_);
-  topic_buttons->addWidget(remove_topic_button_);
-  // The two lists of this page are half as high as a stock list box (CompactList) and do not
-  // take the height the page has to spare: it stays below the groups (the stretch at the end).
-  // Their minimum is two rows. A vertical policy of Preferred keeps a taller panel from
-  // stretching them.
-  topic_watch_list_ = new CompactList(watched_group);
-  topic_watch_list_->setToolTip(
-    "Topics added from the topic browser. Adding one also creates the matching "
-    "RViz display, so it appears in the streamed 3D scene.");
-  set_minimum_rows(topic_watch_list_, 2);
-  topic_watch_list_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-  watched_layout->addLayout(topic_buttons);
-  watched_layout->addWidget(topic_watch_list_);
-  tools_layout->addWidget(watched_group);
-
-  // The management list: what is exposed right now, and the things an operator needs to do
-  // with a row.
-  auto * exposed_group = new QGroupBox("AR tools", tools_page);
-  auto * exposed_layout = new QVBoxLayout(exposed_group);
-  exposure_list_ = new CompactList(exposed_group);
-  exposure_list_->setToolTip(
-    "Topics, services and actions exposed as QAR AR tools. Each row is a "
-    "generated panel served over HTTP and shown in the headset's browser.");
-  set_minimum_rows(exposure_list_, 2);
-  exposure_list_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-  auto * exposure_buttons = new QHBoxLayout();
-  remove_exposure_button_ = new QPushButton("Remove tool", exposed_group);
-  remove_exposure_button_->setToolTip(
-    "Stop serving the tool's page and take its AR panel out of use. With \"Hide panels in AR "
-    "instead of closing them\" on, the AR panel is hidden and kept until the session ends, and "
-    "exposing the same tool again takes it over; with it off, the AR panel is closed.");
-  reopen_exposure_button_ = new QPushButton("Re-open in AR", exposed_group);
-  reopen_exposure_button_->setToolTip(
-    "Bring the QarOS panel back, after a session restart or if it was hidden or closed in the "
-    "headset. With \"Hide panels in AR instead of closing them\" on, QarOS is asked to show the "
-    "panel again; if QarOS refuses, the log and the last error say so and nothing is closed or "
-    "made again. With it off, the panel is closed and made again. The page and its token are "
-    "unchanged.");
-  copy_url_button_ = new QPushButton("Copy URL", exposed_group);
-  copy_url_button_->setToolTip(
-    "Copy the panel's URL, to open it in a desktop browser while debugging.");
-  // Live size trim. The panel's physical size is DERIVED from the generated
-  // page's own measurement (qar_web_panels/url_panel_sizing.hpp), which is the
-  // right default; this is the operator's "a little bigger, please" knob, and
-  // it takes effect on the next "Re-open in AR" - no rebuild, no restart. Its
-  // starting value is the "Web Panel Scale" setting (QAR_PANEL_WEB_SCALE, the saved
-  // configuration, or 1.00; applySettingsToUi() sets it).
-  ar_panel_scale_spin_ = new QDoubleSpinBox(exposed_group);
-  ar_panel_scale_spin_->setRange(0.25, 4.0);
-  ar_panel_scale_spin_->setSingleStep(0.1);
-  ar_panel_scale_spin_->setDecimals(2);
-  ar_panel_scale_spin_->setPrefix("size x");
+  // The values the builder leaves to the panel: the starting value of the size multiplier of the
+  // AR tools is the "Web Panel Scale" setting (applySettingsToUi() sets it again), and the prime
+  // check box follows QAR_ADAPTER_PRIME.
   ar_panel_scale_spin_->setValue(setting_double(effective_settings_, settings_key::kWebPanelScale));
-  ar_panel_scale_spin_->setToolTip(
-    "Multiplier on the AR panel size derived from the page's own content size. "
-    "Press \"Re-open in AR\" to apply it to the selected tool.");
-  exposure_buttons->addWidget(remove_exposure_button_);
-  exposure_buttons->addWidget(reopen_exposure_button_);
-  exposure_buttons->addWidget(copy_url_button_);
-  exposure_buttons->addWidget(ar_panel_scale_spin_);
-  exposure_status_label_ = new QLabel("AR tools: none", exposed_group);
-  exposure_status_label_->setWordWrap(true);
-  exposure_status_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  // Same feedback loop as the AR panel status: this label is inside the
-  // streamed widget and its text changes whenever a tool is added or removed.
-  makeWidthNeutral(exposure_status_label_);
-  exposed_layout->addWidget(exposure_list_);
-  exposed_layout->addLayout(exposure_buttons);
-  exposed_layout->addWidget(exposure_status_label_);
-  tools_layout->addWidget(exposed_group);
-  tools_layout->addStretch(1);
-  add_page("AR tools", tools_page);
-
-  // =========================================================================
-  // Picking
-  // =========================================================================
-  // Arming is explicit and starts at "Off": a hand gesture in the headset must
-  // never move a robot because a mode was left on. What each control means is
-  // decided by SpatialInteractionController (spatial_interaction.hpp), which is
-  // where the rules are unit-tested; this page only sets it and shows it.
-  auto * picking_page = new QWidget();
-  auto * picking_layout = new QVBoxLayout(picking_page);
-  picking_layout->setContentsMargins(6, 6, 6, 6);
-  picking_layout->setSpacing(6);
-  auto * spatial_form = new QFormLayout();
-  spatial_mode_combo_ = new QComboBox(picking_page);
-  spatial_mode_combo_->addItem("Off", static_cast<int>(SpatialMode::Off));
-  spatial_mode_combo_->addItem("Pick a point -> /clicked_point",
-    static_cast<int>(SpatialMode::Point));
-  spatial_mode_combo_->addItem("Set a navigation goal -> /goal_pose",
-    static_cast<int>(SpatialMode::NavGoal));
-  spatial_mode_combo_->addItem("Set the initial pose -> /initialpose",
-    static_cast<int>(SpatialMode::InitialPose));
-  // Area comes in three shapes. They are encoded into the same item data as
-  // shape * 100 + mode, so one combo arms the mode AND picks the shape without
-  // a second control the operator has to notice.
-  spatial_mode_combo_->addItem("Select a rectangle -> polygon",
-    static_cast<int>(SpatialMode::Area));
-  spatial_mode_combo_->addItem("Select a circle -> polygon",
-    100 + static_cast<int>(SpatialMode::Area));
-  spatial_mode_combo_->addItem("Select a polygon (tap vertices)",
-    200 + static_cast<int>(SpatialMode::Area));
-  spatial_mode_combo_->setToolTip(
-    "What an AR pointer means in the 3D scene. Off ignores spatial input.");
-  spatial_target_combo_ = new QComboBox(picking_page);
-  // Built from spatial_target_options() rather than typed out here: the list,
-  // its order, its default and its help text are one unit-tested table, so the
-  // dropdown cannot drift from what the controller actually arms. The default
-  // is "Action Point (QarOS scene intersect)": the installed runtime reports its own
-  // scene intersection as the action point, which makes that the right default. The
-  // default relies on such a runtime; see spatial_interaction.hpp. Every other entry
-  // is offered too.
-  {
-    QString target_help = "What the pointer is resolved against.\n\n";
-    for (const SpatialTargetOption & option : spatial_target_options()) {
-      spatial_target_combo_->addItem(QString::fromUtf8(option.label), option.id);
-      target_help += QString("%1\n    %2\n")
-        .arg(QString::fromUtf8(option.label), QString::fromUtf8(option.help));
-    }
-    spatial_target_combo_->setToolTip(target_help.trimmed());
-    // Selected BY ID, not by index 0. The table happens to put the default
-    // first and a test pins that, but the combo must show what the controller
-    // is about to be armed with (below) even if the two ever disagree.
-    const int default_index = spatial_target_combo_->findData(default_spatial_target_id());
-    if (default_index >= 0) {
-      spatial_target_combo_->setCurrentIndex(default_index);
-    }
-  }
-  spatial_frame_edit_ = new QLineEdit("map", picking_page);
-  spatial_frame_edit_->setToolTip("The frame every published pick is stamped with.");
-  spatial_auto_confirm_ = new QCheckBox("Publish without confirming", picking_page);
-  spatial_auto_confirm_->setToolTip(
-    "Off by default: a pick waits for Confirm so a stray gesture cannot drive "
-    "the robot.");
-  spatial_form->addRow("Mode", spatial_mode_combo_);
-  spatial_form->addRow("Target", spatial_target_combo_);
-  spatial_form->addRow("Frame", spatial_frame_edit_);
-  auto * spatial_buttons = new QHBoxLayout();
-  spatial_confirm_button_ = new QPushButton("Confirm pick", picking_page);
-  spatial_cancel_button_ = new QPushButton("Cancel", picking_page);
-  spatial_close_polygon_button_ = new QPushButton("Close polygon", picking_page);
-  spatial_close_polygon_button_->setToolTip(
-    "Area mode with the polygon shape: finish the region the taps collected.");
-  spatial_buttons->addWidget(spatial_confirm_button_);
-  spatial_buttons->addWidget(spatial_cancel_button_);
-  spatial_buttons->addWidget(spatial_close_polygon_button_);
-  spatial_status_label_ = new QLabel("Spatial: off", picking_page);
-  spatial_status_label_->setWordWrap(true);
-  spatial_status_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  makeWidthNeutral(spatial_status_label_);
-  picking_layout->addLayout(spatial_form);
-  picking_layout->addWidget(spatial_auto_confirm_);
-  picking_layout->addLayout(spatial_buttons);
-  picking_layout->addWidget(spatial_status_label_);
-  picking_layout->addStretch(1);
-  add_page("Picking", picking_page);
-
-  // =========================================================================
-  // Settings
-  // =========================================================================
-  // What the panel keeps in the RViz configuration, and the switches that an environment
-  // variable can also set. Each persisted control shows the value in force and, where an
-  // environment variable decides it, is disabled with the variable named in its tool tip
-  // (applySettingsToUi()). The group titles say WHEN a setting takes effect.
-  auto * settings_page = new QWidget();
-  auto * settings_layout = new QVBoxLayout(settings_page);
-  settings_layout->setContentsMargins(6, 6, 6, 6);
-  settings_layout->setSpacing(6);
-
-  auto * streams_group = new QGroupBox("Streams (apply to new streams)", settings_page);
-  auto * streams_form = new QFormLayout(streams_group);
-  resolution_combo_ = new QComboBox(streams_group);
-  resolution_combo_->addItem("640 x 480", QSize(640, 480));
-  resolution_combo_->addItem("1024 x 1024", QSize(1024, 1024));
-  resolution_combo_->addItem("1280 x 720", QSize(1280, 720));
-  resolution_combo_->addItem("1600 x 900", QSize(1600, 900));
-  resolution_combo_->addItem("1920 x 1080", QSize(1920, 1080));
-  resolution_combo_->addItem("2048 x 2048", QSize(2048, 2048));
-  resolution_combo_->setCurrentIndex(2);  // 1280 x 720
-  resolution_combo_->setToolTip(
-    "The size of the pictures of the streams that are created from now on. Streams that "
-    "are already open keep their size.");
-  // FPS options MUST include 30 and 60.
-  fps_combo_ = new QComboBox(streams_group);
-  for (const int fps : {15, 30, 60, 72, 90}) {
-    fps_combo_->addItem(QString("%1 fps").arg(fps), fps);
-  }
-  fps_combo_->setCurrentIndex(2);  // 60 fps (the optimum target)
-  fps_combo_->setToolTip(
-    "The most frames per second a stream is asked for, for the streams that are created from "
-    "now on.");
-  streams_form->addRow("Resolution:", resolution_combo_);
-  streams_form->addRow("FPS cap:", fps_combo_);
-  settings_layout->addWidget(streams_group);
-
-  auto * session_group = new QGroupBox("Session (apply when you connect)", settings_page);
-  auto * session_form = new QFormLayout(session_group);
-  hidden_displays_checkbox_ = new QCheckBox(
-    "Start the hidden Displays copy when connecting", session_group);
-  hidden_displays_checkbox_->setToolTip(
-    "Streams a second copy of RViz's Displays panel into AR when the panel connects, so the "
-    "headset can switch displays on and off. Off keeps it from starting by itself; picking "
-    "its entry in the AR panels list and pressing \"Stream panel to AR\" still starts it. "
-    "Applies at every connect.");
-  ar_control_checkbox_ = new QCheckBox(
-    "Show the AR control panel when connecting", session_group);
-  ar_control_checkbox_->setToolTip(
-    "Serves the AR control panel, a page with the panel's main controls, when the panel "
-    "connects, and shows it in AR in front of each user once that user's view is being "
-    "streamed. In the offline preview only the page is served: \"Copy page URL\" opens it in a "
-    "desktop browser. Applies at every connect.");
-  session_form->addRow(hidden_displays_checkbox_);
-  session_form->addRow(ar_control_checkbox_);
-  settings_layout->addWidget(session_group);
-
-  show_advanced_checkbox_ = new QCheckBox("Show advanced options", settings_page);
-  show_advanced_checkbox_->setToolTip(
-    "Shows the advanced settings below and, in a QarOS session, the simulated-peer controls on "
-    "the Diagnostics tab. This choice is not saved.");
-  settings_layout->addWidget(show_advanced_checkbox_);
-
-  // --- Frame-timing diagnostics (QAR_ADAPTER_PRIME) -------------------------
-  // See docs/ARCHITECTURE.md#the-render-tick. Priming is a live A/B switch for telling a
-  // fixed-tick wait apart from an SDK pose/frame mismatch, not a change to the render budget.
-  // It defaults to on.
-  advanced_group_ = new QGroupBox("Advanced", settings_page);
-  auto * advanced_form = new QFormLayout(advanced_group_);
-  prime_checkbox_ = new QCheckBox("Prime next frame", advanced_group_);
   const QString qprime = qEnvironmentVariable("QAR_ADAPTER_PRIME");
   const QByteArray qprime_utf8 = qprime.toUtf8();
   prime_checkbox_->setChecked(
     qar_qar_adapter::parse_bool_env(qprime.isEmpty() ? nullptr : qprime_utf8.constData(), true));
-  prime_checkbox_->setToolTip(
-    "Start the next frame's SDK wait right after this one is shown (one tick per "
-    "frame). Off: the wait starts at the next tick's "
-    "begin_frame instead (two ticks per frame).");
-  close_mode_combo_ = new QComboBox(advanced_group_);
-  close_mode_combo_->addItem("Close them", "destroy");
-  close_mode_combo_->addItem("Show a notice", "notice");
-  close_mode_combo_->setToolTip(
-    "What happens to the AR copy of a panel when its RViz window is closed, while \"Hide panels "
-    "in AR instead of closing them\" is off. Close them: the AR panel is closed and its video "
-    "sender is destroyed. Show a notice: the AR panel stays as a closed-window notice and its "
-    "sender is kept until the session ends, for a QarOS runtime that does not survive "
-    "destroying a sender. With hiding on, a window that closes only hides its AR panel and "
-    "this choice is not used. A change acts on the closes that follow.");
-  ar_visibility_checkbox_ = new QCheckBox(
-    "Hide panels in AR instead of closing them (experimental)", advanced_group_);
-  ar_visibility_checkbox_->setToolTip(
-    "On: no QarOS panel is closed while a session runs. Switching a panel off hides it in AR and "
-    "switching it on shows it again; a window that closes on the desktop (Stop streaming, a "
-    "closed dock or dialog) and a removed AR tool leave their AR panel hidden and parked, and "
-    "opening the window or exposing the tool again shows it again without a new QarOS panel; "
-    "\"Re-open in AR\" shows an AR tool again. When the session ends, every AR panel is hidden "
-    "and left in QarOS under its name, not closed; the next session finds it and shows it "
-    "again. Off: the panel is closed and made again. A change acts on the next switch, close "
-    "or removal.");
-  advanced_form->addRow(prime_checkbox_);
-  advanced_form->addRow("Closed AR panels:", close_mode_combo_);
-  advanced_form->addRow(ar_visibility_checkbox_);
-  retain_size_when_hidden(advanced_group_);
-  settings_layout->addWidget(advanced_group_);
-  settings_layout->addStretch(1);
-  add_page("Settings", settings_page);
-
-  // =========================================================================
-  // Diagnostics
-  // =========================================================================
-  auto * diag_page = new QWidget();
-  auto * diag_layout = new QVBoxLayout(diag_page);
-  diag_layout->setContentsMargins(6, 6, 6, 6);
-  diag_layout->setSpacing(6);
-  context_status_label_ = new QLabel("DisplayContext: (not initialized)", diag_page);
-  context_status_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  makeWidthNeutral(context_status_label_);
-  auto * diag_buttons = new QHBoxLayout();
-  refresh_button_ = new QPushButton("Refresh diagnostics", diag_page);
-  capture_button_ = new QPushButton("Capture offscreen frame", diag_page);
-  stereo_capture_button_ = new QPushButton("Capture stereo pair", diag_page);
-  diag_buttons->addWidget(refresh_button_);
-  diag_buttons->addWidget(capture_button_);
-  diag_buttons->addWidget(stereo_capture_button_);
-
-  // The test markers: a script that publishes a few coloured markers for the test scenes. The
-  // launchers say which python and which script to run (QAR_PANEL_TEST_MARKERS_PYTHON and
-  // QAR_PANEL_TEST_MARKERS_SCRIPT); without them the button is disabled and its tool tip says what
-  // is missing. refreshTestMarkersUi() sets the text, the state and the tool tip.
-  auto * marker_row = new QHBoxLayout();
-  test_markers_button_ = new QPushButton("Start test markers", diag_page);
-  marker_row->addWidget(test_markers_button_);
-  marker_row->addStretch(1);
-
-  // The simulated peers of the offline preview. In a QarOS session they are an advanced section
-  // (shown by "Show advanced options"); in the preview they are how the panel works, so
-  // refreshAdvancedVisibility() always shows them there.
-  sim_peers_group_ = new QGroupBox("Simulated peers", diag_page);
-  auto * sim_layout = new QVBoxLayout(sim_peers_group_);
-  auto * peer_buttons = new QHBoxLayout();
-  add_sim_peer_button_ = new QPushButton("Add simulated peer", sim_peers_group_);
-  add_sim_peer_button_->setToolTip(
-    "Add a simulated peer with its own stereo stream of the RViz scene, for the offline "
-    "preview.");
-  remove_peer_button_ = new QPushButton("Remove peer", sim_peers_group_);
-  peer_buttons->addWidget(add_sim_peer_button_);
-  peer_buttons->addWidget(remove_peer_button_);
-  peer_list_ = new QListWidget(sim_peers_group_);
-  set_minimum_rows(peer_list_);
-  auto * stream_buttons = new QHBoxLayout();
-  start_stream_button_ = new QPushButton("Start stream", sim_peers_group_);
-  stop_stream_button_ = new QPushButton("Stop stream", sim_peers_group_);
-  stream_buttons->addWidget(start_stream_button_);
-  stream_buttons->addWidget(stop_stream_button_);
-  sim_layout->addLayout(peer_buttons);
-  sim_layout->addWidget(peer_list_);
-  sim_layout->addLayout(stream_buttons);
-
-  diagnostics_view_ = new QPlainTextEdit(diag_page);
-  diagnostics_view_->setReadOnly(true);
-  diagnostics_view_->setMaximumBlockCount(2000);
-  set_minimum_rows(diagnostics_view_);
-  diag_layout->addWidget(context_status_label_);
-  diag_layout->addLayout(diag_buttons);
-  diag_layout->addLayout(marker_row);
-  diag_layout->addWidget(sim_peers_group_);
-  diag_layout->addWidget(diagnostics_view_, 1);
-  add_page("Diagnostics", diag_page);
 
   // The states the controls start in: the preview's. onInitialize() knows whether the panel
   // is live and applies that.
@@ -1220,35 +1073,21 @@ void QarStreamingPanel::buildUi()
   refreshAdvancedVisibility();
   refreshTestMarkersUi();
 
-  // The pages scroll. A wheel turned over a page must scroll it, not change the setting (or arm
-  // the pick mode) of the control under the pointer; a click gives a control the wheel.
-  for (QWidget * control : {
-      static_cast<QWidget *>(resolution_combo_), static_cast<QWidget *>(fps_combo_),
-      static_cast<QWidget *>(close_mode_combo_),
-      static_cast<QWidget *>(ar_panel_scale_spin_), static_cast<QWidget *>(peer_kind_combo_),
-      static_cast<QWidget *>(spatial_mode_combo_), static_cast<QWidget *>(spatial_target_combo_),
-      static_cast<QWidget *>(ar_panel_combo_)})
-  {
-    guard_wheel(control);
-  }
-
-  // What scrolls by design: a list grows with what the operator adds to it and a log with what
-  // happened. The scroll-area census leaves these out when it asks whether anything that must not
-  // scroll in AR does (the readout is marked by make_readout_box()). The pages themselves are not
-  // marked: a page that scrolls is a panel that is too low.
-  for (QWidget * area : {
-      static_cast<QWidget *>(topic_watch_list_), static_cast<QWidget *>(exposure_list_),
-      static_cast<QWidget *>(peer_list_), static_cast<QWidget *>(diagnostics_view_),
-      static_cast<QWidget *>(hub_widget_->target_list())})
-  {
-    area->setProperty(qar_qt_streaming::kScrollsByDesignProperty, true);
-  }
-
   // The size hints are measured once, with every page built and holding its first content, and
   // are the answer of sizeHint() and minimumSizeHint() from now on.
-  const StableHints hints = compute_stable_hints(*tabs_, page_contents_, *status_strip_);
+  // A neighbouring dock must not squeeze the panel below what its tallest page needs: the least
+  // height is that need, capped at 6/10 of the screen's available height and at 55/100 of the
+  // height of the main window (refreshMinimumHeightCap() applies the cap again when the screen or
+  // the window changes). The hint is as high as the tallest page needs, at most 900 pixels: the
+  // Diagnostics page holds the counters of the AR panels (ten lines) and the log view.
+  const StableHints hints = compute_stable_hints(
+    *tabs_, page_contents_, *status_strip_, 900, 0);
   stable_size_hint_ = hints.hint;
+  stable_plain_minimum_height_ = hints.minimum.height();
   stable_minimum_size_hint_ = hints.minimum;
+  stable_minimum_size_hint_.setHeight(
+    capped_minimum_height(
+      stable_plain_minimum_height_, stable_size_hint_.height(), currentMinimumHeightCap()));
 
   connect(
     spatial_mode_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -1286,6 +1125,14 @@ void QarStreamingPanel::buildUi()
       spatial_.set_auto_confirm(on);
       refreshSpatialUi();
     });
+  // A choice from the list and a name typed in end the same way; the one that comes second finds
+  // the topic in force already and changes nothing.
+  connect(
+    spatial_topic_combo_, QOverload<int>::of(&QComboBox::activated), this,
+    [this](int index) {onPickTopicEntered(spatial_topic_combo_->itemText(index));});
+  connect(
+    spatial_topic_combo_->lineEdit(), &QLineEdit::returnPressed, this,
+    [this]() {onPickTopicEntered(spatial_topic_combo_->currentText());});
 
   // --- Signal/slot wiring --------------------------------------------------
   connect(start_qar_button_, &QPushButton::clicked, this, &QarStreamingPanel::onStartQar);
@@ -1309,16 +1156,26 @@ void QarStreamingPanel::buildUi()
     remove_topic_button_, &QPushButton::clicked, this,
     &QarStreamingPanel::onRemoveWatchedTopic);
   connect(
-    stream_panel_button_, &QPushButton::clicked, this,
-    &QarStreamingPanel::onStreamSelectedPanel);
+    ar_panel_list_, &ArPanelListWidget::primaryRequested, this,
+    &QarStreamingPanel::onArPanelListPrimary);
   connect(
-    stop_panel_button_, &QPushButton::clicked, this, &QarStreamingPanel::onStopSelectedPanel);
+    ar_panel_list_, &ArPanelListWidget::sizeRequested, this,
+    &QarStreamingPanel::onToggleArCopySize);
   connect(
-    refresh_panels_button_, &QPushButton::clicked, this,
+    ar_panel_list_, &ArPanelListWidget::reopenRequested, this,
+    &QarStreamingPanel::onArPanelListReopen);
+  connect(
+    ar_panel_list_, &ArPanelListWidget::refreshRequested, this,
     &QarStreamingPanel::onRefreshStreamablePanels);
   connect(
     remove_exposure_button_, &QPushButton::clicked, this,
     &QarStreamingPanel::onRemoveExposure);
+  connect(
+    toggle_writable_button_, &QPushButton::clicked, this,
+    &QarStreamingPanel::onToggleExposureWritable);
+  connect(
+    exposure_list_, &QListWidget::currentItemChanged, this,
+    [this]() {refreshExposureWritableButton();});
   connect(
     reopen_exposure_button_, &QPushButton::clicked, this,
     &QarStreamingPanel::onReopenExposure);
@@ -1347,6 +1204,11 @@ void QarStreamingPanel::buildUi()
     fps_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
     [this](int) {
       onSettingEdited(settings_key::kFpsCap, fps_combo_->currentData().toString());
+    });
+  connect(
+    ar_copy_size_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+    [this](int) {
+      onSettingEdited(settings_key::kArCopySize, ar_copy_size_combo_->currentData().toString());
     });
   connect(
     hidden_displays_checkbox_, &QCheckBox::toggled, this,
@@ -1380,7 +1242,7 @@ void QarStreamingPanel::buildUi()
       onSettingEdited(settings_key::kInviteHostname, peer_hostname_edit_->text().trimmed());
     });
 
-  // --- The QAROS Hub group: the join in progress, the targets -----------------------------------
+  // --- The QAROS Hub group: Cancel ------------------------------------------------------------
   connect(
     hub_widget_, &HubConnectionWidget::cancelRequested, this, &QarStreamingPanel::onCancelConnect);
 
@@ -1429,6 +1291,10 @@ void QarStreamingPanel::buildUi()
   connect(
     hidden_displays_census_timer_, &QTimer::timeout, this,
     &QarStreamingPanel::requestHiddenDisplaysCensus);
+  // And one look per period at every AR copy of a dock or of this panel that is being fitted.
+  ar_copy_fit_timer_ = new QTimer(this);
+  ar_copy_fit_timer_->setSingleShot(true);
+  connect(ar_copy_fit_timer_, &QTimer::timeout, this, &QarStreamingPanel::advanceArCopyFits);
 
   refreshStreamablePanels();
 }
@@ -1449,7 +1315,48 @@ QSize QarStreamingPanel::minimumSizeHint() const
 void QarStreamingPanel::showEvent(QShowEvent * event)
 {
   rviz_common::Panel::showEvent(event);
+  hookScreenChanges();
+  refreshMinimumHeightCap();
   scheduleSizeReport();
+}
+
+int QarStreamingPanel::currentMinimumHeightCap() const
+{
+  const int screen_height = screen() != nullptr ? screen()->availableGeometry().height() : 0;
+  // A floating dock is a window of its own whose height follows the panel's: only the main window
+  // that holds the dock limits the minimum.
+  const QWidget * top = window();
+  const int window_height =
+    top != nullptr && top != this && qobject_cast<const QDockWidget *>(top) == nullptr ?
+    top->height() : 0;
+  return minimum_height_cap(screen_height, window_height);
+}
+
+void QarStreamingPanel::refreshMinimumHeightCap()
+{
+  if (stable_plain_minimum_height_ <= 0) {
+    return;
+  }
+  QSize minimum = stable_minimum_size_hint_;
+  minimum.setHeight(
+    capped_minimum_height(
+      stable_plain_minimum_height_, stable_size_hint_.height(), currentMinimumHeightCap()));
+  if (minimum == stable_minimum_size_hint_) {
+    return;
+  }
+  stable_minimum_size_hint_ = minimum;
+  updateGeometry();
+}
+
+void QarStreamingPanel::hookScreenChanges()
+{
+  const QWidget * top = window();
+  QWindow * handle = top != nullptr ? top->windowHandle() : nullptr;
+  if (handle == nullptr || handle == screen_hook_window_.data()) {
+    return;
+  }
+  screen_hook_window_ = handle;
+  connect(handle, &QWindow::screenChanged, this, [this](QScreen *) { refreshMinimumHeightCap(); });
 }
 
 void QarStreamingPanel::resizeEvent(QResizeEvent * event)
@@ -1525,8 +1432,9 @@ void QarStreamingPanel::reportPanelSizes()
 void QarStreamingPanel::logTabSelected(const QString & tab_name)
 {
   // Another page is another picture in AR: when this panel streams, its scroll areas are counted
-  // again at the next frame it sends. The manager answers false when it does not stream.
-  if (panel_manager_) {
+  // again at the next frame it sends. The manager answers false when it does not stream. A panel
+  // that streams its AR copy has another tab in AR (onSelfArCopyTabChanged()).
+  if (panel_manager_ && !self_ar_copy_) {
     panel_manager_->request_scroll_census(
       kSelfPanelKey, QString("tab '%1' selected").arg(tab_name).toStdString());
   }
@@ -1567,6 +1475,12 @@ void QarStreamingPanel::snapshotEnvironment()
       env_snapshot_[spec.env] = qEnvironmentVariable(spec.env).toStdString();
     }
   }
+  // The AR copy of this panel is on unless the variable says off (not a setting: it is the switch
+  // back to streaming the panel itself).
+  self_ar_copy_env_ = qEnvironmentVariable(kSelfArCopyEnv).trimmed();
+  const QString word = self_ar_copy_env_.toLower();
+  self_ar_copy_enabled_ = !(word == QLatin1String("off") || word == QLatin1String("false") ||
+    word == QLatin1String("0"));
 }
 
 void QarStreamingPanel::resolveSettings()
@@ -1660,6 +1574,13 @@ void QarStreamingPanel::applySettingsToUi()
     const QSignalBlocker blocker(fps_combo_);
     select_data(fps_combo_, setting_int(effective_settings_, settings_key::kFpsCap));
   }
+  {
+    // The first item names the factor in force; the other states the setting's choice.
+    const QSignalBlocker blocker(ar_copy_size_combo_);
+    ar_copy_size_combo_->setItemText(
+      0, QString::fromStdString(ar_copy_enlarged_item_text(arCopyEnlargedFactor())));
+    select_data(ar_copy_size_combo_, text(settings_key::kArCopySize));
+  }
 
   // Session.
   {
@@ -1706,9 +1627,12 @@ void QarStreamingPanel::applySettingsToUi()
     spatial_frame_edit_->setText(text(settings_key::kPickFrame));
     spatial_.set_frame_id(text(settings_key::kPickFrame).toStdString());
   }
+  // The Topic drop-down says when the variable of the topic list decides.
+  markEnvironmentControl(spatial_topic_combo_, resolved(settings_key::kPickTopics));
+  applyPickTopicsSetting();
   refreshSpatialUi();
 
-  // Connection: which device "Invite peer" invites. The Hub is always the one of this PC.
+  // Connection: which device "Invite peer" invites.
   {
     const QSignalBlocker blocker(peer_kind_combo_);
     select_data(peer_kind_combo_, text(settings_key::kInviteDevice));
@@ -1724,9 +1648,12 @@ void QarStreamingPanel::applySettingsToUi()
   markEnvironmentControl(ar_control_checkbox_, resolved(settings_key::kArControlPanel));
   markEnvironmentControl(ar_visibility_checkbox_, resolved(settings_key::kArVisibility));
   markEnvironmentControl(ar_panel_scale_spin_, resolved(settings_key::kWebPanelScale));
+  markEnvironmentControl(ar_copy_size_combo_, resolved(settings_key::kArCopySize));
   // After the visibility switch above has its value: the close choice is used only without hiding.
   refreshCloseModeControl();
+  // The Connection tab follows the Hub settings and the state of the join.
   refreshConnectionView();
+  updateArPanelList();
 }
 
 void QarStreamingPanel::refreshCloseModeControl()
@@ -1778,6 +1705,23 @@ void QarStreamingPanel::onSettingEdited(const char * key, const QString & text)
   // turning hiding on or off turns the choice of the close mode off or on.
   syncPanelCloseMode();
   refreshCloseModeControl();
+  refreshExposureWritableButton();
+  // The size of the AR copies applies at once to every streamed panel that has no choice of its
+  // own; the panels that are streamed later read it when they start.
+  if (std::string(key) == settings_key::kArCopySize) {
+    if (ar_copy_size_combo_ != nullptr) {
+      // An edit that came from the AR control page: the drop-down shows the value in force.
+      const QSignalBlocker blocker(ar_copy_size_combo_);
+      const int index = ar_copy_size_combo_->findData(
+        QString::fromStdString(setting_text(effective_settings_, settings_key::kArCopySize)));
+      if (index >= 0) {
+        ar_copy_size_combo_->setCurrentIndex(index);
+      }
+    }
+    applyArCopySizeToAll();
+    updateArPanelList();
+    ar_control_dirty_ = true;
+  }
   Q_EMIT configChanged();
 }
 
@@ -1791,6 +1735,10 @@ void QarStreamingPanel::load(const rviz_common::Config & config)
   for (rviz_common::Config::MapIterator entry = config.mapIterator(); entry.isValid();
     entry.advance())
   {
+    // A map or a list (the record "AR State") is not a setting; it is read below.
+    if (entry.currentChild().getType() != rviz_common::Config::Value) {
+      continue;
+    }
     saved[entry.currentKey().toStdString()] =
       entry.currentChild().getValue().toString().toStdString();
   }
@@ -1823,6 +1771,54 @@ void QarStreamingPanel::load(const rviz_common::Config & config)
   reportSettings();
   syncPanelCloseMode();
 
+  // The record "AR State": what was on in AR when the configuration was saved. It is read here and
+  // applied later: the watched topics and the tools once the panel is initialised (a step per
+  // tick), the panels after the first connect. Nothing in it connects, publishes or closes.
+  {
+    std::vector<std::string> state_warnings;
+    ArStateConfigIo io;
+    io.read = [&config]() {
+        ConfigNode map;
+        const rviz_common::Config record = config.mapGetChild(kArStateKey);
+        if (record.getType() != rviz_common::Config::Invalid) {
+          map.set(kArStateKey, nodeOfConfig(record));
+        }
+        return map;
+      };
+    restore_plan_ = ArRestorePlan();
+    if (const std::optional<ArStateText> text = load_ar_state_text(io, state_warnings)) {
+      restore_plan_ = parse_ar_state(*text, state_warnings);
+    }
+    for (const std::string & warning : state_warnings) {
+      appendLog("SETTINGS: " + QString::fromStdString(warning));
+    }
+    // The size choices of single panels; a choice equal to the global one is no choice.
+    ar_copy_choice_.clear();
+    for (const ArPanelState & panel : restore_plan_.panels) {
+      if (panel.size.has_value() && *panel.size != globalArCopySize()) {
+        ar_copy_choice_[panel.key] = *panel.size;
+      }
+    }
+    // A configuration loaded while panels stream takes their sizes to the choices it holds and to
+    // the size setting; a manager exists only once a QarOS session has been joined.
+    if (panel_manager_) {
+      applyArCopySizeToAll(true);
+      updateArPanelList();
+      ar_control_dirty_ = true;
+    }
+    ar_panels_kept_ = restore_plan_.panels;
+    restore_pending_ = !restore_plan_.panels.empty();
+    restore_tools_pending_ = !restore_plan_.tools.empty() || !restore_plan_.watched.empty();
+    restore_watched_done_ = false;
+    restore_tool_next_ = 0;
+    if (!restore_plan_.empty()) {
+      appendLog(
+        QString("SETTINGS: read the AR state: %1 panel(s), %2 tool(s), %3 watched topic(s)")
+        .arg(restore_plan_.panels.size()).arg(restore_plan_.tools.size())
+        .arg(restore_plan_.watched.size()));
+    }
+  }
+
   // A configuration written by an older panel restores the dock at the size of that panel. The
   // default size is applied once, a moment from now, when RViz has restored its window state
   // (load() runs before that). A configuration saved by this panel keeps the size it holds.
@@ -1838,6 +1834,7 @@ void QarStreamingPanel::load(const rviz_common::Config & config)
 
 void QarStreamingPanel::applyDefaultDockSize()
 {
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: default dock size");
   const QString version =
     QString("(the config had settings version %1)").arg(default_dock_saved_version_);
 
@@ -1944,7 +1941,8 @@ std::vector<QDockWidget *> QarStreamingPanel::streamedDocksExcept(const QDockWid
     };
   // This panel's own dock, when this panel is streamed.
   QDockWidget * own = enclosingDock(parentWidget());
-  if (own != nullptr && own != dock && is_streamed(kSelfPanelKey)) {
+  // A panel that streams a copy of itself has no stream that depends on its dock.
+  if (own != nullptr && own != dock && is_streamed(kSelfPanelKey) && !self_ar_copy_) {
     streamed.push_back(own);
   }
   // The RViz docks, named as collectStreamableEntries() names them.
@@ -1955,7 +1953,8 @@ std::vector<QDockWidget *> QarStreamingPanel::streamedDocksExcept(const QDockWid
       }
       const QString title =
         other->windowTitle().isEmpty() ? other->objectName() : other->windowTitle();
-      if (!title.isEmpty() && is_streamed(("dock:" + title).toStdString())) {
+      const std::string other_key = ("dock:" + title).toStdString();
+      if (!title.isEmpty() && is_streamed(other_key) && ar_copy_panels_.count(other_key) == 0) {
         streamed.push_back(other);
       }
     }
@@ -2097,6 +2096,7 @@ QarStreamingPanel::DockStartStep QarStreamingPanel::advanceDockStart(PendingDock
 
 void QarStreamingPanel::startPendingDockStreams()
 {
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: start dock streams");
   std::vector<PendingDockStart> pending;
   pending.swap(pending_dock_starts_);
   bool waiting = false;
@@ -2149,6 +2149,9 @@ bool QarStreamingPanel::dockStartWaits(const std::string & manager_key) const
   if (manager_key == kHiddenDisplaysKey && hidden_displays_fit_) {
     return true;
   }
+  if (arCopyFitWaits(manager_key)) {
+    return true;
+  }
   return std::any_of(
     pending_dock_starts_.begin(), pending_dock_starts_.end(),
     [&manager_key](const PendingDockStart & start) { return start.key == manager_key; });
@@ -2167,6 +2170,9 @@ bool QarStreamingPanel::cancelPendingDockStart(
   const std::string manager_key = requested_key;
   if (manager_key == kHiddenDisplaysKey) {
     return cancelHiddenDisplaysFit(reason);
+  }
+  if (cancelArCopyFit(manager_key, reason)) {
+    return true;
   }
   const auto waiting = std::find_if(
     pending_dock_starts_.begin(), pending_dock_starts_.end(),
@@ -2196,6 +2202,13 @@ void QarStreamingPanel::cancelPendingDockStarts(const QString & reason)
     cancelPendingDockStart(pending_dock_starts_.front().key, reason);
   }
   cancelHiddenDisplaysFit(reason);
+  std::vector<std::string> copy_keys;
+  for (const auto & copy : ar_copy_fits_) {
+    copy_keys.push_back(copy.first);
+  }
+  for (const std::string & key : copy_keys) {
+    cancelArCopyFit(key, reason);
+  }
 }
 
 void QarStreamingPanel::armStartFit()
@@ -2210,6 +2223,7 @@ void QarStreamingPanel::armStartFit()
 
 void QarStreamingPanel::startFit()
 {
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: panel fit at start");
   // The default dock size comes first, and its limits on the layout come off before the fit looks
   // at the dock.
   if (default_dock_timer_->isActive() || default_dock_release_timer_->isActive()) {
@@ -2326,6 +2340,88 @@ void QarStreamingPanel::save(rviz_common::Config config) const
   }
   appendLog(
     QString("SETTINGS: saved %1 values (version %2)").arg(written).arg(kPanelSettingsVersion));
+
+  // The record "AR State": the AR panels that are on, the size choices, the AR tools and the
+  // watched topics. The pick, the selected tab and the AR control panel instances are not part
+  // of it. A record with nothing in it is left out.
+  const ArRestorePlan state = currentArState();
+  if (!state.empty()) {
+    ArStateConfigIo io;
+    io.read = []() {return ConfigNode();};
+    io.write = [&config](const ConfigNode & map) {
+        if (const ConfigNode * record = map.find(kArStateKey)) {
+          fillConfig(config.mapMakeChild(kArStateKey), *record);
+        }
+      };
+    store_ar_state_text(io, make_ar_state(state));
+  }
+  appendLog(
+    QString("SETTINGS: saved the AR state: %1 panel(s), %2 tool(s), %3 watched topic(s)")
+    .arg(state.panels.size()).arg(state.tools.size()).arg(state.watched.size()));
+}
+
+std::vector<ArPanelState> QarStreamingPanel::currentArPanels() const
+{
+  // The base is the plan or the last session while no session streams or the plan waits for the
+  // first connect; otherwise the streams of the session are the whole truth.
+  const std::vector<ArPanelState> base =
+    panel_manager_ == nullptr || restore_pending_ ? ar_panels_kept_ : std::vector<ArPanelState>();
+  std::vector<ArPanelLive> streams;
+  if (panel_manager_) {
+    const seam::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
+    for (const seam::PanelStreamDiagnostics & panel : snapshot.panels) {
+      streams.push_back({panel.key, panel_state_is_on(arStateOf(&panel))});
+    }
+  }
+  return merge_ar_panels(
+    base, streams, panels_to_restore_, ar_copy_choice_,
+    setting_bool(effective_settings_, settings_key::kHiddenDisplaysOnConnect));
+}
+
+ArRestorePlan QarStreamingPanel::currentArState() const
+{
+  ArRestorePlan plan;
+  plan.panels = currentArPanels();
+
+  for (const ExposedEntity & row : exposures_.entries()) {
+    if (row.entity.type_name.empty()) {
+      continue;
+    }
+    ArToolState tool;
+    tool.kind = row.entity.kind;
+    tool.name = row.entity.name;
+    tool.type = row.entity.type_name;
+    tool.writable = row.writable;
+    for (const auto & panel : ar_tools_) {
+      if (panel->panel_id == row.panel_id) {
+        const bool hidden = panel->ar_hidden || panel->pending_hide || panel->restore_hidden;
+        tool.shown = panel->pending_show || !hidden;
+        break;
+      }
+    }
+    plan.tools.push_back(std::move(tool));
+  }
+  // Tools and topics of the plan that the steps of the restore have not reached yet are kept.
+  if (restore_tools_pending_) {
+    for (std::size_t i = restore_tool_next_; i < restore_plan_.tools.size(); ++i) {
+      const ArToolState & tool = restore_plan_.tools[i];
+      if (!exposures_.contains(tool.kind, tool.name)) {
+        plan.tools.push_back(tool);
+      }
+    }
+  }
+
+  for (const AddTopicSelection & topic : watched_topics_) {
+    if (!topic.message_type.isEmpty()) {
+      plan.watched.push_back({topic.name.toStdString(), topic.message_type.toStdString()});
+    }
+  }
+  if (restore_tools_pending_ && !restore_watched_done_) {
+    for (const WatchedTopicState & topic : restore_plan_.watched) {
+      plan.watched.push_back(topic);
+    }
+  }
+  return plan;
 }
 
 // ---------------------------------------------------------------------------
@@ -2478,16 +2574,25 @@ void QarStreamingPanel::onInitialize()
   // regardless of how often this timer fires. Qt picks CoarseTimer by default, which
   // may drift 5% and — on Windows — is served off the ~15.6 ms system tick, so even
   // the slowest stock period (16 ms) would alias to ~31ms/~32 FPS without PreciseTimer
-  // (the multimedia timer); applyTickPeriodMs() always sets PreciseTimer.
+  // (the multimedia timer); apply_tick_plan() always sets PreciseTimer.
   render_timer_ = new QTimer(this);
   connect(render_timer_, &QTimer::timeout, this, &QarStreamingPanel::onRenderTick);
+  // The watchdog starts before the tick does, so that the period below reaches it.
+  startStallWatchdog();
   // The period of the tick is QAR_PANEL_TICK_MS and nothing else: 0.1 ms when the variable is
   // unset or is not a period (a negative, a huge or a non-numeric text), since the tightest
   // stock setting is the one a frame-timing A/B starts from. The panel has no control for it.
   // QTimer's own interval cannot represent sub-1ms periods; 0.1 ms is realized as a
   // zero-interval timer (fires whenever the event loop is otherwise idle) plus a
   // steady-clock throttle in onRenderTick() that runs the tick body at most once per
-  // its nominal period (100us here) - see applyTickPeriodMs().
+  // its nominal period (100us here). That is the streaming tier; until a stream exists the tick
+  // runs on an ordinary timer of kIdleTickMs - see applyTickTier().
+  // A scripted run drives the panel through the tick (the auto dump and capture) or by itself
+  // (stereo, multi-peer): none of them waits for the idle tier to end.
+  scripted_driver_ = !qEnvironmentVariable("QAR_PANEL_AUTODUMP").isEmpty() ||
+    !qEnvironmentVariable("QAR_PANEL_AUTOCAPTURE").isEmpty() ||
+    !qEnvironmentVariable("QAR_PANEL_AUTOSTEREO").isEmpty() ||
+    !qEnvironmentVariable("QAR_PANEL_AUTOMULTI").isEmpty();
   {
     const QString qtick_ms = qEnvironmentVariable("QAR_PANEL_TICK_MS");
     const QByteArray qtick_ms_utf8 = qtick_ms.toUtf8();
@@ -2674,6 +2779,7 @@ void QarStreamingPanel::scheduleAutoConnect()
 
 void QarStreamingPanel::onStartQar()
 {
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: connect to QarOS");
   // LIVE: "Connect to QarOS" connects to the real QarOS runtime and begins streaming.
   // The session is built HERE (on an operator click, event loop running), never at load.
   if (live_stream_mode_) {
@@ -2685,7 +2791,14 @@ void QarStreamingPanel::onStartQar()
       // "Disconnect (pause)" kept the session, the render factory and every panel built on
       // them: streaming starts again at once, with no new join.
       appendLog("QarOS: streaming resumed.");
+      paused_by_person_ = false;
       finishLiveConnect();
+      return;
+    }
+    if (connection_phase_ == ConnectionPhase::Lost && session_owner_) {
+      // The owner joins the Hub again by itself; this click asks for the next attempt at once.
+      appendLog("QarOS: joining the Hub again at once.");
+      session_owner_->rejoin_now();
       return;
     }
     if (connection_phase_ == ConnectionPhase::Running ||
@@ -3144,10 +3257,39 @@ void QarStreamingPanel::ensureSessionOwner()
     // panel.
     return;
   }
+  startExitGuardOnce();
   session_owner_ = std::make_shared<qar_qar_adapter::QarSessionOwner>(makeSessionOwnerConfig());
   appendLog(
-    QString("QAROS: session owner made (program %1, local app of the Hub of this PC)")
+    QString("QAROS: session owner made (program %1, joins the Hub of this PC)")
     .arg(QString::fromLatin1(kProgramTag)));
+}
+
+// The process exit guard is made before the first QAROS library is loaded (a thread made later
+// could wait for a loader lock that a stuck library call holds) and armed when the application is
+// about to quit; a panel that is removed while RViz keeps running never arms it.
+void QarStreamingPanel::startExitGuardOnce()
+{
+  static std::once_flag once;
+  std::call_once(once, [this] {
+      QString note;
+      const bool enabled = environmentSwitch("QAR_EXIT_GUARD", true, note);
+      qar_rviz_streaming::start_process_exit_guard(enabled);
+      if (enabled) {
+        if (QCoreApplication * const app = QCoreApplication::instance()) {
+          QObject::connect(
+            app, &QCoreApplication::aboutToQuit, app,
+            [] { qar_rviz_streaming::arm_process_exit_guard(); }, Qt::DirectConnection);
+        }
+      }
+      if (!note.isEmpty()) {
+        appendLog(note);
+      }
+      appendLog(
+        enabled ?
+        QStringLiteral("QAROS: exit guard on: RViz ends itself 5 s after it was asked to quit "
+          "when it has not ended by then (QAR_EXIT_GUARD=off turns it off)") :
+        QStringLiteral("QAROS: exit guard off (QAR_EXIT_GUARD=off): RViz waits for its own exit"));
+    });
 }
 
 void QarStreamingPanel::pollSessionOwner()
@@ -3171,14 +3313,20 @@ void QarStreamingPanel::pollSessionOwner()
     handleSessionEvent(event);
   }
   pollAttach();
-  // The countdown of the approval wait is local: it counts from the configured timeout.
-  if (connection_phase_ == ConnectionPhase::WaitingForApproval) {
+  // The countdown of the approval wait is local: it counts from the configured timeout. The
+  // seconds of a silent Hub and the seconds to the next automatic attempt are read from the owner
+  // the same way, so these phases refresh the view without an event.
+  if (connection_phase_ == ConnectionPhase::WaitingForApproval ||
+    connection_phase_ == ConnectionPhase::Reconnecting ||
+    connection_phase_ == ConnectionPhase::Lost)
+  {
     const auto now = std::chrono::steady_clock::now();
     if (now - approval_shown_ >= kCountdownRefresh) {
       approval_shown_ = now;
       refreshConnectionView();
     }
   }
+  sampleStreamHealth();
 }
 
 void QarStreamingPanel::handleSessionEvent(const qar_qar_adapter::SessionEvent & event)
@@ -3187,6 +3335,7 @@ void QarStreamingPanel::handleSessionEvent(const qar_qar_adapter::SessionEvent &
   using qar_qar_adapter::SessionState;
   switch (event.kind) {
     case Kind::kState: {
+        const ConnectionPhase before = connection_phase_;
         connection_phase_ = phaseOf(event.state);
         const std::string & message = event.status.message;
         if (event.state == SessionState::kWaitingForApproval) {
@@ -3199,15 +3348,43 @@ void QarStreamingPanel::handleSessionEvent(const qar_qar_adapter::SessionEvent &
             setLastError("QarOS: " + QString::fromStdString(message));
           }
         }
-        if (event.state == SessionState::kRunning) {
+        if (event.state == SessionState::kLost) {
+          // The Hub did not answer for long: the session is given up. What was built on it goes
+          // and the owner is told, so that it releases the session and joins the Hub again.
+          onSessionLost(message);
+        } else if (event.state == SessionState::kRunning) {
           clearLastError();
           owner_failure_message_.clear();
+          if (session_lost_) {
+            onSessionRejoined();
+          } else if (hub_was_silent_ && before == ConnectionPhase::Reconnecting) {
+            // The Hub answers again. A session that follows it brings the streams back by
+            // itself; one that does not is given up after a while (judgeSessionAfterHub).
+            verdict_limit_s_ = rejoinAfterHubSeconds();
+            verdict_armed_ = verdict_limit_s_ > 0;
+            verdict_since_ = std::chrono::steady_clock::now();
+            verdict_frames_ = std::numeric_limits<std::uint64_t>::max();
+          }
+          hub_was_silent_ = false;
           if (!qar_factory_) {
             onSessionRunning();
           }
         } else if (event.state != SessionState::kReconnecting && qar_factory_) {
           // The owner left the running state on its own: what was built on its session goes.
           releaseSessionConsumers(QStringLiteral("the QAROS session ended"));
+        }
+        if (event.state == SessionState::kReconnecting) {
+          hub_was_silent_ = true;
+        } else if (event.state != SessionState::kRunning) {
+          hub_was_silent_ = false;
+          verdict_armed_ = false;
+        }
+        if (event.state == SessionState::kIdle || event.state == SessionState::kFailed ||
+          event.state == SessionState::kStopping)
+        {
+          // No session is left to resume.
+          paused_by_person_ = false;
+          onAutomaticRejoinEnded();
         }
         refreshTargetList();
         updateRuntimeStateLabel();
@@ -3217,7 +3394,15 @@ void QarStreamingPanel::handleSessionEvent(const qar_qar_adapter::SessionEvent &
       // The owner logged it ("QAROS: progress ..."); the State line is made from the state.
       break;
     case Kind::kTargetUp:
+      stream_tracker_.target_back(
+        qar_ogre_streaming::peer_id_to_hex(event.target.id).substr(0, 8));
+      refreshTargetList();
+      refreshConnectionView();
+      break;
     case Kind::kTargetDown:
+      stream_tracker_.target_left(
+        steadySeconds(), qar_ogre_streaming::peer_id_to_hex(event.target.id).substr(0, 8),
+        targetLabel(event.target));
       refreshTargetList();
       refreshConnectionView();
       break;
@@ -3244,6 +3429,334 @@ void QarStreamingPanel::handleSessionEvent(const qar_qar_adapter::SessionEvent &
   }
 }
 
+void QarStreamingPanel::onSessionLost(const std::string & cause)
+{
+  if (!session_lost_) {
+    session_lost_ = true;
+    lost_at_ = std::chrono::steady_clock::now();
+    std::string words = cause;
+    if (words.empty() && session_owner_) {
+      words = session_owner_->rejoin_info().lost_cause;
+    }
+    appendLog(
+      QString("QarOS: the QAROS session was lost (%1); everything built on it is released and "
+        "the owner joins again by itself.").arg(QString::fromStdString(words)));
+  }
+  // A failed automatic attempt reports the loss again: nothing is built then, and the hand-back
+  // below is the same call as the first.
+  releaseSessionConsumers(QStringLiteral("the QAROS session was lost"), true, true);
+  stream_tracker_ = StreamOutageTracker();
+  degraded_shown_.clear();
+  verdict_armed_ = false;
+  if (session_owner_) {
+    session_owner_->release_lost_session();
+  }
+}
+
+void QarStreamingPanel::onSessionRejoined()
+{
+  session_lost_ = false;
+  const int attempt = session_owner_ ? session_owner_->rejoin_info().attempt : 0;
+  const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(
+    std::chrono::steady_clock::now() - lost_at_).count();
+  QString line = QString("QarOS: rejoined the Hub (attempt %1, %2 s after the loss); restoring "
+      "%3 AR panel(s)")
+    .arg(attempt)
+    .arg(seconds)
+    .arg(panels_to_restore_.size());
+  if (!panels_to_restore_.empty()) {
+    QStringList keys;
+    for (const std::string & key : panels_to_restore_) {
+      keys.append(QString::fromStdString(key));
+    }
+    line += ": " + keys.join(", ");
+  }
+  appendLog(line);
+}
+
+void QarStreamingPanel::onAutomaticRejoinEnded()
+{
+  if (!session_lost_ && panels_to_restore_.empty()) {
+    return;
+  }
+  session_lost_ = false;
+  panels_to_restore_.clear();
+  appendLog("QarOS: automatic rejoin stopped; press Connect to QarOS to join again.");
+}
+
+bool QarStreamingPanel::targetStaysOnline(const QarPeerId & id) const
+{
+  if (!session_owner_) {
+    return false;
+  }
+  const bool held = qar_factory_ && qar_factory_->senders_held_for_hub();
+  bool online = false;
+  for (const qar_qar_adapter::TargetInfo & target : session_owner_->targets()) {
+    if (qar_ogre_streaming::peer_id_equal(target.id, id)) {
+      online = target.served && target.presence == QAR_PEER_PRESENCE_ONLINE;
+      break;
+    }
+  }
+  return target_stays_for_panels(held, online);
+}
+
+void QarStreamingPanel::sampleStreamHealth()
+{
+  if (!live_stream_mode_ || !session_owner_) {
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  if (now - stream_sampled_ < kStreamSamplePeriod) {
+    return;
+  }
+  stream_sampled_ = now;
+
+  std::vector<StreamSample> samples;
+  std::uint64_t frames_total = 0;
+  bool target_online = false;
+  const bool joined = connection_phase_ == ConnectionPhase::Running ||
+    connection_phase_ == ConnectionPhase::Reconnecting;
+  if (joined && live_connected_ && qar_factory_ && manager_) {
+    const std::vector<qar_qar_adapter::TargetInfo> targets = session_owner_->targets();
+    for (const qar_qar_adapter::TargetInfo & target : targets) {
+      target_online = target_online || target.presence == QAR_PEER_PRESENCE_ONLINE;
+    }
+    const auto find_target = [&targets](const std::string & hex) {
+        for (const qar_qar_adapter::TargetInfo & target : targets) {
+          if (qar_ogre_streaming::peer_id_to_hex(target.id) == hex) {
+            return &target;
+          }
+        }
+        return static_cast<const qar_qar_adapter::TargetInfo *>(nullptr);
+      };
+    const auto snapshot = manager_->diagnostics_snapshot();
+    for (const auto & stream : snapshot.streams) {
+      StreamSample sample;
+      sample.peer8 = stream.peer_id_hex.substr(0, 8);
+      const qar_qar_adapter::TargetInfo * target = find_target(stream.peer_id_hex);
+      sample.name = target != nullptr ? targetLabel(*target) : sample.peer8;
+      sample.frames_submitted = stream.frames_submitted;
+      frames_total += stream.frames_submitted;
+      sample.not_ready =
+        stream.last_skip_reason == qar_ogre_streaming::SkipReason::SenderNotReady ||
+        stream.last_skip_reason == qar_ogre_streaming::SkipReason::SenderError;
+      // The receiver restarts: the runtime answers 603, or says it in words.
+      sample.reconnecting = stream.last_skip_detail.find("603") != std::string::npos ||
+        stream.last_skip_detail.find("econnecting") != std::string::npos;
+      // Any other answer of the begin-frame call that is an error: the receiver was reached
+      // again but sends no render request.
+      sample.render_request_missing = !sample.reconnecting &&
+        stream.last_skip_detail.find("try_begin_frame failed") != std::string::npos;
+      for (const QarPeerId & id : live_peers_) {
+        if (qar_ogre_streaming::peer_id_to_hex(id) == stream.peer_id_hex) {
+          const int attempt = qar_factory_->create_attempt(id);
+          sample.create_attempt = attempt > 1 ? attempt : 0;
+          sample.tripped = qar_factory_->frame_calls_stopped(id);
+          break;
+        }
+      }
+      samples.push_back(std::move(sample));
+    }
+    // A target whose 3D sender is being made again has no stream yet.
+    for (const qar_qar_adapter::TargetInfo & target : targets) {
+      if (!target.served || target.presence != QAR_PEER_PRESENCE_ONLINE) {
+        continue;
+      }
+      const bool has_stream = std::any_of(
+        live_peers_.begin(), live_peers_.end(), [&target](const QarPeerId & id) {
+          return qar_ogre_streaming::peer_id_equal(id, target.id);
+        });
+      const int attempt = has_stream ? 0 : qar_factory_->create_attempt(target.id);
+      if (attempt > 1) {
+        StreamSample sample;
+        sample.peer8 = qar_ogre_streaming::peer_id_to_hex(target.id).substr(0, 8);
+        sample.name = targetLabel(target);
+        sample.not_ready = true;
+        sample.create_attempt = attempt;
+        samples.push_back(std::move(sample));
+      }
+    }
+  }
+  const double now_s = steadySeconds();
+  stream_tracker_.sample(now_s, samples);
+  for (const std::string & line : stream_tracker_.take_log_lines()) {
+    appendLog(QString::fromStdString(line));
+    // "QarOS: stream <peer> back after <n> s": a Visualizer that restarted brings the 3D stream
+    // back too, so the record of the AR control panel is read again.
+    if (line.find(" back after ") != std::string::npos) {
+      if (ar_control_viewers_ == 0) {
+        ar_control_stall_at_zero_ = true;
+      }
+      requestArControlRecords(
+        QString::fromStdString(line.substr(line.find("stream "))), true,
+        std::chrono::steady_clock::now());
+    }
+  }
+  if (connection_phase_ == ConnectionPhase::Running) {
+    const std::string text = stream_tracker_.degraded_text(now_s);
+    if (text != degraded_shown_) {
+      degraded_shown_ = text;
+      refreshConnectionView();
+    }
+  } else if (!degraded_shown_.empty()) {
+    degraded_shown_.clear();
+  }
+  if (verdict_armed_) {
+    judgeSessionAfterHub(frames_total, target_online);
+  }
+}
+
+void QarStreamingPanel::judgeSessionAfterHub(std::uint64_t frames_submitted, bool target_online)
+{
+  if (connection_phase_ != ConnectionPhase::Running || !session_owner_) {
+    verdict_armed_ = false;
+    return;
+  }
+  if (verdict_frames_ == std::numeric_limits<std::uint64_t>::max() ||
+    frames_submitted < verdict_frames_)
+  {
+    // The count at the moment the Hub answered again, or fewer streams than then.
+    verdict_frames_ = frames_submitted;
+  }
+  if (frames_submitted > verdict_frames_) {
+    verdict_armed_ = false;  // a stream submitted a frame: the session works
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  if (now - verdict_since_ < std::chrono::seconds(verdict_limit_s_)) {
+    return;
+  }
+  verdict_armed_ = false;
+  if (target_online) {
+    return;  // a receiver is there: the session works, its streams are the receiver's matter
+  }
+  if (last_declared_lost_.time_since_epoch().count() != 0 &&
+    now - last_declared_lost_ < kDeclareLostSpacing)
+  {
+    return;
+  }
+  last_declared_lost_ = now;
+  session_owner_->declare_lost("no stream came back after the Hub returned");
+}
+
+void QarStreamingPanel::queuePanelsOfTheConfig()
+{
+  if (!restore_pending_ || live_peers_.empty() || !sessionReadyForPanels()) {
+    return;
+  }
+  // The plan is used once per load: a later pause or resume restores nothing, and a lost session
+  // restores what streamed before the loss.
+  restore_pending_ = false;
+  std::vector<std::string> already = panels_to_restore_;
+  if (panel_manager_) {
+    const std::vector<std::string> streaming = panel_manager_->panel_keys();
+    already.insert(already.end(), streaming.begin(), streaming.end());
+  }
+  for (const PendingDockStart & waiting : pending_dock_starts_) {
+    already.push_back(waiting.key);
+  }
+  const std::vector<std::string> keys = panels_to_start(restore_plan_, already);
+  if (keys.empty()) {
+    return;
+  }
+  panels_to_restore_.insert(panels_to_restore_.end(), keys.begin(), keys.end());
+  appendLog(
+    QString("QarOS: restoring %1 AR panel(s) saved in the RViz config")
+    .arg(static_cast<int>(keys.size())));
+}
+
+void QarStreamingPanel::restoreArToolsStep()
+{
+  if (!restore_tools_pending_ || getDisplayContext() == nullptr) {
+    return;
+  }
+  if (!restore_watched_done_) {
+    // The list of watched topics only; RViz restored the displays itself.
+    restore_watched_done_ = true;
+    for (const WatchedTopicState & topic : restore_plan_.watched) {
+      const std::size_t before = watched_topics_.size();
+      AddTopicSelection selection;
+      selection.kind = RosEntityKind::Topic;
+      selection.name = QString::fromStdString(topic.name);
+      selection.message_type = QString::fromStdString(topic.type);
+      selection.expose_as_ar_tool = false;
+      pinWatchedTopic(selection);
+      if (watched_topics_.size() > before) {
+        appendLog(
+          QString("TOPICS: restored the watched topic %1 [%2] from the RViz config")
+          .arg(selection.name, selection.message_type));
+      }
+    }
+  }
+  if (restore_tool_next_ >= restore_plan_.tools.size()) {
+    restore_tools_pending_ = false;
+    return;
+  }
+
+  // One tool per tick: the exposure is local work (introspection, a served page), but a long list
+  // must not hold the Qt thread. No QarOS call: the QarOS panel is made by the tool tick.
+  const ArToolState tool = restore_plan_.tools[restore_tool_next_++];
+  if (restore_tool_next_ >= restore_plan_.tools.size()) {
+    restore_tools_pending_ = false;
+  }
+  const QString name = QString::fromStdString(tool.name);
+  const QString type = QString::fromStdString(tool.type);
+  if (exposures_.contains(tool.kind, tool.name)) {
+    appendLog(
+      QString("AR TOOL: %1 is exposed already; the RViz config leaves it as it is").arg(name));
+    return;
+  }
+  AddTopicSelection selection;
+  selection.kind = tool.kind;
+  selection.name = name;
+  selection.message_type = type;
+  selection.expose_as_ar_tool = true;
+  selection.allow_publish = tool.writable;
+  // The flag is a choice only when it differs from the rule of the type, as in the dialog.
+  selection.write_chosen = tool.writable != default_write_for(tool.kind, tool.type).writable;
+  const QString error = exposeEntity(selection);
+  if (!error.isEmpty()) {
+    appendLog(QString("AR TOOL: %1 [%2] not restored: %3").arg(name, type, error));
+    return;
+  }
+  const ExposedEntity * row = exposures_.find(tool.kind, tool.name);
+  if (!tool.shown && row != nullptr) {
+    if (ArToolPanel * panel = findArTool(row->panel_id)) {
+      panel->restore_hidden = true;
+    }
+  }
+  appendLog(
+    QString("AR TOOL: restored %1 [%2] from the RViz config (%3, %4 in AR)")
+    .arg(name, type,
+      row != nullptr && row->writable ? QStringLiteral("writable") : QStringLiteral("read-only"),
+      tool.shown ? QStringLiteral("shown") : QStringLiteral("hidden")));
+}
+
+void QarStreamingPanel::restorePanelsWhenAPeerStreams()
+{
+  queuePanelsOfTheConfig();
+  if (panels_to_restore_.empty() || live_peers_.empty() || !sessionReadyForPanels()) {
+    return;
+  }
+  // One panel per tick: each start builds a QarOS panel and a video sender.
+  const std::string key = panels_to_restore_.front();
+  panels_to_restore_.erase(panels_to_restore_.begin());
+  const QString text = QString::fromStdString(key);
+  clearLastError();
+  if (streamPanelByKey(text)) {
+    appendLog(QString("QarOS: restored AR panel '%1'").arg(text));
+    return;
+  }
+  QString why = last_error_text_;
+  if (why.startsWith("AR panel: ")) {
+    why = why.mid(static_cast<int>(std::strlen("AR panel: ")));
+  }
+  if (why.endsWith("press Refresh.")) {
+    why = QStringLiteral("no such panel in RViz");
+  }
+  appendLog(QString("QarOS: AR panel '%1' not restored: %2").arg(text, why));
+}
+
 void QarStreamingPanel::onSessionRunning()
 {
   if (!manager_ || !session_owner_) {
@@ -3261,6 +3774,7 @@ void QarStreamingPanel::onSessionRunning()
       QString("QarOS connect failed: %1").arg(QString::fromStdString(qar_factory_->last_error())));
     qar_factory_->detach();
     qar_factory_.reset();
+    wireGpuGate();
     session_owner_->disconnect();
     return;
   }
@@ -3294,10 +3808,52 @@ void QarStreamingPanel::pollAttach()
     QString("QarOS connect failed: %1").arg(QString::fromStdString(qar_factory_->last_error())));
   qar_factory_->detach();
   qar_factory_.reset();
+  wireGpuGate();
   if (session_owner_) {
     session_owner_->disconnect();
   }
   updateRuntimeStateLabel();
+}
+
+void QarStreamingPanel::wireGpuGate()
+{
+  // The GPU progress watch belongs to the QarOS factory (it follows a fence of every frame that
+  // the GUI thread issues and closes the gate while the GPU finishes none). The scheduler of the
+  // 3D batch and the frame listener of RViz ask it; neither waits on it. The listener keeps
+  // asking after the factory is gone, so it holds the watch weakly: an ended factory means an
+  // open gate.
+  using Watch = qar_qar_adapter::GpuProgressWatch;
+  gpu_frame_gate_.clear_hooks();
+  if (manager_) {
+    manager_->scheduler().set_gpu_gate(nullptr);
+  }
+  if (!qar_factory_) {
+    return;
+  }
+  const std::shared_ptr<Watch> watch = qar_factory_->gpu_watch();
+  if (!watch) {
+    return;
+  }
+  const std::weak_ptr<Watch> weak = watch;
+  GpuFrameGateHooks hooks;
+  hooks.closed = [weak] {
+      const std::shared_ptr<Watch> held = weak.lock();
+      return held && held->rviz_gate_closed();
+    };
+  hooks.frame_issued = [weak] {
+      if (const std::shared_ptr<Watch> held = weak.lock()) {
+        held->note_frame_issued(Watch::Kind::kRvizFrame);
+      }
+    };
+  hooks.frame_skipped = [weak] {
+      if (const std::shared_ptr<Watch> held = weak.lock()) {
+        held->note_frame_skipped();
+      }
+    };
+  gpu_frame_gate_.set_hooks(std::move(hooks));
+  if (manager_) {
+    manager_->scheduler().set_gpu_gate(watch);
+  }
 }
 
 bool QarStreamingPanel::sessionReadyForPanels() const
@@ -3313,6 +3869,18 @@ void QarStreamingPanel::finishLiveConnect()
   }
   sender_factory_ = qar_factory_;
   manager_->set_sender_factory(qar_factory_);
+  wireGpuGate();
+  if (paused_by_person_) {
+    // The person paused before the session was lost: the session is open again, the streams wait
+    // for "Connect to QarOS".
+    manager_->set_streaming_active(false);
+    live_connected_ = false;
+    qar_running_ = false;
+    updateRuntimeStateLabel();
+    appendLog(
+      "QarOS: the session is open again; streaming stays paused until Connect to QarOS.");
+    return;
+  }
   manager_->set_streaming_active(true);
   startSpatialGestureSource();
   live_connected_ = true;
@@ -3411,7 +3979,8 @@ void QarStreamingPanel::releaseUrlPanel(
   adapter->detach();
 }
 
-void QarStreamingPanel::releaseSessionConsumers(const QString & reason, bool update_ui)
+void QarStreamingPanel::releaseSessionConsumers(
+  const QString & reason, bool update_ui, bool session_lost)
 {
   if (!live_stream_mode_) {
     return;
@@ -3420,6 +3989,8 @@ void QarStreamingPanel::releaseSessionConsumers(const QString & reason, bool upd
   // is going.
   cancelPendingDockStarts(reason);
   hidden_displays_start_pending_ = false;
+  control_waits_for_copy_since_ = SteadyTime{};
+  control_waits_for_copy_logged_ = false;
   const bool built = qar_factory_ || panel_manager_ || panel_sender_factory_ ||
     panel_input_source_ || url_panel_factory_ || spatial_gesture_source_ || !live_peers_.empty();
   live_connected_ = false;
@@ -3434,24 +4005,31 @@ void QarStreamingPanel::releaseSessionConsumers(const QString & reason, bool upd
   appendLog(QString("QarOS: releasing everything built on the session (%1).").arg(reason));
   geo_applied_ = false;
 
-  // 1. The QarOS panels of the streamed windows: the manager hides each of them and lets go of
-  //    its sender and its input subscription. Then the windows and their video sources, which
-  //    no stream reads.
-  panel_manager_.reset();
-  panel_sender_factory_.reset();
-  panel_input_source_.reset();
-  video_regions_.clear();
-  video_panels_.clear();
-  streamed_panels_.clear();
-  for (auto & connection : dock_close_connections_) {
-    QObject::disconnect(connection.second);
+  // What was on in AR is what the RViz configuration keeps when it is saved after the session.
+  if (panel_manager_ && !restore_pending_) {
+    ar_panels_kept_ = currentArPanels();
   }
-  dock_close_connections_.clear();
-  visibility_requests_.clear();
-  control_commands_.clear();
-  control_toggles_.clear();
 
-  // 2. The browser panels (the AR tools and the AR control panel): hidden and let go.
+  // The streamed RViz panels that a lost session had in AR come back after the rejoin. A panel
+  // the person hid in AR, or whose notice replaced it, stays as it is.
+  if (session_lost) {
+    for (const auto & streamed : streamed_panels_) {
+      const std::string & key = streamed.first;
+      const bool shown = panel_manager_ && panel_manager_->has_panel(key) &&
+        !panel_manager_->is_tombstoned(key) && !panel_manager_->is_ar_hidden(key);
+      if (shown &&
+        std::find(panels_to_restore_.begin(), panels_to_restore_.end(), key) ==
+        panels_to_restore_.end())
+      {
+        panels_to_restore_.push_back(key);
+      }
+    }
+  }
+
+  // 1. The browser panels (the AR tools and the AR control panel): hidden and let go. The owner
+  //    runs its tasks in the order they were queued, and a destroy of a video sender can hang
+  //    (the QAROS Hub may be gone): the hide of a browser panel queued behind it would never run,
+  //    and the next session would find the page of this one still on show.
   for (const std::unique_ptr<ArToolPanel> & tool : ar_tools_) {
     if (!tool) {
       continue;
@@ -3477,6 +4055,39 @@ void QarStreamingPanel::releaseSessionConsumers(const QString & reason, bool upd
     instance.adapter.reset();
     instance.next_attempt = std::chrono::steady_clock::time_point{};
   }
+
+  // 2. The QarOS panels of the streamed windows: the manager hides each of them and lets go of
+  //    its sender and its input subscription. Then the windows and their video sources, which
+  //    no stream reads.
+  // The panels that stay in the Hub hide and lose their video sender; the Visualizer closes such
+  // a panel when the next session does not reattach it in time, and a close can crash it.
+  if (panel_manager_ &&
+    panel_manager_->close_mode() != qar_qt_streaming::PanelCloseMode::Destroy)
+  {
+    const auto snapshot = panel_manager_->diagnostics();
+    const std::size_t held = static_cast<std::size_t>(snapshot.panel_count) +
+      panel_manager_->replaced_panel_count();
+    const std::size_t closed_in_ar = snapshot.ar_closed_panels;
+    if (held > closed_in_ar) {
+      appendLog(QString::fromStdString(panels_losing_stream_text(held - closed_in_ar)));
+    }
+  }
+  panel_manager_.reset();
+  panel_sender_factory_.reset();
+  panel_input_source_.reset();
+  video_regions_.clear();
+  video_panels_.clear();
+  streamed_panels_.clear();
+  stream_scale_.clear();
+  stream_pose_.clear();
+  for (auto & connection : dock_close_connections_) {
+    QObject::disconnect(connection.second);
+  }
+  dock_close_connections_.clear();
+  visibility_requests_.clear();
+  control_commands_.clear();
+  control_toggles_.clear();
+
   url_panel_factory_.reset();
 
   // 3. The render senders of the 3D streams, and the simulated factory back in their place.
@@ -3493,6 +4104,7 @@ void QarStreamingPanel::releaseSessionConsumers(const QString & reason, bool upd
     }
   }
   live_peers_.clear();
+  remade_stream_peers_.clear();
   sender_factory_ = mock_factory_;
   invites_in_flight_ = 0;
 
@@ -3500,11 +4112,13 @@ void QarStreamingPanel::releaseSessionConsumers(const QString & reason, bool upd
   spatial_gesture_source_.reset();
   spatial_subscription_attempted_ = false;
 
-  // 5. The render factory lets go of the volume; the owner then takes the session back.
+  // 5. The render factory lets go of the volume; the owner then takes the session back. The gate
+  // of the GPU progress watch goes with the factory.
   if (qar_factory_) {
     qar_factory_->detach();
     qar_factory_.reset();
   }
+  wireGpuGate();
 
   if (update_ui) {
     refreshStreamablePanels();
@@ -3520,7 +4134,7 @@ void QarStreamingPanel::releaseSessionConsumers(const QString & reason, bool upd
   appendLog(
     QString("QarOS: %1 session task(s) queued; the owner runs them before it releases the "
       "session (%2 ms on this thread). AR panels are hidden in the Hub; start them again with "
-      "'Stream panel to AR' after the next connect.")
+      "'Stream to AR' after the next connect.")
     .arg(static_cast<qulonglong>(queued_tasks))
     .arg(
       std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -3545,7 +4159,19 @@ void QarStreamingPanel::onCancelConnect()
   if (!session_owner_) {
     return;
   }
-  appendLog("QarOS: cancelling the join.");
+  if (connection_phase_ == ConnectionPhase::Reconnecting) {
+    // "Join again": the Hub does not answer, so the session is given up, released and joined
+    // again without waiting for the owner's own limit.
+    appendLog("QarOS: giving the session up and joining the Hub again.");
+    session_owner_->declare_lost("the person asked to join again");
+    return;
+  }
+  if (connection_phase_ == ConnectionPhase::Lost || session_owner_->rejoin_info().automatic) {
+    // "Stop rejoining": the owner ends the automatic rejoin and the state becomes idle.
+    appendLog("QarOS: stopping the automatic rejoin.");
+  } else {
+    appendLog("QarOS: cancelling the join.");
+  }
   session_owner_->cancel();
 }
 
@@ -3581,6 +4207,32 @@ ConnectionInput QarStreamingPanel::connectionInput() const
   }
   input.failure_message = owner_failure_message_;
   input.invite_in_flight = invites_in_flight_ > 0;
+  if (session_owner_) {
+    if (input.phase == ConnectionPhase::Reconnecting) {
+      const int silent_ms = session_owner_->health().silent_for_ms;
+      input.hub_silent_s = silent_ms >= 0 ? silent_ms / 1000 : -1;
+    }
+    if (input.phase == ConnectionPhase::Lost ||
+      input.phase == ConnectionPhase::WaitingForApproval)
+    {
+      const qar_qar_adapter::RejoinInfo rejoin = session_owner_->rejoin_info();
+      input.auto_rejoin = rejoin.automatic;
+      input.rejoin_prompt_open = rejoin.prompt_open;
+      if (rejoin.next_in_ms >= 0) {
+        // The owner waits: the text names the attempt that comes next.
+        input.rejoin_attempt = rejoin.attempt + 1;
+        input.rejoin_in_s = (rejoin.next_in_ms + 999) / 1000;
+      } else {
+        input.rejoin_attempt = rejoin.attempt;
+        input.rejoin_in_s = -1;
+      }
+      input.releasing = input.phase == ConnectionPhase::Lost && rejoin.attempt == 0 &&
+        rejoin.next_in_ms < 0;
+    }
+  }
+  if (input.phase == ConnectionPhase::Running) {
+    input.degraded_text = stream_tracker_.degraded_text(steadySeconds());
+  }
   return input;
 }
 
@@ -3591,6 +4243,9 @@ void QarStreamingPanel::refreshConnectionView()
   }
   const ConnectionView view = make_connection_view(connectionInput());
   hub_widget_->apply(view);
+  if (HubConnectionWidget * const copy_hub = copyHubWidget()) {
+    copy_hub->apply(view);
+  }
   if (add_peer_button_ != nullptr) {
     add_peer_button_->setEnabled(view.invite_enabled);
     add_peer_button_->setToolTip(QString::fromStdString(view.invite_tooltip));
@@ -3619,6 +4274,7 @@ void QarStreamingPanel::refreshConnectionView()
       case ConnectionPhase::Loading:
       case ConnectionPhase::WaitingForApproval:
       case ConnectionPhase::Reconnecting:
+      case ConnectionPhase::Lost:
       case ConnectionPhase::Stopping:
         runtime_state_label_->setStyleSheet("font-weight: bold; color: #d35400;");
         break;
@@ -3652,6 +4308,9 @@ void QarStreamingPanel::refreshTargetList()
     }
   }
   hub_widget_->set_targets(rows);
+  if (HubConnectionWidget * const copy_hub = copyHubWidget()) {
+    copy_hub->set_targets(rows);
+  }
 }
 
 void QarStreamingPanel::startArControlPage(bool live)
@@ -3681,6 +4340,7 @@ void QarStreamingPanel::startArControlPage(bool live)
 
 void QarStreamingPanel::onStopQar()
 {
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: stop QarOS");
   // An AR panel whose dock is still being fitted is not started after the session has been
   // stopped.
   cancelPendingDockStarts(
@@ -3689,9 +4349,19 @@ void QarStreamingPanel::onStopQar()
 
   // LIVE: "Disconnect (pause)" pauses streaming. The QAROS session, the render factory, the panel
   // manager with the streamed windows, the URL panels and the AR control panel stay as they are;
-  // "Connect to QarOS" resumes at once. Everything built on the session is released only by a
-  // session that ends on its own and when RViz closes the panel.
+  // "Connect to QarOS" resumes at once. Everything built on the session is released only when
+  // the session ends on its own or when RViz closes the panel.
   if (live_stream_mode_) {
+    if (session_owner_ &&
+      (connection_phase_ == ConnectionPhase::Lost || session_owner_->rejoin_info().automatic))
+    {
+      // The owner joins the Hub again by itself: pausing ends that. The state becomes idle and
+      // "Connect to QarOS" starts a join.
+      appendLog("QarOS: stopping the automatic rejoin.");
+      paused_by_person_ = false;
+      session_owner_->cancel();
+      return;
+    }
     if (attach_pending_) {
       // Stopped while the app volume is being made: the factory lets go and the session is given
       // back, as after a failed attach.
@@ -3701,6 +4371,7 @@ void QarStreamingPanel::onStopQar()
         qar_factory_->detach();
         qar_factory_.reset();
       }
+      wireGpuGate();
       if (session_owner_) {
         session_owner_->disconnect();
       }
@@ -3713,6 +4384,8 @@ void QarStreamingPanel::onStopQar()
       }
       live_connected_ = false;
       qar_running_ = false;
+      paused_by_person_ = true;
+      panels_to_restore_.clear();
       updateRuntimeStateLabel();
       appendLog("QarOS: streaming paused (session kept open).");
     }
@@ -3730,7 +4403,7 @@ void QarStreamingPanel::onStopQar()
 void QarStreamingPanel::onInvitePeer()
 {
   // "Invite peer" asks the Hub of this PC to start the app of a real device. The button is
-  // enabled only in this-PC mode while connected; a simulated peer has its own button
+  // enabled only while connected; a simulated peer has its own button
   // (onAddSimulatedPeer()), so this one never adds one by mistake.
   if (!live_stream_mode_ || !live_connected_ || !session_owner_) {
     setLastError("Invite peer: not connected to QarOS.");
@@ -3848,6 +4521,7 @@ void QarStreamingPanel::onRemovePeer()
 
 void QarStreamingPanel::onStartStream()
 {
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: start stream");
   QarPeerId id{};
   if (selectedPeerId(id)) {
     startStreamInternal(id);
@@ -3858,6 +4532,7 @@ void QarStreamingPanel::onStartStream()
 
 void QarStreamingPanel::onStopStream()
 {
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: stop stream");
   QarPeerId id{};
   if (selectedPeerId(id)) {
     stopStreamInternal(id);
@@ -4387,11 +5062,21 @@ void QarStreamingPanel::driveLiveStreaming()
   //    (QarStreamParamsOpenGlWgl) when a sender is created, but this tick is a QTimer
   //    slot that can land BETWEEN Ogre frames — so we capture opportunistically
   //    every tick and create_sender() uses the latched handles.
+  stallStep("live: GL context");
   const bool gl_ready = qar_factory_->capture_gl_context();
 
   // 1) Open a stereo stream for every peer that requested one (the real QAR
   //    render-request path). create_stream() only bookkeeps; the scheduler lazily
   //    creates the Ogre eye targets under the render lock during render_tick().
+  stallStep("live: new peers");
+  // A Hub process that ended releases the 3D senders (they are listed as closed below), and the
+  // requests of the peers wait until the new Hub process runs.
+  if (session_owner_) {
+    for (const std::string & text : qar_factory_->note_hub_process(session_owner_->hub_process())) {
+      appendLog("QarOS: " + QString::fromStdString(text));
+    }
+  }
+  qar_factory_->log_render_requests();
   std::vector<QarPeerId> new_peers;
   qar_factory_->poll_new_peer_requests(new_peers);
   const RenderSettings s = currentSettings();
@@ -4411,6 +5096,7 @@ void QarStreamingPanel::driveLiveStreaming()
       }
       // The AR control panel is placed in front of every peer that has a render stream.
       live_peers_.push_back(id);
+      remade_stream_peers_.stream_opened(id);
       appendLog(QString("LIVE: opened stream for peer %1")
         .arg(QString::fromStdString(qar_ogre_streaming::peer_id_to_hex(id).substr(0, 10))));
     } else if (cr.status != qar_ogre_streaming::Status::AlreadyExists) {
@@ -4431,11 +5117,15 @@ void QarStreamingPanel::driveLiveStreaming()
     }
   }
 
-  // 1b) The hidden Displays copy goes up once a peer has a 3D stream.
+  // 1b) The hidden Displays copy goes up once a peer has a 3D stream, and so do the AR panels
+  //     that a lost session had open.
+  stallStep("live: hidden displays and restore");
   startHiddenDisplaysWhenAPeerStreams();
+  restorePanelsWhenAPeerStreams();
 
   // 2) Render + submit every active stream. The scheduler renders the LIVE RViz
   //    scene from each peer's head pose (begin_frame) and submits via the QAR C API.
+  stallStep("3D render batch");
   const qar_ogre_streaming::Result res = manager_->render_tick();
   if (res.ok()) {
     ++stereo_render_ticks_;
@@ -4448,9 +5138,13 @@ void QarStreamingPanel::driveLiveStreaming()
   }
 
   // 3) Close streams the runtime closed (begin_frame reported STREAM_CLOSED).
+  stallStep("live: closed peers");
   std::vector<QarPeerId> closed;
   qar_factory_->poll_closed_peers(closed);
   for (const QarPeerId & id : closed) {
+    // A stream that closed while its target is still online and served is made again by
+    // forget(): the AR panels of that peer stay shown. Only a target that left hides them.
+    remade_stream_peers_.stream_closed(id, targetStaysOnline(id));
     manager_->destroy_stream(id);
     qar_factory_->forget(id);
     live_peers_.erase(
@@ -4466,24 +5160,16 @@ void QarStreamingPanel::driveLiveStreaming()
 
 void QarStreamingPanel::onRenderTick()
 {
-  // Zero-interval throttle (0.1 ms tick setting): a
+  // Zero-interval throttle (streaming tier with a tick below 1 ms, 0.1 ms by default): a
   // zero-interval QTimer fires as fast as the event loop is otherwise idle, which on
   // a quiet system is far more often than any real begin-frame wait could resolve.
-  // Cap the actual tick body to at most once per tick_throttle_interval_us_ (100us at
-  // 0.1 ms) so heartbeat cadence, budget pacing, etc. all keep their designed
-  // effective rate regardless of how often Qt calls in — and so a throttled call is
-  // the cheapest possible no-op: one steady_clock read, one comparison, no logging,
-  // no allocation. Ticks at 1 ms and above are already paced by Qt::PreciseTimer
-  // itself and never hit this branch.
-  if (zero_interval_mode_) {
-    const auto now = std::chrono::steady_clock::now();
-    if (last_tick_body_run_.time_since_epoch().count() != 0 &&
-      std::chrono::duration<double, std::micro>(now - last_tick_body_run_).count() <
-        tick_throttle_interval_us_)
-    {
-      return;
-    }
-    last_tick_body_run_ = now;
+  // Cap the actual tick body to at most once per throttle period (100us at 0.1 ms) so
+  // heartbeat cadence, budget pacing, etc. all keep their designed effective rate
+  // regardless of how often Qt calls in - and so a throttled call is the cheapest possible
+  // no-op: one steady_clock read, one comparison, no logging, no allocation. Ticks at 1 ms
+  // and above, and the idle tier, are paced by Qt::PreciseTimer itself and are all admitted.
+  if (!tick_throttle_.admit(std::chrono::steady_clock::now())) {
+    return;
   }
 
   // Tick accounting runs FIRST, ahead of every early-out: the heartbeat has to
@@ -4491,6 +5177,7 @@ void QarStreamingPanel::onRenderTick()
   // render, and the inter-tick gap is what exposes a GUI-thread stall after the
   // fact. Measuring only inside the streaming path would go quiet during exactly
   // the states we most need to tell apart (idle vs. blocked).
+  const StallTickScope stall_scope(stall_watchdog_.get());
   const auto tick_now = std::chrono::steady_clock::now();
   ++render_timer_fires_;
   if (tick_gap_valid_) {
@@ -4498,8 +5185,12 @@ void QarStreamingPanel::onRenderTick()
       std::chrono::duration<double, std::milli>(tick_now - tick_last_).count();
     if (gap_ms > tick_max_gap_ms_) {
       tick_max_gap_ms_ = gap_ms;
+      // The wall-clock time at which the gap began; the heartbeat prints it behind the length.
+      tick_max_gap_began_ = std::chrono::system_clock::now() -
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(
+        std::chrono::duration<double, std::milli>(gap_ms));
     }
-    if (gap_ms > kGuiGapRecordMs && gui_gap_timing_) {
+    if (gap_ms > gui_gap_record_ms(tick_timer_period_ms_) && gui_gap_timing_) {
       // A stall of the Qt thread, with absolute (epoch) bounds so it lines up with the
       // stage CSVs. One queued row; the clock is read only on the rare gap.
       const std::int64_t end_us = qar_ar_core::timing_epoch_us();
@@ -4510,19 +5201,26 @@ void QarStreamingPanel::onRenderTick()
   }
   tick_last_ = tick_now;
   tick_gap_valid_ = true;
+  // The last thing every tick does, after every early return below: look at what is streamed and
+  // set the speed of the tick. The tick that creates the first stream is the one that switches.
+  const AtScopeEnd tier_check([this, tick_now] {checkTickTier(tick_now);});
+  stallStep("heartbeat");
   emitHeartbeat();
+  mirrorStallReport();
 
   // AR input is pumped from a POSTED event, never from inside this timer
   // handler: a click that opens a modal dialog spins a nested event loop, and
   // Qt will not re-enter a timer whose handler is still on the stack — which is
   // exactly how the whole stream would freeze for as long as a dialog opened by an
   // AR tap on "Add" stays open. See scheduleArPanelInputPump().
+  stallStep("AR panel input pump");
   scheduleArPanelInputPump();
 
   // The state of the join to the QAROS Hub: the events of the session owner, the lines of its
   // log, a release that a click asked for. Before the early-outs below, because the join goes on
   // whatever state the 3D path is in. Nothing here waits for QAROS.
   if (live_stream_mode_) {
+    stallStep("session owner poll");
     pollSessionOwner();
   }
 
@@ -4530,16 +5228,25 @@ void QarStreamingPanel::onRenderTick()
   // Ogre scene path (a widget capture needs no DisplayContext and no peer), and
   // they are paced by their own per-panel FPS cap, so an idle 3D stream must not
   // stop them.
+  stallStep("AR panels");
   tickArPanels();
   // Same reasoning for the generated AR panels: they need no DisplayContext and
   // no peer, they are paced per panel, and the ROS bridges' timeout tick must
   // keep running whether or not the 3D path has anything to do.
+  stallStep("AR tool panels");
+  restoreArToolsStep();
   tickArToolPanels();
+  // The docks of RViz's window: a panel that comes or goes reaches the desktop's list and the
+  // AR control page. A walk over a few dozen objects, at most every 500 ms.
+  stallStep("dock census");
+  pollDockCensus(tick_now, /*force=*/false);
   // And for the AR control panel: its page and its commands need no peer, and every QarOS
   // call it makes belongs on this tick, not on a click or on a control event.
+  stallStep("AR control panel");
   tickArControlPanel();
   // Same again for spatial picks: they arrive on the QarOS gesture thread, are
   // drained here on the Qt thread, and need neither a DisplayContext nor a peer.
+  stallStep("spatial interaction");
   tickSpatialInteraction();
   // Floor plane: re-sync against the display tree regardless of streaming
   // state, same reasoning as the three ticks above — it tracks the Grid
@@ -4547,6 +5254,7 @@ void QarStreamingPanel::onRenderTick()
   // GridFloorPlaneManager::sync()'s own comment); null when disabled via
   // QAR_PANEL_FLOOR_PLANE=off or construction failed.
   if (floor_plane_) {
+    stallStep("floor plane");
     floor_plane_->sync();
   }
 
@@ -4557,6 +5265,7 @@ void QarStreamingPanel::onRenderTick()
     if (live_connected_) {
       // Both of these call into QAR, so they belong on this thread, not on the
       // ROS executor that delivered the fix.
+      stallStep("geo fix");
       applyPendingGeoFix();
       driveLiveStreaming();
     }
@@ -4569,6 +5278,7 @@ void QarStreamingPanel::onRenderTick()
   // streams due this tick (FPS + time budget), then renders them ALL inside ONE
   // DisplayContext render lock (via render_lock_) so every peer samples the same
   // scene snapshot. Callbacks never render — only this tick.
+  stallStep("3D render batch");
   const qar_ogre_streaming::Result res = manager_->render_tick();
   if (res.ok()) {
     ++stereo_render_ticks_;
@@ -4586,27 +5296,12 @@ void QarStreamingPanel::applyTickPeriodMs(double ms, bool from_environment)
   if (render_timer_ == nullptr) {
     return;
   }
-  tick_period_ms_ = ms;
-  // QTimer::setInterval() takes an int ms and cannot represent a sub-1ms period: for
-  // ms < 1 we run it as a zero-interval timer instead (fires whenever the event loop
-  // is otherwise idle — Qt's documented meaning of interval 0) and throttle the
-  // actual tick body ourselves in onRenderTick(), rather than letting it run
-  // literally as fast as the event loop will dispatch (which would still be
-  // silent/allocation-free per declined call, but would needlessly burn CPU on a
-  // busy-poll well past anything a real begin-frame wait could resolve at).
-  zero_interval_mode_ = (ms < 1.0);
-  tick_throttle_interval_us_ = ms * 1000.0;
-  // Reset to "run unconditionally next time": a period CHANGE must not inherit a
-  // stale last-run timestamp from the previous (possibly much slower) period.
-  last_tick_body_run_ = std::chrono::steady_clock::time_point{};
-
-  // Applies immediately: stop, reconfigure, restart — never leave the timer running
-  // with a stale interval while it is stopped (a queued timeout from the OLD period
-  // could otherwise still land after start()).
-  render_timer_->stop();
-  render_timer_->setTimerType(Qt::PreciseTimer);
-  render_timer_->setInterval(zero_interval_mode_ ? 0 : static_cast<int>(ms + 0.5));
-  render_timer_->start();
+  configured_tick_ms_ = ms;
+  // The period the timer runs at is the one of the tier: the configured period while a stream
+  // exists, the idle period otherwise. A forced application stops, reconfigures and restarts the
+  // timer, never leaving it running with a stale interval (a queued timeout of the OLD period
+  // could otherwise still land after the start).
+  applyTickTier(desiredTickTier(), /*force=*/true);
 
   if (manager_) {
     manager_->set_tick_ms(ms);  // informational only; see set_tick_ms doc comment
@@ -4614,6 +5309,61 @@ void QarStreamingPanel::applyTickPeriodMs(double ms, bool from_environment)
   appendLog(QString("Render tick: %1 ms (%2)")
     .arg(ms)
     .arg(from_environment ? QStringLiteral("QAR_PANEL_TICK_MS") : QStringLiteral("default")));
+}
+
+TickTier QarStreamingPanel::desiredTickTier() const
+{
+  TickDemand demand;
+  demand.live_mode = live_stream_mode_;
+  demand.live_connected = live_connected_;
+  demand.preview_streaming = !live_stream_mode_ && manager_ && manager_->streaming_active();
+  demand.scripted_driver = scripted_driver_;
+  demand.streams_3d = manager_ ? manager_->stream_count() : 0;
+  if (panel_manager_) {
+    // A parked panel keeps its stream but sends nothing, so it does not hold the streaming tier.
+    const std::size_t kept = panel_manager_->panel_keys().size();
+    const std::size_t parked = panel_manager_->parked_panel_keys().size();
+    demand.ar_panel_streams = kept > parked ? kept - parked : 0;
+  }
+  return tick_tier_for(demand);
+}
+
+void QarStreamingPanel::applyTickTier(TickTier tier, bool force)
+{
+  if (render_timer_ == nullptr || (!force && tier == tick_tier_)) {
+    return;
+  }
+  const TickTimerPlan plan = tick_timer_plan(tier, configured_tick_ms_);
+  tick_tier_ = tier;
+  tick_timer_period_ms_ = plan.period_ms;
+  tick_throttle_.configure(plan);
+  // The limit of the watchdog is the larger of 3 s and four periods: 3 s in both tiers.
+  if (stall_watchdog_) {
+    stall_watchdog_->set_tick_period_ms(plan.period_ms);
+  }
+  // A switch from inside the tick changes the interval of the running timer; a timer that a
+  // scripted run stopped stays stopped.
+  apply_tick_plan(*render_timer_, plan, force);
+  // The gap across a switch is a change of period, not a stall of the Qt thread.
+  tick_gap_valid_ = false;
+  if (tier == TickTier::kIdle) {
+    appendLog(QString("Render tick: idle, every %1 ms (nothing to stream)").arg(plan.period_ms));
+  } else {
+    appendLog(QString("Render tick: streaming, %1 ms").arg(plan.period_ms));
+  }
+}
+
+void QarStreamingPanel::checkTickTier(std::chrono::steady_clock::time_point tick_now)
+{
+  // The idle tier looks at every tick (every 50 ms); the streaming tier at most every 50 ms,
+  // because it ticks up to ten thousand times a second and the look reads both managers.
+  if (tick_tier_ == TickTier::kStreaming &&
+    tick_now - tier_checked_ < std::chrono::milliseconds(static_cast<int>(kIdleTickMs)))
+  {
+    return;
+  }
+  tier_checked_ = tick_now;
+  applyTickTier(desiredTickTier(), /*force=*/false);
 }
 
 void QarStreamingPanel::onPrimeCheckboxToggled(bool checked)
@@ -4846,9 +5596,12 @@ void QarStreamingPanel::runAutoStereo()
   appendLog("AUTOSTEREO: running non-interactive single-peer stereo capture.");
 
   // Drive the pipeline deterministically (stop the async timer so only this
-  // loop advances the animation).
+  // loop advances the animation). No tick means no stall here, so the watchdog rests.
   if (render_timer_ != nullptr) {
     render_timer_->stop();
+  }
+  if (stall_watchdog_) {
+    stall_watchdog_->set_paused(true);
   }
   rebuildFrameSource();
 
@@ -4998,9 +5751,12 @@ void QarStreamingPanel::runAutoMultiPeer()
   }
 
   // Drive the pipeline deterministically: stop the async timer so only this loop
-  // advances the batch.
+  // advances the batch. No tick means no stall here, so the watchdog rests.
   if (render_timer_ != nullptr) {
     render_timer_->stop();
+  }
+  if (stall_watchdog_) {
+    stall_watchdog_->set_paused(true);
   }
   rebuildFrameSource();  // push base config into the factory (per-peer offsets)
 
@@ -5370,6 +6126,13 @@ void QarStreamingPanel::emitHeartbeat()
     .arg(static_cast<qulonglong>(fires))
     .arg(tick_fps, 0, 'f', 1)
     .arg(tick_max_gap_ms_, 0, 'f', 1);
+  // The wall-clock time at which the longest gap began, so that nobody has to subtract.
+  if (tick_max_gap_ms_ > 0.0) {
+    line += QDateTime::fromMSecsSinceEpoch(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        tick_max_gap_began_.time_since_epoch()).count())
+      .toString("@HH:mm:ss.zzz");
+  }
 
   std::uint64_t trace_rows_total = 0;
   std::uint64_t trace_changed_total = 0;
@@ -5397,8 +6160,11 @@ void QarStreamingPanel::emitHeartbeat()
           .arg(static_cast<qulonglong>(sd.skips_sender_error))
           .arg(static_cast<qulonglong>(sd.skips_target_init))
           .arg(static_cast<qulonglong>(sd.skips_budget));
-        if (!sd.last_skip_detail.empty()) {
-          line += QString(" (%1)").arg(QString::fromStdString(sd.last_skip_detail));
+        // The first line only: a library error can run over several lines, and the fields after
+        // the detail (tick=, prime=) must stay on this one.
+        const std::string detail = first_line_limited(sd.last_skip_detail, 160);
+        if (!detail.empty()) {
+          line += QString(" (%1)").arg(QString::fromStdString(detail));
         }
       }
       trace_rows_total += sd.frame_trace_rows;
@@ -5408,11 +6174,14 @@ void QarStreamingPanel::emitHeartbeat()
   // tick=, prime= and rr= come after the per-stream fields, and the panels section, the
   // spatial counters and vdisp are appended after them, so existing parsers of the earlier
   // fields are unaffected. rr=<changed>/<frames> only while the trace is on (at least one
-  // row written by some stream). tick_period_ms_ (not render_timer_->interval()) is the
-  // source of truth: the zero-interval 0.1 ms setting reports a raw QTimer interval of 0.
-  line += QString(" tick=%1 prime=%2")
-    .arg(tick_period_ms_, 0, 'g', 4)
-    .arg((prime_checkbox_ != nullptr && prime_checkbox_->isChecked()) ? 1 : 0);
+  // row written by some stream). configured_tick_ms_ (not render_timer_->interval()) is the
+  // source of truth: the zero-interval 0.1 ms setting reports a raw QTimer interval of 0. tier=
+  // says which speed the tick had at this heartbeat: tick= stays the configured period of the
+  // streaming tier in both, and tick_fps is about 20 in the idle tier.
+  line += QString(" tick=%1 prime=%2 tier=%3")
+    .arg(configured_tick_ms_, 0, 'g', 4)
+    .arg((prime_checkbox_ != nullptr && prime_checkbox_->isChecked()) ? 1 : 0)
+    .arg(tick_tier_ == TickTier::kStreaming ? QStringLiteral("stream") : QStringLiteral("idle"));
   if (trace_rows_total > 0) {
     line += QString(" rr=%1/%2")
       .arg(static_cast<qulonglong>(trace_changed_total))
@@ -5533,6 +6302,19 @@ void QarStreamingPanel::emitHeartbeat()
       .arg(
         guard.worst.empty() ? QStringLiteral("-") :
         QString("%1/%2ms").arg(QString::fromStdString(guard.worst)).arg(guard.worst_ms, 0, 'f', 0));
+    // How the Hub and the owner thread are doing, and the automatic rejoin: silence is the set of
+    // reasons the Hub counts as silent (a number, "-" when none), rejoin is the attempt and the
+    // milliseconds to the next one.
+    if (session_owner_) {
+      const qar_qar_adapter::OwnerHealth health = session_owner_->health();
+      const qar_qar_adapter::RejoinInfo rejoin = session_owner_->rejoin_info();
+      line += QString(" | health silence=%1 state=%2 rejoin=%3/%4 abandoned=%5")
+        .arg(health.silence == 0 ? QStringLiteral("-") : QString::number(health.silence))
+        .arg(QString::fromLatin1(ownerStateWord(session_owner_->state())))
+        .arg(rejoin.attempt)
+        .arg(rejoin.next_in_ms < 0 ? QStringLiteral("-") : QString::number(rejoin.next_in_ms))
+        .arg(health.abandoned_owners);
+    }
   }
   // RViz's own Image/Camera displays, last so every earlier field keeps its place:
   // "No Image" leaves nothing in the log to tell "RViz never saw the publisher"
@@ -5542,10 +6324,81 @@ void QarStreamingPanel::emitHeartbeat()
     line += QString(" || vdisp %1").arg(video_displays);
   }
   appendLog(line);
+  if (stall_watchdog_ && !stall_frames_noted_ &&
+    std::chrono::duration<double>(now - stall_watchdog_started_).count() >= 10.0)
+  {
+    // Says once whether RViz's own frames are named in a stall line, so a stall line that
+    // reads "outside the plugin tick" can be told from a frame that was never named.
+    stall_frames_noted_ = true;
+    const std::uint64_t frames = frame_breadcrumbs_ ? frame_breadcrumbs_->frames() : 0;
+    appendLog(
+      frame_breadcrumbs_ == nullptr ?
+      QString("STALL: no Ogre root; the frames of RViz are not named in a stall line") :
+      frames == 0 ?
+      QString("STALL: no Ogre frame callback in 10 s; the frames of RViz are not named in a "
+        "stall line") :
+      QString("STALL: the frames of RViz are named in a stall line (%1 Ogre frame callbacks "
+        "in 10 s)").arg(static_cast<qulonglong>(frames)));
+  }
 
   heartbeat_last_ = now;
   heartbeat_last_fires_ = render_timer_fires_;
   tick_max_gap_ms_ = 0.0;
+}
+
+void QarStreamingPanel::stallStep(const char * step) const
+{
+  qar_rviz_streaming::set_process_exit_step(step);
+  if (stall_watchdog_) {
+    stall_watchdog_->set_step(step);
+  }
+}
+
+void QarStreamingPanel::startStallWatchdog()
+{
+  QString note;
+  const bool with_dump = environmentSwitch("QAR_STALL_DUMP", false, note);
+  stall_watchdog_ = make_system_stall_watchdog(with_dump);
+  stall_watchdog_started_ = std::chrono::steady_clock::now();
+  stall_watchdog_->start();
+  if (!note.isEmpty()) {
+    appendLog(note);
+  }
+  appendLog(
+    QString("STALL: watchdog on: a [qar-stall] line names the step after 3 s without a tick%1")
+    .arg(with_dump ? QStringLiteral(", and a stack dump after 5 s (QAR_STALL_DUMP=1)") :
+    QString()));
+  installFrameBreadcrumbs();
+}
+
+void QarStreamingPanel::installFrameBreadcrumbs()
+{
+  if (frame_breadcrumbs_ || !stall_watchdog_) {
+    return;
+  }
+  Ogre::Root * const root = Ogre::Root::getSingletonPtr();
+  if (root != nullptr) {
+    frame_breadcrumbs_ = std::make_unique<RvizFrameBreadcrumbs>(
+      stall_watchdog_.get(), root, &gpu_frame_gate_);
+  }
+}
+
+void QarStreamingPanel::mirrorStallReport()
+{
+  StallReport report;
+  if (!stall_watchdog_ || !stall_watchdog_->take_report(&report)) {
+    return;
+  }
+  char began[16];
+  char since[16];
+  format_stall_clock(report.began_ms_of_day, began);
+  format_stall_clock(report.step_since_ms_of_day, since);
+  appendLog(
+    QString("STALL: the Qt thread did not tick for %1 s (from %2); last step: %3 (since %4)")
+    .arg(report.gap_s, 0, 'f', 1)
+    .arg(QString::fromLatin1(began))
+    .arg(QString::fromLatin1(report.step))
+    .arg(QString::fromLatin1(since)));
 }
 
 void QarStreamingPanel::appendLog(const QString & line) const
@@ -5603,21 +6456,30 @@ void QarStreamingPanel::updateRuntimeStateLabel()
   // The buttons that follow the state. "Connect to QarOS" is on while no join is under way or
   // running, and while streaming is paused on an open session (a second click in any other state
   // would only log that one is in progress). "Disconnect (pause)" is on while streaming runs,
-  // "Invite peer" is on in this-PC mode while streaming runs, and "Stream panel to AR" is on while
+  // "Invite peer" is on while streaming runs, and "Stream to AR" is on while
   // a QarOS session exists.
+  // While the owner joins the Hub again by itself, "Connect to QarOS" asks for the next attempt at
+  // once and "Disconnect (pause)" stops the automatic rejoin.
   const bool can_connect = connection_phase_ == ConnectionPhase::Idle ||
-    connection_phase_ == ConnectionPhase::Failed || streamingPaused();
-  const bool streaming = live_connected_ &&
+    connection_phase_ == ConnectionPhase::Failed || connection_phase_ == ConnectionPhase::Lost ||
+    streamingPaused();
+  const bool rejoining_by_itself = connection_phase_ == ConnectionPhase::Lost ||
+    (connection_phase_ == ConnectionPhase::WaitingForApproval && session_owner_ &&
+    session_owner_->rejoin_info().automatic);
+  const bool streaming = rejoining_by_itself || (live_connected_ &&
     (connection_phase_ == ConnectionPhase::Running ||
-    connection_phase_ == ConnectionPhase::Reconnecting);
+    connection_phase_ == ConnectionPhase::Reconnecting));
   if (start_qar_button_ != nullptr) {
     start_qar_button_->setEnabled(live_stream_mode_ ? can_connect : true);
   }
   if (stop_qar_button_ != nullptr) {
     stop_qar_button_->setEnabled(live_stream_mode_ ? streaming : qar_running_);
   }
-  if (stream_panel_button_ != nullptr) {
-    stream_panel_button_->setEnabled(static_cast<bool>(qar_factory_) && !attach_pending_);
+  if (ar_panel_list_ != nullptr) {
+    ar_panel_list_->set_stream_allowed(static_cast<bool>(qar_factory_) && !attach_pending_);
+  }
+  if (ArPanelListWidget * const copy_list = copyArPanelList()) {
+    copy_list->set_stream_allowed(static_cast<bool>(qar_factory_) && !attach_pending_);
   }
   // The Connection tab, the invite button and (in a QarOS run) the status strip follow the join.
   refreshConnectionView();
@@ -5845,6 +6707,7 @@ void QarStreamingPanel::onAddTopic()
       }
     }
     pinWatchedTopic(selection);
+    Q_EMIT configChanged();  // the watched topics are saved in the RViz config
   }
 
   if (!selection.expose_as_ar_tool) {
@@ -5855,7 +6718,9 @@ void QarStreamingPanel::onAddTopic()
     setLastError("AR tool: " + expose_error);
     appendLog(QString("AR TOOL: could not expose %1 — %2")
       .arg(selection.name, expose_error));
+    return;
   }
+  Q_EMIT configChanged();  // the tools are saved in the RViz config
 }
 
 void QarStreamingPanel::onRemoveWatchedTopic()
@@ -5874,6 +6739,7 @@ void QarStreamingPanel::onRemoveWatchedTopic()
   // The RViz display is deliberately left alone: it is now an ordinary display
   // the operator owns, and silently deleting it from here would be surprising.
   appendLog(QString("TOPICS: stopped watching %1 (its display, if any, stays).").arg(topic));
+  Q_EMIT configChanged();  // the watched topics are saved in the RViz config
 }
 
 QString QarStreamingPanel::ensurePanelManager()
@@ -5893,8 +6759,10 @@ QString QarStreamingPanel::ensurePanelManager()
   // qar_gui_panels_subscribe_all_gesture_events, one reader carrying hover / tap /
   // long-press / DRAG, so the same source also makes a QSlider handle draggable
   // in AR.
-  panel_input_source_ =
-    std::make_shared<qar_capi_panels::QarCApiPanelInputSource>(qar_factory_->session());
+  // The lane of the owner takes the cancel and the destroy of its tokens when the last owner lets
+  // go on this thread, so a Hub that does not answer cannot hold the GUI thread there.
+  panel_input_source_ = std::make_shared<qar_capi_panels::QarCApiPanelInputSource>(
+    qar_factory_->session(), qar_factory_->release_lane());
 
   panel_sender_factory_ = std::make_shared<qar_capi_panels::QarCApiPanelSenderFactory>(
     qar_factory_.get(), panel_input_source_);
@@ -5928,16 +6796,30 @@ QString QarStreamingPanel::startPanelManager(qar_qt_streaming::QtPanelStreamingC
   // session is found and shown again.
   config.name_scope = seam::NameScope{
     name_scope_.program_tag, name_scope_.instance, name_scope_.host};
-  // What a size change of a window does to its QarOS panel (QAR_PANEL_RESIZE): by default the
-  // panel stays and its video sender is swapped.
+  // What a size change of a window does to its QarOS panel (QAR_PANEL_RESIZE): by default a size
+  // change makes a new QarOS panel and the old one stays hidden, so a visible panel never has its
+  // video sender released and made again and no QarOS panel is closed, whatever the close mode.
+  // Each stream keeps at most max_replaced_panels hidden panels as a ring: with the ring full, the
+  // next size is served by the oldest hidden panel. The library's own default, swap, applies only
+  // when the variable names it.
   {
     const QByteArray resize_text = qgetenv(qar_qt_streaming::kPanelResizeModeEnv);
     const qar_qt_streaming::PanelResizeModeChoice resize =
       qar_qt_streaming::parse_panel_resize_mode(
       resize_text.isEmpty() ? nullptr : resize_text.constData());
-    config.resize_mode = resize.mode;
+    config.resize_mode =
+      resize.explicitly_chosen ? resize.mode : qar_qt_streaming::PanelResizeMode::NewPanel;
+    config.max_replaced_panels = 8;
     if (!resize.warning.empty()) {
-      appendLog(QString("AR PANEL: %1").arg(QString::fromStdString(resize.warning)));
+      appendLog(
+        QString("AR PANEL: %1='%2' is not a resize mode (expected 'swap', 'new-panel' or "
+          "'defer'); using 'new-panel'.")
+        .arg(QString::fromLatin1(qar_qt_streaming::kPanelResizeModeEnv),
+          QString::fromUtf8(resize_text).trimmed()));
+    } else if (!resize.explicitly_chosen) {
+      appendLog(
+        "AR PANEL: size changes make a new QarOS panel and keep the old one hidden "
+        "(QAR_PANEL_RESIZE unset; set swap or defer to change)");
     }
   }
   // The frame of QarOS in every AR panel (QAR_PANEL_AR_FRAME, else the library default); the
@@ -5980,9 +6862,34 @@ QString QarStreamingPanel::startPanelManager(qar_qt_streaming::QtPanelStreamingC
   // A dialog is fitted to its scroll areas on the desktop before its AR panel is created: the
   // manager measures it over a few rounds and streams it once, at the size the fit ends with, so
   // that its QarOS panel is made at the final size and a later change of the dialog's size does
-  // not rebuild it. A text browser that scrolls by design is left out of the measure.
+  // not rebuild it. A text browser that scrolls by design is left out of the measure. A dialog
+  // made below an AR copy takes the text of that copy first, so the fit measures it at the size
+  // the AR user sees.
   panel_manager_->set_dialog_size_adjuster(
-    qar_qt_streaming::QtPanelStreamManager::make_census_dialog_adjuster());
+    [this, census = qar_qt_streaming::QtPanelStreamManager::make_census_dialog_adjuster()](
+      QWidget & dialog, const QRect & room, int round) {
+      // Called before the dialog is measured: a window does not take its parent's font, so a
+      // dialog drawn with the style of a copy gets the text of that copy here.
+      dialog_copy_text_.give(dialog);
+      return census(dialog, room, round);
+    });
+  // A dialog is streamed as large as the AR copies of the panels: at the size of its own copy
+  // where it is drawn with the style of a copy, else at the whole-panel scale of the setting,
+  // whatever scale the panel that opened it has. The dialog on the desktop is not changed except
+  // for the text of a copy; its capture and its place in the room are. The line in the log says
+  // what the panel really got, once it exists.
+  pending_dialog_scale_.clear();
+  panel_manager_->set_dialog_scale_provider(
+    [this](const std::string & owner_key, const QWidget & dialog) {
+      return dialogScaleFor(owner_key, dialog);
+    });
+  panel_manager_->set_dialog_scale_reporter(
+    [this](
+      const std::string & owner_key, const QWidget & dialog, const std::string &,
+      const qar_qt_streaming::QtPanelStreamManager::DialogScale & applied, bool)
+    {
+      reportDialogScale(owner_key, dialog, applied);
+    });
   return QString();
 }
 
@@ -6109,24 +7016,865 @@ void QarStreamingPanel::logGroundRaise(const QString & label, const GroundedPose
     .arg(static_cast<double>(grounded.ground_room_y), 0, 'f', 2));
 }
 
-void QarStreamingPanel::markParkedPanelsInCombo()
+ArCopySize QarStreamingPanel::globalArCopySize() const
 {
-  if (ar_panel_combo_ == nullptr) {
+  ArCopySize size = ArCopySize::Enlarged;
+  ar_copy_size_from_word(setting_text(effective_settings_, settings_key::kArCopySize), size);
+  return size;
+}
+
+double QarStreamingPanel::arCopyEnlargedFactor() const
+{
+  const double factor = setting_double(effective_settings_, settings_key::kArCopyScale);
+  return factor >= kArCopyScaleMin && factor <= kArCopyScaleMax ? factor : kArCopyScaleDefault;
+}
+
+ArCopySize QarStreamingPanel::arCopySizeFor(const std::string & key) const
+{
+  const auto own = ar_copy_choice_.find(key);
+  return own != ar_copy_choice_.end() ? own->second : globalArCopySize();
+}
+
+double QarStreamingPanel::arCopyOverallFactor() const
+{
+  const double factor = setting_double(effective_settings_, settings_key::kArCopyOverallScale);
+  return factor >= kArCopyOverallScaleMin && factor <= kArCopyOverallScaleMax ?
+         factor : kArCopyOverallScaleDefault;
+}
+
+bool QarStreamingPanel::usesControlsCopy(const std::string & key) const
+{
+  if (key == kHiddenDisplaysKey) {
+    return true;
+  }
+  if (key == kSelfPanelKey) {
+    return self_ar_copy_ != nullptr;
+  }
+  return ar_copy_panels_.count(key) > 0 && ar_copy_class_mismatch_.count(key) == 0;
+}
+
+bool QarStreamingPanel::controlsCopyExpected(const std::string & key) const
+{
+  if (usesControlsCopy(key)) {
+    return true;
+  }
+  if (key == kSelfPanelKey) {
+    return self_ar_copy_enabled_ && !self_ar_copy_failed_;
+  }
+  return ar_copy_failed_.count(key) == 0 && ar_copy_dock_keys_.count(key) > 0;
+}
+
+ArCopyScale QarStreamingPanel::arCopyScaleFor(
+  const std::string & key, const QWidget & widget) const
+{
+  const ArCopySize size = arCopySizeFor(key);
+  const bool own_choice = ar_copy_choice_.count(key) > 0;
+  const double factor = arCopyEnlargedFactor();
+  // A copy that draws its controls larger keeps its text at the size a native copy has: its
+  // metres and its render scale follow the overall factor, its controls follow the style.
+  const bool controls = usesControlsCopy(key);
+  const double metres_factor = controls ? arCopyOverallFactor() : factor;
+  float native_height_m = 0.0f;
+  float wanted_height_m = 0.0f;
+  if (size == ArCopySize::Enlarged && panel_manager_) {
+    // The frame of QarOS is in metres and does not scale: the height at the wanted factor is
+    // asked of the manager, with the options the stream would get.
+    qar_qt_streaming::PanelStreamOptions options;
+    native_height_m = panel_manager_->ar_panel_height_m(widget, options);
+    options.meters_per_logical_px = qar_qt_streaming::kDefaultMetersPerLogicalPx * metres_factor;
+    options.render_scale = metres_factor;
+    wanted_height_m = panel_manager_->ar_panel_height_m(widget, options);
+  }
+  if (controls) {
+    return ar_copy_controls_scale(
+      size, factor, metres_factor, native_height_m, wanted_height_m, own_choice);
+  }
+  return ar_copy_scale(size, factor, native_height_m, wanted_height_m, own_choice);
+}
+
+std::optional<qar_qt_streaming::QtPanelStreamManager::DialogScale>
+QarStreamingPanel::dialogScaleFor(const std::string & owner_key, const QWidget & dialog)
+{
+  if (!panel_manager_) {
+    return std::nullopt;
+  }
+  const bool own_choice = ar_copy_choice_.count(owner_key) > 0;
+  const double factor = arCopyEnlargedFactor();
+  // The window decides, not the key of its owner: RViz parents its colour picker and its input
+  // boxes into the panel they were opened from, and the spreader of an AR copy gives the style to
+  // every window made below the copy. Such a dialog is drawn with controls of the copy's size
+  // already; streaming it at the whole-panel factor as well would enlarge it twice.
+  const qar_qt_streaming::EnlargedControlsStyle * const style =
+    qar_qt_streaming::enlarged_controls_style_of(&dialog);
+  ArDialogScaleInputs inputs;
+  inputs.styled = style != nullptr;
+  inputs.control_factor = style != nullptr ? style->factor() : factor;
+  inputs.size = arCopySizeFor(owner_key);
+  inputs.enlarged_factor = factor;
+  inputs.overall_factor = arCopyOverallFactor();
+  inputs.panel_choice = own_choice;
+  // The heights are the ones the manager gives the panel of this dialog (its video at the width
+  // of the dialog, which has the text of its copy by now), at the default metres and at the
+  // metres of the factor the rule uses.
+  if (inputs.styled || inputs.size == ArCopySize::Enlarged) {
+    const double wanted = inputs.styled ? inputs.overall_factor : factor;
+    qar_qt_streaming::PanelStreamOptions options;
+    options.dialog_panel = true;
+    inputs.native_height_m = panel_manager_->ar_panel_height_m(dialog, options);
+    options.meters_per_logical_px = qar_qt_streaming::kDefaultMetersPerLogicalPx * wanted;
+    options.render_scale = wanted;
+    inputs.height_at_wanted_m = panel_manager_->ar_panel_height_m(dialog, options);
+  }
+  PendingDialogScale pending;
+  pending.scale = ar_dialog_scale(inputs);
+  pending.text_scale = inputs.styled ? dialog_copy_text_.text_scale_of(dialog) : 0.0;
+  pending_dialog_scale_[&dialog] = pending;
+  qar_qt_streaming::QtPanelStreamManager::DialogScale out;
+  out.meters_per_logical_px = qar_qt_streaming::kDefaultMetersPerLogicalPx * pending.scale.factor;
+  out.render_scale = pending.scale.render_scale;
+  return out;
+}
+
+void QarStreamingPanel::reportDialogScale(
+  const std::string & owner_key, const QWidget & dialog,
+  const qar_qt_streaming::QtPanelStreamManager::DialogScale & applied)
+{
+  const auto found = pending_dialog_scale_.find(&dialog);
+  if (found == pending_dialog_scale_.end()) {
     return;
   }
-  for (int i = 0; i < ar_panel_combo_->count(); ++i) {
-    // The text the entry has without the mark is kept in the item, so the mark can come and go.
-    const QString base = ar_panel_combo_->itemData(i, Qt::UserRole + 1).toString();
-    if (base.isEmpty()) {
-      continue;
-    }
-    const bool parked = panel_manager_ &&
-      panel_manager_->is_parked(ar_panel_combo_->itemData(i).toString().toStdString());
-    const QString wanted = parked ? base + QStringLiteral(" (parked in AR)") : base;
-    if (ar_panel_combo_->itemText(i) != wanted) {
-      ar_panel_combo_->setItemText(i, wanted);
+  PendingDialogScale pending = found->second;
+  pending_dialog_scale_.erase(found);
+  // The stream's own numbers are what the panel has, so they are what the line says.
+  pending.scale.factor =
+    applied.meters_per_logical_px / qar_qt_streaming::kDefaultMetersPerLogicalPx;
+  pending.scale.render_scale = applied.render_scale;
+  appendLog(
+    QString::fromStdString(
+      ar_dialog_scale_line(
+        dialog.windowTitle().toStdString(), owner_key, pending.scale, pending.text_scale)));
+}
+
+
+float QarStreamingPanel::panelSlotStepM() const
+{
+  return globalArCopySize() == ArCopySize::Enlarged ?
+         panel_slot_step_m(arCopyEnlargedFactor()) : kPanelSlotStepM;
+}
+
+double QarStreamingPanel::arCopyShownFactor(const std::string & key) const
+{
+  // The factor a running copy has (the height limit may have lowered it). A key that does not
+  // stream has none, whatever an earlier stream left in the table: it gets the enlarged factor
+  // when it starts. A copy that draws its controls larger shows the factor of its controls.
+  const bool streams = panel_manager_ && panel_manager_->has_panel(key) &&
+    !panel_manager_->is_tombstoned(key);
+  const auto running = stream_scale_.find(key);
+  if (streams && running != stream_scale_.end()) {
+    if (running->second.method == ArCopyMethod::EnlargedControls) {
+      if (running->second.control_factor >= 1.0) {
+        return running->second.control_factor;
+      }
+    } else if (running->second.factor >= 1.0) {
+      return running->second.factor;
     }
   }
+  return arCopyEnlargedFactor();
+}
+
+std::string QarStreamingPanel::arCopyCaptionSize(const std::string & key) const
+{
+  if (!ar_copy_scales_key(key)) {
+    return std::string();
+  }
+  const ArCopySize size = arCopySizeFor(key);
+  // The scale a running stream has (the height limit may have lowered it), else the scale the
+  // next stream starts with.
+  const bool streams = panel_manager_ && panel_manager_->has_panel(key) &&
+    !panel_manager_->is_tombstoned(key);
+  const auto running = stream_scale_.find(key);
+  if (streams && running != stream_scale_.end()) {
+    return ar_copy_caption(running->second, size);
+  }
+  ArCopyScale next;
+  if (controlsCopyExpected(key)) {
+    next.method = ArCopyMethod::EnlargedControls;
+    next.control_factor = size == ArCopySize::Enlarged ? arCopyEnlargedFactor() : 1.0;
+    next.factor = size == ArCopySize::Enlarged ? arCopyOverallFactor() : 1.0;
+  } else {
+    next.factor = size == ArCopySize::Enlarged ? arCopyEnlargedFactor() : 1.0;
+  }
+  return ar_copy_caption(next, size);
+}
+
+QWidget * QarStreamingPanel::arCopyWidgetFor(const std::string & key) const
+{
+  if (key == kSelfPanelKey) {
+    return self_ar_copy_ ? static_cast<QWidget *>(self_ar_copy_.get()) :
+           const_cast<QarStreamingPanel *>(this);
+  }
+  if (key == kHiddenDisplaysKey) {
+    return hidden_displays_.get();
+  }
+  const auto copy = ar_copy_panels_.find(key);
+  if (copy != ar_copy_panels_.end() && ar_copy_class_mismatch_.count(key) == 0) {
+    return copy->second.get();
+  }
+  for (const auto & streamed : streamed_panels_) {
+    if (streamed.first == key) {
+      return streamed.second.data();
+    }
+  }
+  return nullptr;
+}
+
+qar_qt_streaming::EnlargedControlsStyle * QarStreamingPanel::arControlsStyle(double factor)
+{
+  auto found = ar_controls_styles_.find(factor);
+  if (found == ar_controls_styles_.end()) {
+    auto style = std::make_unique<qar_qt_streaming::EnlargedControlsStyle>(factor);
+    appendLog(
+      QString("AR PANEL: AR copies draw their controls x%1 with the '%2' style; their text keeps "
+        "its size.").arg(QString::number(style->factor(), 'f', 2), style->base_key()));
+    found = ar_controls_styles_.emplace(factor, std::move(style)).first;
+  }
+  return found->second.get();
+}
+
+QStyle * QarStreamingPanel::arCopyStyleFor(const std::string & key)
+{
+  return arCopySizeFor(key) == ArCopySize::Enlarged ? arControlsStyle(arCopyEnlargedFactor())
+                                                    : nullptr;
+}
+
+bool QarStreamingPanel::applyArCopyStyle(const std::string & key, QWidget & copy)
+{
+  const double factor =
+    arCopySizeFor(key) == ArCopySize::Enlarged ? arCopyEnlargedFactor() : 0.0;
+  const auto had = ar_copy_styled_.find(key);
+  if (had != ar_copy_styled_.end() && had->second == factor) {
+    return false;
+  }
+  QStyle * const style = arCopyStyleFor(key);
+  ArCopyText text;
+  if (self_ar_copy_ && &copy == self_ar_copy_.get()) {
+    self_ar_copy_->set_style(style);
+    text = ar_copy_text_from_environment(style != nullptr);
+  } else {
+    // The text first: the style centres a form label against the size hint of its field.
+    text = set_ar_copy_text(copy, style != nullptr);
+    if (style != nullptr) {
+      qar_qt_streaming::apply_style_to_tree(&copy, style);
+      install_ar_copy_property_delegate(copy);
+    } else {
+      qar_qt_streaming::remove_style_from_tree(&copy);
+      remove_ar_copy_property_delegate(copy);
+    }
+  }
+  appendLog(QString::fromStdString(ar_copy_text_line(key, text.scale, text.hinting)));
+  ar_copy_styled_[key] = factor;
+  // The windows below the copy have taken or lost the style with it; their text follows.
+  dialog_copy_text_.sync();
+  return true;
+}
+
+int QarStreamingPanel::arCopyWidthFor(const std::string & key, int base_width) const
+{
+  return ar_copy_width_px(
+    base_width, arCopySizeFor(key) == ArCopySize::Enlarged ? arCopyEnlargedFactor() : 1.0);
+}
+
+int QarStreamingPanel::fittedArCopyHeight(const std::string & key, int fallback) const
+{
+  const auto styled = ar_copy_styled_.find(key);
+  const auto found = ar_copy_fitted_height_.find(
+    {key, styled != ar_copy_styled_.end() ? styled->second : 0.0});
+  return found != ar_copy_fitted_height_.end() ? found->second : fallback;
+}
+
+void QarStreamingPanel::rememberFittedArCopyHeight(const std::string & key, int height)
+{
+  const auto styled = ar_copy_styled_.find(key);
+  ar_copy_fitted_height_[{key, styled != ar_copy_styled_.end() ? styled->second : 0.0}] = height;
+}
+
+bool QarStreamingPanel::restyleArCopy(const std::string & key)
+{
+  QWidget * const copy = arCopyWidgetFor(key);
+  if (copy == nullptr || !usesControlsCopy(key) || !applyArCopyStyle(key, *copy)) {
+    return false;
+  }
+  // The rows of the trees and the lists change height with the style, and the width of a copy
+  // with the factor: the copy is fitted again at once while it streams, else at its next stream.
+  // A copy that was fitted at this style before takes its width and that height in one size
+  // change; the fit then only confirms it. Only a style that has not been fitted yet needs the
+  // look of a fit at the new width, and the stream adopts the size that settles (the resize
+  // threshold and settle time of QtPanelStream), not each step of the fit.
+  const bool streams = panel_manager_ && panel_manager_->has_panel(key) &&
+    !panel_manager_->is_tombstoned(key);
+  if (key == kHiddenDisplaysKey) {
+    if (!hidden_displays_width_explicit_) {
+      hidden_displays_fit_width_ = arCopyWidthFor(key, hidden_displays_base_width_);
+      copy->setFixedSize(hidden_displays_fit_width_, fittedArCopyHeight(key, copy->height()));
+      hidden_displays_needs_fit_ = hidden_displays_->findChild<QTreeView *>() != nullptr;
+      if (streams && !hidden_displays_fit_) {
+        hidden_displays_stream_after_fit_ = false;
+        beginHiddenDisplaysFit();
+      }
+    }
+    return true;
+  }
+  const auto state = ar_copy_fits_.find(key);
+  if (state == ar_copy_fits_.end()) {
+    return true;
+  }
+  if (self_ar_copy_ && copy == self_ar_copy_.get()) {
+    state->second.width = self_ar_copy_->stable_size().width();
+  } else {
+    state->second.width = arCopyWidthFor(key, state->second.base_width);
+  }
+  copy->setFixedSize(state->second.width, fittedArCopyHeight(key, copy->height()));
+  state->second.needs_fit = true;
+  if (streams) {
+    beginArCopyFit(key, /*stream_when_done=*/false);
+  }
+  return true;
+}
+
+void QarStreamingPanel::applyArCopySize(const std::string & key)
+{
+  if (!panel_manager_ || !ar_copy_scales_key(key) || !panel_manager_->has_panel(key) ||
+    panel_manager_->is_tombstoned(key))
+  {
+    return;
+  }
+  QWidget * widget = arCopyWidgetFor(key);
+  if (widget == nullptr) {
+    return;
+  }
+  // A copy that draws its controls larger gets the style of the size in force first (and is
+  // fitted again where the style changed): the widget behind the stream stays the same.
+  const bool restyled = usesControlsCopy(key) && restyleArCopy(key);
+  const ArCopyScale wanted = arCopyScaleFor(key, *widget);
+  const auto running = stream_scale_.find(key);
+  const double previous_factor = running != stream_scale_.end() ? running->second.factor : 1.0;
+  const double previous_render =
+    running != stream_scale_.end() ? running->second.render_scale : 1.0;
+  const double previous_control =
+    running != stream_scale_.end() ? running->second.control_factor : 1.0;
+  ArCopyScale next = wanted;
+  next.render_scale = sticky_render_scale(previous_render, wanted.render_scale);
+  const bool metres_change =
+    next.factor != previous_factor || next.render_scale != previous_render;
+  if (!metres_change && next.control_factor == previous_control && !restyled) {
+    // The stream runs at this scale already; only the reason may have changed.
+    stream_scale_[key] = next;
+    return;
+  }
+
+  // The metres go to the stream at once and the render scale rises at most once per stream: a
+  // changed ratio goes through the resize ring (a hidden panel is kept, nothing is closed).
+  const double metres = qar_qt_streaming::kDefaultMetersPerLogicalPx * next.factor;
+  if (metres_change) {
+    const seam::Result changed = panel_manager_->set_panel_scale(key, metres, next.render_scale);
+    if (!changed.ok()) {
+      appendLog(
+        QString("AR PANEL: '%1' could not change its size in AR: %2")
+        .arg(QString::fromStdString(key), QString::fromStdString(changed.message)));
+      return;
+    }
+  }
+  stream_scale_[key] = next;
+  appendLog(
+    QString::fromStdString(ar_copy_switch_line(key, next, next.render_scale > previous_render)));
+
+  // The copy keeps its top edge; when the changed height would put its lower edge into the RViz
+  // ground, the pose is raised (the ground rule only raises).
+  const auto pose = stream_pose_.find(key);
+  if (pose != stream_pose_.end()) {
+    qar_qt_streaming::PanelStreamOptions sized;
+    sized.meters_per_logical_px = metres;
+    sized.render_scale = next.render_scale;
+    const GroundedPose grounded =
+      liftAboveGround(pose->second, panel_manager_->ar_panel_height_m(*widget, sized));
+    if (grounded.raised_m > 0.0f &&
+      panel_manager_->set_panel_pose(key, to_seam(grounded.pose)).ok())
+    {
+      pose->second = grounded.pose;
+      logGroundRaise(QString::fromStdString(key), grounded);
+    }
+  }
+}
+
+QWidget * QarStreamingPanel::arCopyForDock(
+  const std::string & key, QWidget * dock_content, QString & error)
+{
+  error.clear();
+  if (key == kSelfPanelKey) {
+    return ensureSelfArCopy(error);
+  }
+  const auto existing = ar_copy_panels_.find(key);
+  if (existing != ar_copy_panels_.end()) {
+    // A title used again for a panel of another class must not get the copy of the old class.
+    const auto * const dock_panel = qobject_cast<const rviz_common::Panel *>(dock_content);
+    const auto made_for = ar_copy_class_ids_.find(key);
+    if (dock_panel != nullptr && made_for != ar_copy_class_ids_.end()) {
+      const std::string dock_class = dock_panel->getClassId().toStdString();
+      if (!dock_class.empty() && dock_class != made_for->second) {
+        if (ar_copy_class_mismatch_.insert(key).second) {
+          appendLog(
+            QString("AR PANEL: '%1' is a '%2' panel, but its AR copy was made for '%3' -- the "
+              "panel itself is streamed, enlarged as a whole.")
+            .arg(
+              QString::fromStdString(key), QString::fromStdString(dock_class),
+              QString::fromStdString(made_for->second)));
+        }
+        return nullptr;
+      }
+    }
+    ar_copy_class_mismatch_.erase(key);
+    // The size in force may have changed while the copy did not stream.
+    restyleArCopy(key);
+    return existing->second.get();
+  }
+  if (ar_copy_failed_.count(key) > 0) {
+    return nullptr;
+  }
+  rviz_common::Panel * const panel = qobject_cast<rviz_common::Panel *>(dock_content);
+  if (panel == nullptr) {
+    return nullptr;
+  }
+  const std::string class_id = panel->getClassId().toStdString();
+  const QString key_text = QString::fromStdString(key);
+  const ArCopyPanelClass * const cls = ar_copy_panel_class(class_id);
+  if (cls == nullptr) {
+    if (ar_copy_none_logged_.insert(key).second) {
+      appendLog(
+        QString("AR PANEL: '%1' ('%2') has no AR copy of its own; it is enlarged as a whole.")
+        .arg(key_text, QString::fromStdString(class_id)));
+    }
+    return nullptr;
+  }
+  const auto fail = [this, &error, &key, &key_text, &class_id](const QString & reason) {
+      ar_copy_failed_.insert(key);
+      error = reason;
+      appendLog(
+        QString("AR PANEL: '%1' could not get an AR copy (class id '%2'): %3 -- the panel itself "
+          "is streamed, enlarged as a whole.")
+        .arg(key_text, QString::fromStdString(class_id), reason));
+      return static_cast<QWidget *>(nullptr);
+    };
+  rviz_common::DisplayContext * const context = getDisplayContext();
+  if (context == nullptr) {
+    return fail(QStringLiteral("RViz has not given this panel its display context"));
+  }
+  HiddenRvizPanel made = create_hidden_rviz_panel(context, *cls);
+  if (!made.panel) {
+    return fail(QString::fromStdString(made.error));
+  }
+  // The copy opens with the rows the dock has open, in the style of the size in force.
+  copy_panel_view_state(*panel, *made.panel);
+  applyArCopyStyle(key, *made.panel);
+  const int base_width = dock_content->width();
+  const int width = arCopyWidthFor(key, base_width);
+  const int height = ar_copy_start_height_px(
+    *cls, dock_content->height(), kHiddenDisplaysMinFitHeight, kHiddenDisplaysMaxFitHeight);
+  if (!qar_qt_streaming::show_offscreen(made.panel.get(), width, height)) {
+    return fail(QStringLiteral("the new panel could not be shown off-screen"));
+  }
+  ar_copy_fits_[key] = ArCopyFit{nullptr, width, base_width, false, true};
+  QWidget * const copy = made.panel.get();
+  ar_copy_panels_[key] = std::move(made.panel);
+  ar_copy_class_ids_[key] = class_id;
+  return copy;
+}
+
+QarPanelView QarStreamingPanel::desktopView() const
+{
+  QarPanelView v;
+  v.status_strip = status_strip_;
+  v.runtime_state_label = runtime_state_label_;
+  v.last_error_label = last_error_label_;
+  v.tabs = tabs_;
+  v.start_qar_button = start_qar_button_;
+  v.stop_qar_button = stop_qar_button_;
+  v.hub_widget = hub_widget_;
+  v.invite_group = invite_group_;
+  v.peer_kind_combo = peer_kind_combo_;
+  v.peer_hostname_edit = peer_hostname_edit_;
+  v.add_peer_button = add_peer_button_;
+  v.ar_control_status_label = ar_control_status_label_;
+  v.ar_control_show_button = ar_control_show_button_;
+  v.ar_control_copy_button = ar_control_copy_button_;
+  v.ar_panel_list = ar_panel_list_;
+  v.add_topic_button = add_topic_button_;
+  v.remove_topic_button = remove_topic_button_;
+  v.topic_watch_list = topic_watch_list_;
+  v.exposure_list = exposure_list_;
+  v.remove_exposure_button = remove_exposure_button_;
+  v.toggle_writable_button = toggle_writable_button_;
+  v.reopen_exposure_button = reopen_exposure_button_;
+  v.copy_url_button = copy_url_button_;
+  v.ar_panel_scale_spin = ar_panel_scale_spin_;
+  v.exposure_status_label = exposure_status_label_;
+  v.spatial_mode_combo = spatial_mode_combo_;
+  v.spatial_target_combo = spatial_target_combo_;
+  v.spatial_topic_combo = spatial_topic_combo_;
+  v.spatial_frame_edit = spatial_frame_edit_;
+  v.spatial_auto_confirm = spatial_auto_confirm_;
+  v.spatial_confirm_button = spatial_confirm_button_;
+  v.spatial_cancel_button = spatial_cancel_button_;
+  v.spatial_close_polygon_button = spatial_close_polygon_button_;
+  v.spatial_status_label = spatial_status_label_;
+  v.resolution_combo = resolution_combo_;
+  v.fps_combo = fps_combo_;
+  v.ar_copy_size_combo = ar_copy_size_combo_;
+  v.hidden_displays_checkbox = hidden_displays_checkbox_;
+  v.ar_control_checkbox = ar_control_checkbox_;
+  v.show_advanced_checkbox = show_advanced_checkbox_;
+  v.advanced_group = advanced_group_;
+  v.prime_checkbox = prime_checkbox_;
+  v.close_mode_combo = close_mode_combo_;
+  v.ar_visibility_checkbox = ar_visibility_checkbox_;
+  v.context_status_label = context_status_label_;
+  v.refresh_button = refresh_button_;
+  v.capture_button = capture_button_;
+  v.stereo_capture_button = stereo_capture_button_;
+  v.test_markers_button = test_markers_button_;
+  v.sim_peers_group = sim_peers_group_;
+  v.add_sim_peer_button = add_sim_peer_button_;
+  v.remove_peer_button = remove_peer_button_;
+  v.peer_list = peer_list_;
+  v.start_stream_button = start_stream_button_;
+  v.stop_stream_button = stop_stream_button_;
+  v.ar_panel_status_scroll = ar_panel_status_scroll_;
+  v.ar_panel_status_label = ar_panel_status_label_;
+  v.diagnostics_view = diagnostics_view_;
+  v.page_contents = page_contents_;
+  return v;
+}
+
+ArPanelListWidget * QarStreamingPanel::copyArPanelList() const
+{
+  return self_ar_copy_ ? self_ar_copy_->view().ar_panel_list : nullptr;
+}
+
+HubConnectionWidget * QarStreamingPanel::copyHubWidget() const
+{
+  return self_ar_copy_ ? self_ar_copy_->view().hub_widget : nullptr;
+}
+
+QWidget * QarStreamingPanel::ensureSelfArCopy(QString & error)
+{
+  error.clear();
+  if (self_ar_copy_) {
+    restyleArCopy(kSelfPanelKey);
+    return self_ar_copy_.get();
+  }
+  if (!self_ar_copy_enabled_) {
+    if (!self_ar_copy_off_logged_) {
+      self_ar_copy_off_logged_ = true;
+      appendLog(
+        QString("AR PANEL: '%1' is streamed itself (%2=%3).")
+        .arg(
+          QString::fromLatin1(kSelfPanelKey), QString::fromLatin1(kSelfArCopyEnv),
+          self_ar_copy_env_));
+    }
+    return nullptr;
+  }
+  if (self_ar_copy_failed_) {
+    return nullptr;
+  }
+  const auto fail = [this, &error](const QString & reason) {
+      self_ar_copy_failed_ = true;
+      error = reason;
+      appendLog(
+        QString("AR PANEL: '%1' could not get an AR copy: %2 -- the panel itself is streamed, "
+          "enlarged as a whole.").arg(QString::fromLatin1(kSelfPanelKey), reason));
+      return static_cast<QWidget *>(nullptr);
+    };
+  // The style goes on the root before the view is built: every widget of the copy is made under it.
+  QStyle * const style = arCopyStyleFor(kSelfPanelKey);
+  auto copy = std::make_unique<QarPanelArCopy>(desktopView(), view_inputs_, style);
+  if (!copy->complete()) {
+    return fail(
+      QString("the AR copy could not bind every control (%1 of %2)")
+      .arg(copy->bound_count()).arg(qar_panel_view_bound_count()));
+  }
+  copy->sync();
+  const QSize size = copy->stable_size();
+  if (!qar_qt_streaming::show_offscreen(copy.get(), size.width(), size.height())) {
+    return fail(QStringLiteral("the AR copy could not be shown off-screen"));
+  }
+  self_ar_copy_ = std::move(copy);
+  {
+    const ArCopyText text = ar_copy_text_from_environment(style != nullptr);
+    appendLog(QString::fromStdString(ar_copy_text_line(kSelfPanelKey, text.scale, text.hinting)));
+  }
+  ar_copy_styled_[kSelfPanelKey] = style != nullptr ? arCopyEnlargedFactor() : 0.0;
+  ar_copy_fits_[kSelfPanelKey] = ArCopyFit{nullptr, size.width(), size.width(), false, true};
+
+  // What the controls of the copy do reaches the slots of the panel through its own controls (the
+  // binder); the signals of the two composite widgets and of the tabs are connected here.
+  const QarPanelView & twin = self_ar_copy_->view();
+  connect(
+    twin.tabs, &QTabWidget::currentChanged, this, &QarStreamingPanel::onSelfArCopyTabChanged);
+  connect(
+    twin.ar_panel_list, &ArPanelListWidget::primaryRequested, this,
+    &QarStreamingPanel::onArPanelListPrimary);
+  connect(
+    twin.ar_panel_list, &ArPanelListWidget::sizeRequested, this,
+    &QarStreamingPanel::onToggleArCopySize);
+  connect(
+    twin.ar_panel_list, &ArPanelListWidget::reopenRequested, this,
+    &QarStreamingPanel::onArPanelListReopen);
+  connect(
+    twin.ar_panel_list, &ArPanelListWidget::refreshRequested, this,
+    &QarStreamingPanel::onRefreshStreamablePanels);
+  connect(
+    twin.hub_widget, &HubConnectionWidget::cancelRequested, this,
+    &QarStreamingPanel::onCancelConnect);
+  self_ar_copy_->binder().set_forward_observer(
+    [this](QWidget & original, const char * what) {
+      QString name;
+      if (const auto * button = qobject_cast<const QAbstractButton *>(&original)) {
+        name = button->text();
+      } else if (const auto * group = qobject_cast<const QGroupBox *>(&original)) {
+        name = group->title();
+      }
+      if (name.isEmpty()) {
+        name = original.objectName();
+      }
+      if (name.isEmpty()) {
+        name = QString::fromLatin1(original.metaObject()->className());
+      }
+      appendLog(
+        QString("AR PANEL: '%1' AR copy: '%2' %3 in AR.")
+        .arg(QString::fromLatin1(kSelfPanelKey), name, QString::fromLatin1(what)));
+    });
+
+  // The two composite widgets are fed the same data as the panel's own, at the same call sites.
+  updateArPanelList();
+  refreshConnectionView();
+  refreshTargetList();
+  return self_ar_copy_.get();
+}
+
+void QarStreamingPanel::syncSelfArCopy()
+{
+  if (!self_ar_copy_ || !panel_manager_) {
+    return;
+  }
+  const std::string key = kSelfPanelKey;
+  if (!panel_manager_->has_panel(key) || panel_manager_->is_tombstoned(key) ||
+    panel_manager_->is_parked(key))
+  {
+    return;
+  }
+  self_ar_copy_->sync();
+}
+
+void QarStreamingPanel::onSelfArCopyTabChanged(int index)
+{
+  if (!self_ar_copy_ || self_ar_copy_->view().tabs == nullptr) {
+    return;
+  }
+  const QString name = self_ar_copy_->view().tabs->tabText(index);
+  // Queued, as the tab of the panel itself: the page is on show when the census is asked for.
+  QMetaObject::invokeMethod(
+    this,
+    [this, name]() {
+      appendLog(
+        QString("AR PANEL: '%1' AR copy: tab '%2' selected in AR.")
+        .arg(QString::fromLatin1(kSelfPanelKey), name));
+      if (panel_manager_) {
+        panel_manager_->request_scroll_census(
+          kSelfPanelKey, QString("AR copy: tab '%1' selected").arg(name).toStdString());
+      }
+    },
+    Qt::QueuedConnection);
+}
+
+bool QarStreamingPanel::arCopyFitWaits(const std::string & key) const
+{
+  const auto state = ar_copy_fits_.find(key);
+  return state != ar_copy_fits_.end() && state->second.fit && state->second.stream_when_done;
+}
+
+bool QarStreamingPanel::beginArCopyFit(const std::string & key, bool stream_when_done)
+{
+  const auto state = ar_copy_fits_.find(key);
+  if (state == ar_copy_fits_.end() || ar_copy_fit_timer_ == nullptr ||
+    arCopyWidgetFor(key) == nullptr)
+  {
+    return false;
+  }
+  if (state->second.fit) {
+    // A fit that runs is not started twice; the stream follows its end where one is wanted.
+    state->second.stream_when_done = state->second.stream_when_done || stream_when_done;
+    return true;
+  }
+  // Between the least and the most height. A copy of a tree whose rows take less room than it has
+  // is made lower, once, with one spare row for the rows that appear later; the copy of this panel
+  // has pages instead of rows and takes the need of the pages that are not on show.
+  FitPolicy policy;
+  if (key == kSelfPanelKey) {
+    policy.min_h = kPanelArCopyMinHeightPx;
+    policy.max_h = kPanelArCopyMaxHeightPx;
+  } else {
+    policy.min_h = kHiddenDisplaysMinFitHeight;
+    policy.max_h = kHiddenDisplaysMaxFitHeight;
+    policy.row_slack = 1;
+    policy.trim_to_rows = true;
+  }
+  state->second.fit = std::make_unique<SettledHeightFit>(policy);
+  state->second.stream_when_done = stream_when_done;
+  // The first look comes a period from now: the copy was shown or resized a moment ago.
+  ar_copy_fit_timer_->start(kFitPeriodMs);
+  return true;
+}
+
+void QarStreamingPanel::advanceArCopyFits()
+{
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: AR copy fit");
+  std::vector<std::string> keys;
+  for (const auto & copy : ar_copy_fits_) {
+    if (copy.second.fit) {
+      keys.push_back(copy.first);
+    }
+  }
+  for (const std::string & key : keys) {
+    auto state = ar_copy_fits_.find(key);
+    if (state == ar_copy_fits_.end() || !state->second.fit) {
+      continue;  // ended by an earlier stream of this round
+    }
+    QWidget * const copy = arCopyWidgetFor(key);
+    if (copy == nullptr) {
+      state->second.fit.reset();
+      continue;
+    }
+    if (state->second.stream_when_done && !arSessionLive()) {
+      cancelArCopyFit(key, QStringLiteral("the QarOS session is not live"));
+      continue;
+    }
+    ExtraNeed extra;
+    if (key == kSelfPanelKey && self_ar_copy_) {
+      const PageShortfall shortfall = self_ar_copy_->shortfall();
+      extra.px = shortfall.px;
+      extra.what = shortfall.page;
+    }
+    const QString key_text = QString::fromStdString(key);
+    const SettledHeightFit::Step step =
+      state->second.fit->advance(*copy, copy->height(), extra);
+    appendLog(
+      QString("AR PANEL: '%1' %2")
+      .arg(key_text, QString::fromStdString(describe_fit_round(step))));
+    if (step.action == SettledHeightFit::Action::Resize) {
+      copy->setFixedSize(state->second.width, step.target);
+      continue;
+    }
+    if (step.action == SettledHeightFit::Action::Wait) {
+      continue;
+    }
+    appendLog(
+      QString("AR PANEL: '%1' %2")
+      .arg(key_text, QString::fromStdString(describe_fit_result(step, copy->height()))));
+    const bool stream = state->second.stream_when_done;
+    rememberFittedArCopyHeight(key, copy->height());
+    state->second.fit.reset();
+    state->second.stream_when_done = false;
+    state->second.needs_fit = false;
+    if (stream) {
+      // The stream is added now, like a click that finds the copy fitted. A refusal is the last
+      // error, as for any other start; the hook that watched the dock meanwhile goes with it.
+      ar_copy_fit_resumed_ = true;
+      streamPanelByKey(key_text);
+      ar_copy_fit_resumed_ = false;
+      if (panel_manager_ && !panel_manager_->has_panel(key)) {
+        unwatchDockClose(key);
+      }
+    }
+  }
+  for (const auto & copy : ar_copy_fits_) {
+    if (copy.second.fit) {
+      ar_copy_fit_timer_->start(kFitPeriodMs);
+      break;
+    }
+  }
+}
+
+bool QarStreamingPanel::cancelArCopyFit(const std::string & key, const QString & reason)
+{
+  const auto state = ar_copy_fits_.find(key);
+  if (state == ar_copy_fits_.end() || !state->second.fit || !state->second.stream_when_done) {
+    return false;
+  }
+  state->second.fit.reset();
+  state->second.stream_when_done = false;
+  unwatchDockClose(key);
+  ar_control_dirty_ = true;
+  appendLog(
+    QString("AR PANEL: '%1' start cancelled (%2) while the copy was being fitted.")
+    .arg(QString::fromStdString(key), reason));
+  return true;
+}
+
+void QarStreamingPanel::applyArCopySizeToAll(bool with_own_choices)
+{
+  std::vector<std::string> keys;
+  for (const auto & streamed : streamed_panels_) {
+    keys.push_back(streamed.first);
+  }
+  keys.push_back(kHiddenDisplaysKey);
+  for (const std::string & key : keys) {
+    if (with_own_choices || ar_copy_choice_.count(key) == 0) {
+      applyArCopySize(key);
+    }
+  }
+}
+
+void QarStreamingPanel::lowerArCopiesOverHeightLimit(
+  const seam::PanelDiagnosticsSnapshot & snapshot)
+{
+  // The height a panel has is the one its stream committed after the resize hysteresis. A
+  // dock made taller in RViz can put an enlarged copy over the limit; applyArCopySize() lowers
+  // the factor through the metres-only path. A copy at factor 1 cannot be lowered further.
+  for (const seam::PanelStreamDiagnostics & panel : snapshot.panels) {
+    if (!(panel.height_meters > kArCopyMaxHeightM + kArCopyHeightSlackM) || panel.tombstoned ||
+      panel.parked || panel.ar_panel_closed)
+    {
+      continue;
+    }
+    const auto running = stream_scale_.find(panel.key);
+    if (running != stream_scale_.end() && running->second.factor > 1.0) {
+      applyArCopySize(panel.key);
+    }
+  }
+}
+
+void QarStreamingPanel::onToggleArCopySize(const QString & panel_key)
+{
+  const std::string key = panel_key.toStdString();
+  if (!ar_copy_scales_key(key)) {
+    return;
+  }
+  const ArCopySize next =
+    arCopySizeFor(key) == ArCopySize::Enlarged ? ArCopySize::Native : ArCopySize::Enlarged;
+  // A choice equal to the setting is no choice: the panel follows the setting again.
+  if (next == globalArCopySize()) {
+    ar_copy_choice_.erase(key);
+  } else {
+    ar_copy_choice_[key] = next;
+  }
+  if (panel_manager_ && panel_manager_->has_panel(key) && !panel_manager_->is_tombstoned(key)) {
+    applyArCopySize(key);
+  } else {
+    appendLog(
+      QString("AR PANEL: '%1' will be %2 in AR when it is streamed (panel choice)")
+      .arg(QString::fromStdString(key), QString::fromLatin1(to_string(next))));
+  }
+  updateArPanelList();
+  ar_control_dirty_ = true;
 }
 
 std::vector<QarStreamingPanel::StreamableEntry> QarStreamingPanel::collectStreamableEntries()
@@ -6138,31 +7886,26 @@ std::vector<QarStreamingPanel::StreamableEntry> QarStreamingPanel::collectStream
     {QString::fromLatin1(kSelfPanelKey), "This QAR panel", "QAR desktop panel",
       QPointer<QWidget>(this)});
 
-  // Then every other RViz dock panel. QDockWidget rather than
+  // Then every other RViz dock panel that is open. QDockWidget rather than
   // rviz_common::PanelDockWidget: the base class is enough to reach the content
   // widget, and it also picks up RViz's built-in docks (Displays, Views, Tool
   // Properties, Time), not only plugin panels.
-  if (QWidget * top = window()) {
-    for (QDockWidget * dock : top->findChildren<QDockWidget *>()) {
-      QWidget * content = dock->widget();
-      if (content == nullptr || content == this) {
-        continue;
-      }
-      QString title = dock->windowTitle();
-      if (title.isEmpty()) {
-        title = dock->objectName();
-      }
-      if (title.isEmpty()) {
-        continue;  // nothing to name the AR panel with
-      }
-      const QString key = "dock:" + title;
-      entries.push_back({key, title, title, QPointer<QWidget>(content)});
+  for (const DockEntry & dock : streamableDocks()) {
+    entries.push_back({dock.key, dock.title, dock.title, dock.content});
+    // Which docks stream an AR copy of their own (the caption of the size of a panel that does not
+    // stream yet says so).
+    const auto * const dock_panel = qobject_cast<const rviz_common::Panel *>(dock.content.data());
+    const std::string dock_key = dock.key.toStdString();
+    if (dock_panel != nullptr && ar_copy_panel_class(dock_panel->getClassId().toStdString())) {
+      ar_copy_dock_keys_.insert(dock_key);
+    } else {
+      ar_copy_dock_keys_.erase(dock_key);
     }
   }
 
   // Then every "Open video in AR" panel a web tool's button has opened. Listed
-  // here (rather than a widget of their own) so the EXISTING "Stop streaming" button
-  // and combo are the desktop operator's way to stop one — openVideoPanel()
+  // here (rather than a widget of their own) so the list of AR panels
+  // is the desktop operator's way to stop one - openVideoPanel()
   // already logs with an "AR VIDEO:" prefix and updateArPanelStatus() already
   // shows it (it walks every panel_manager_ key, not just this list). "Stop streaming"
   // on it closes it like any other panel (QAR_PANEL_CLOSE_MODE): by default
@@ -6184,9 +7927,9 @@ std::vector<QarStreamingPanel::StreamableEntry> QarStreamingPanel::collectStream
   }
 
   // Last: the hidden Displays copy. Always offered, whether or not the widget exists yet
-  // ("Stream panel to AR" creates it - onStreamSelectedPanel special-cases this key and
+  // ("Stream to AR" creates it - streamPanelByKey special-cases this key and
   // never looks it up here), because "Stop streaming" and the operator closing its AR
-  // panel both leave the widget alive and "Stream panel to AR" is how it comes back.
+  // panel both leave the widget alive and "Stream to AR" is how it comes back.
   // QAR_PANEL_HIDDEN_DISPLAYS=off only stops the automatic start on connect.
   entries.push_back(
     {QString::fromLatin1(kHiddenDisplaysKey), hiddenDisplaysLabel(), "Displays (AR copy)",
@@ -6194,23 +7937,134 @@ std::vector<QarStreamingPanel::StreamableEntry> QarStreamingPanel::collectStream
   return entries;
 }
 
+std::vector<DockEntry> QarStreamingPanel::streamableDocks()
+{
+  std::vector<DockEntry> docks;
+  QMainWindow * main = host_main_window(this);
+  if (main == nullptr) {
+    return docks;
+  }
+  // A dock whose widget streams keeps the key it streams under, so deleting an earlier dock of
+  // the same title never moves a key (the row, the AR page and a saved state name that key).
+  std::map<const QWidget *, QString> kept;
+  for (const auto & streamed : streamed_panels_) {
+    if (!streamed.second.isNull() && streamed.first.rfind("dock:", 0) == 0) {
+      kept[streamed.second.data()] = QString::fromStdString(streamed.first);
+    }
+  }
+  for (DockEntry & dock : census_docks(*main, this, kept)) {
+    if (dock.content.isNull()) {
+      continue;
+    }
+    // A dock that was closed in RViz stays in the list while its AR panel still streams: the
+    // close has not run yet. A parked or retired panel does not stream.
+    const std::string key = dock.key.toStdString();
+    const bool streams = panel_manager_ && panel_manager_->has_panel(key) &&
+      !panel_manager_->is_parked(key) && !panel_manager_->is_tombstoned(key);
+    if (dock.open || streams) {
+      docks.push_back(std::move(dock));
+    }
+  }
+  return docks;
+}
+
+namespace
+{
+
+/// @p titles joined by ", " and cut to 200 bytes (the cut never splits a UTF-8 sequence).
+QString joinedTitles(const QStringList & titles)
+{
+  constexpr int kMaxBytes = 200;
+  const QByteArray bytes = titles.join(QStringLiteral(", ")).toUtf8();
+  if (bytes.size() <= kMaxBytes) {
+    return QString::fromUtf8(bytes);
+  }
+  int end = kMaxBytes - 3;
+  while (end > 0 && (static_cast<unsigned char>(bytes[end]) & 0xC0) == 0x80) {
+    --end;
+  }
+  return QString::fromUtf8(bytes.left(end)) + QStringLiteral("...");
+}
+
+}  // namespace
+
+void QarStreamingPanel::pollDockCensus(std::chrono::steady_clock::time_point now, bool force)
+{
+  constexpr double kPollSeconds = 0.5;
+  if (!force && dock_census_last_.time_since_epoch().count() != 0 &&
+    std::chrono::duration<double>(now - dock_census_last_).count() < kPollSeconds)
+  {
+    return;
+  }
+  dock_census_last_ = now;
+
+  const std::vector<DockEntry> docks = streamableDocks();
+  const QString signature = census_signature(docks);
+  if (dock_census_seen_ && signature == dock_census_signature_) {
+    return;
+  }
+
+  std::vector<std::pair<QString, QString>> listed;
+  listed.reserve(docks.size());
+  for (const DockEntry & dock : docks) {
+    listed.emplace_back(dock.key, dock.title);
+  }
+  QStringList added;
+  QStringList removed;
+  if (dock_census_seen_) {
+    const auto has_key = [](const std::vector<std::pair<QString, QString>> & list,
+        const QString & key) {
+        return std::any_of(
+          list.begin(), list.end(), [&](const auto & item) {return item.first == key;});
+      };
+    for (const auto & item : listed) {
+      if (!has_key(dock_census_listed_, item.first)) {
+        added.push_back(item.second);
+      }
+    }
+    for (const auto & item : dock_census_listed_) {
+      if (!has_key(listed, item.first)) {
+        removed.push_back(item.second);
+      }
+    }
+  }
+  dock_census_seen_ = true;
+  dock_census_signature_ = signature;
+  dock_census_listed_ = std::move(listed);
+
+  // The desktop's drop-down follows (the selection stays) and the AR control page is rebuilt
+  // from the next snapshot.
+  refreshStreamablePanels();
+  ar_control_dirty_ = true;
+
+  if (!added.isEmpty() || !removed.isEmpty()) {
+    appendLog(
+      QString("AR PANEL: the RViz panels changed: +%1 -%2")
+      .arg(joinedTitles(added), joinedTitles(removed)));
+  }
+  // The page lists every entry of the desktop's list but the standard Displays dock.
+  std::size_t count = 0;
+  for (const StreamableEntry & entry : collectStreamableEntries()) {
+    if (entry.key != QString::fromLatin1(ar_control::kStandardDisplaysKey)) {
+      ++count;
+    }
+  }
+  const std::size_t on_page = std::min(count, ar_control::kPanelSlots);
+  appendLog(
+    QString("AR CONTROL PANEL: panels listed: %1 (%2 on the page, %3 more)")
+    .arg(static_cast<qulonglong>(count))
+    .arg(static_cast<qulonglong>(on_page))
+    .arg(static_cast<qulonglong>(count - on_page)));
+}
+
 void QarStreamingPanel::refreshStreamablePanels()
 {
-  const QString previous = ar_panel_combo_->currentData().toString();
-
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: streamable panel list");
   streamable_panels_.clear();
-  ar_panel_combo_->clear();
   for (const StreamableEntry & entry : collectStreamableEntries()) {
     streamable_panels_.emplace_back(entry.key, entry.widget);
-    ar_panel_combo_->addItem(entry.label, entry.key);
-    ar_panel_combo_->setItemData(ar_panel_combo_->count() - 1, entry.label, Qt::UserRole + 1);
   }
-
-  const int restored = ar_panel_combo_->findData(previous);
-  if (restored >= 0) {
-    ar_panel_combo_->setCurrentIndex(restored);
-  }
-  markParkedPanelsInCombo();
+  updateArPanelList();
 }
 
 void QarStreamingPanel::onRefreshStreamablePanels()
@@ -6220,9 +8074,207 @@ void QarStreamingPanel::onRefreshStreamablePanels()
     QString("AR PANEL: %1 streamable panel(s) found.").arg(streamable_panels_.size()));
 }
 
-void QarStreamingPanel::onStreamSelectedPanel()
+std::vector<ArPanelListInput> QarStreamingPanel::collectArPanelListInput()
 {
-  streamPanelByKey(ar_panel_combo_->currentData().toString());
+  seam::PanelDiagnosticsSnapshot diagnostics;
+  if (panel_manager_) {
+    diagnostics = panel_manager_->diagnostics();
+  }
+  const bool preview = !live_stream_mode_;
+
+  // What the stream manager and the size choice say about one entry.
+  const auto fill = [&](ArPanelListInput & input) {
+      input.preview = preview;
+      const seam::PanelStreamDiagnostics * panel = findPanelDiagnostics(diagnostics, input.key);
+      if (panel != nullptr) {
+        input.in_manager = true;
+        input.tombstoned = panel->tombstoned;
+        input.parked = panel->parked;
+        input.ar_hidden = panel->ar_hidden;
+        input.ar_closed = panel->ar_panel_closed;
+        input.waiting = panel->not_ready_streak > 0;
+        input.frames_sent = panel->frames_submitted > 0;
+        input.error = panel->last_error;
+      } else if (dockStartWaits(input.key)) {
+        input.in_manager = true;  // the stream is made when its dock has been fitted
+      }
+      if (ar_copy_scales_key(input.key)) {
+        input.scaled_kind = true;
+        input.size_native = arCopySizeFor(input.key) == ArCopySize::Native;
+        input.scale = arCopyShownFactor(input.key);
+      }
+    };
+
+  // The order of the list: this panel and the docks, the dialogs that are streamed, the video
+  // panels and the Displays copy, then the AR control panel instances.
+  std::vector<ArPanelListInput> inputs;
+  std::vector<ArPanelListInput> later;
+  for (const StreamableEntry & entry : collectStreamableEntries()) {
+    ArPanelListInput input;
+    input.key = entry.key.toStdString();
+    input.title = entry.label.toStdString();
+    input.kind = ar_panel_kind_of_key(input.key);
+    fill(input);
+    const bool video_or_copy =
+      input.kind == ArPanelKind::Video || input.kind == ArPanelKind::DisplaysCopy;
+    (video_or_copy ? later : inputs).push_back(std::move(input));
+  }
+  for (const seam::PanelStreamDiagnostics & panel : diagnostics.panels) {
+    if (ar_panel_kind_of_key(panel.key) != ArPanelKind::Dialog) {
+      continue;
+    }
+    ArPanelListInput input;
+    input.key = panel.key;
+    input.title = panel.display_name.empty() ? panel.key : panel.display_name;
+    input.kind = ArPanelKind::Dialog;
+    fill(input);
+    inputs.push_back(std::move(input));
+  }
+  for (ArPanelListInput & input : later) {
+    inputs.push_back(std::move(input));
+  }
+  for (const ArControlInstance & instance : control_instances_) {
+    ArPanelListInput input;
+    input.key = "control:" + instance.key;
+    input.title = "AR control panel";
+    input.kind = ArPanelKind::ArControl;
+    input.preview = preview;
+    input.in_manager = true;
+    input.frames_sent = static_cast<bool>(instance.adapter);
+    input.ar_hidden = instance.adapter && !instance.wanted_visible;
+    input.error = instance.adapter ? std::string() : instance.last_error;
+    if (!instance.request.everybody) {
+      input.seen_by = ("peer " + shortPeerWords(instance.request.peer)).toStdString();
+    }
+    inputs.push_back(std::move(input));
+  }
+  // The AR tools come last. Their QarOS panel is made by the tool tick once a session runs.
+  const bool session = static_cast<bool>(qar_factory_) && !attach_pending_;
+  for (const ExposedEntity & exposed : exposures_.entries()) {
+    const ArToolPanel * tool = findArTool(exposed.panel_id);
+    const bool has_panel = tool != nullptr && static_cast<bool>(tool->ar_panel);
+    ArPanelListInput input;
+    input.key = "tool:" + exposed.panel_id;
+    input.title = exposed.entity.name;
+    input.kind = ArPanelKind::ArTool;
+    input.preview = preview;
+    input.frames_sent = has_panel;
+    input.in_manager = !preview && (has_panel || (tool != nullptr && session));
+    input.ar_hidden = has_panel && tool->ar_hidden;
+    input.ar_closed = has_panel && tool->ar_panel->closed_in_ar();
+    input.error = exposed.last_error;
+    input.detail = "AR tool: " + exposed.describe() +
+      (exposed.writable ? "; can publish (Publish asks for a second press)" : "; read-only");
+    inputs.push_back(std::move(input));
+  }
+  return inputs;
+}
+
+void QarStreamingPanel::updateArPanelList()
+{
+  if (ar_panel_list_ == nullptr) {
+    return;
+  }
+  // Streaming and showing need a QarOS session; hiding and stopping do not.
+  ar_panel_list_->set_stream_allowed(static_cast<bool>(qar_factory_) && !attach_pending_);
+  refreshExposureWritableButton();  // it follows the session
+  // The rows are made once and given to both lists: the one of the panel and the one of its AR
+  // copy (each keeps its own selection and page).
+  const std::vector<ArPanelRow> rows =
+    make_ar_panel_rows(collectArPanelListInput(), arVisibilityHides());
+  ar_panel_list_->set_rows(rows);
+  if (ArPanelListWidget * const copy_list = copyArPanelList()) {
+    copy_list->set_stream_allowed(static_cast<bool>(qar_factory_) && !attach_pending_);
+    copy_list->set_rows(rows);
+  }
+}
+
+void QarStreamingPanel::onArPanelListPrimary(const QString & key)
+{
+  if (key.isEmpty() || ar_panel_list_ == nullptr) {
+    return;
+  }
+  ArPanelAction action = ArPanelAction::None;
+  QString title = key;
+  for (const ArPanelRow & row : ar_panel_list_->rows()) {
+    if (QString::fromStdString(row.key) == key) {
+      action = row.primary;
+      title = QString::fromStdString(row.cells[0]);
+      break;
+    }
+  }
+  const std::string manager_key = key.toStdString();
+  if (key.startsWith(QStringLiteral("tool:"))) {
+    // The panel of an AR tool is hidden or shown, the way the tool's switch on the AR control
+    // panel does it: the tool tick makes the QarOS call, off this click.
+    if (action == ArPanelAction::Show || action == ArPanelAction::Hide) {
+      QueuedControlCommand command;
+      command.kind = ControlPanelCommandKind::SetToolOn;
+      command.key = manager_key.substr(5);
+      command.title = title.toStdString();
+      command.on = action == ArPanelAction::Show;
+      runToolSwitch(command, std::chrono::steady_clock::now(), false);
+      ar_control_dirty_ = true;
+    }
+    updateArPanelList();
+    return;
+  }
+  switch (action) {
+    case ArPanelAction::Stream:
+    case ArPanelAction::Show:
+      {
+        bool closed_in_ar = false;
+        if (panel_manager_) {
+          const seam::PanelDiagnosticsSnapshot snapshot = panel_manager_->diagnostics();
+          const seam::PanelStreamDiagnostics * panel = findPanelDiagnostics(snapshot, manager_key);
+          closed_in_ar = panel != nullptr && panel->ar_panel_closed && !panel->parked &&
+            !panel->tombstoned;
+        }
+        if (closed_in_ar) {
+          // The way the switch of the AR control panel shows a panel the person closed in AR.
+          QueuedControlCommand command;
+          command.kind = ControlPanelCommandKind::SetPanelOn;
+          command.key = manager_key;
+          command.title = title.toStdString();
+          command.on = true;
+          runPanelSwitch(command, std::chrono::steady_clock::now());
+        } else {
+          streamPanelByKey(key);
+        }
+      }
+      break;
+    case ArPanelAction::Hide:
+    case ArPanelAction::Stop:
+      // Through the manager's close mode, like every other Qt-side close: with hiding on, the AR
+      // panel is hidden and parked; otherwise it is closed (or shows a notice, as the close mode
+      // says). Pressed in AR on the very panel it stops, this runs inside that panel's own click
+      // delivery; the manager defers the teardown until the click has returned.
+      if (panel_manager_) {
+        closeStreamedPanel(
+          manager_key, "stopped in RViz", "Streaming of this window was stopped in RViz.");
+      }
+      break;
+    case ArPanelAction::None:
+      break;
+  }
+  updateArPanelList();
+}
+
+void QarStreamingPanel::onArPanelListReopen(const QString & key)
+{
+  if (key.startsWith(QStringLiteral("control:"))) {
+    onShowArControlPanel();
+    return;
+  }
+  if (key.startsWith(QStringLiteral("tool:"))) {
+    const std::string panel_id = key.toStdString().substr(5);
+    ArToolPanel * tool = findArTool(panel_id);
+    ExposedEntity * row = exposures_.find_by_panel_id(panel_id);
+    if (tool != nullptr && row != nullptr) {
+      reopenArTool(*tool, *row);
+      updateArPanelList();
+    }
+  }
 }
 
 bool QarStreamingPanel::streamPanelByKey(const QString & key)
@@ -6238,6 +8290,10 @@ bool QarStreamingPanel::streamPanelByKey(const QString & key)
     if (waiting.key == manager_key) {
       return true;
     }
+  }
+  // The same while the AR copy of the panel is being fitted for its stream.
+  if (arCopyFitWaits(manager_key)) {
+    return true;
   }
 
   // A panel that is hidden in AR is shown again, not made again: its QarOS panel and its video
@@ -6258,8 +8314,8 @@ bool QarStreamingPanel::streamPanelByKey(const QString & key)
   }
 
   // The hidden Displays copy is not an RViz dock to look up: its widget may not exist
-  // yet, and "Stream panel to AR" must also clear a stale stream first (see
-  // startHiddenDisplaysStream). "Stop streaming" needs no such case: onStopSelectedPanel's
+  // yet, and "Stream to AR" must also clear a stale stream first (see
+  // startHiddenDisplaysStream). "Stop streaming" needs no such case: onArPanelListPrimary's
   // generic close only ever tears the STREAM down, never the widget.
   if (key == QString::fromLatin1(kHiddenDisplaysKey)) {
     const QString hidden_error = startHiddenDisplaysStream();
@@ -6309,11 +8365,27 @@ bool QarStreamingPanel::streamPanelByKey(const QString & key)
   }
   const bool reviving = parked || panel_manager_->is_tombstoned(manager_key);
 
-  // A dock is fitted to its content first (made taller where a scroll bar shows), so that its AR
-  // copy needs no scroll bar and its QarOS panel is made at the final size. The click returns at
-  // once; the stream is added when two looks agree (startPendingDockStreams(), which comes back
-  // here without fitting).
-  if (!dock_start_resumed_ && growDockBeforeStreaming(key, widget)) {
+  // A panel that has an AR copy streams the copy under the key of the panel, and the dock on the
+  // desktop is not touched: the copy is fitted instead (made as high as its rows or pages need),
+  // and the stream is added when two looks agree (advanceArCopyFits(), which comes back here
+  // without fitting). A panel without a copy is streamed as built: its dock is fitted to its
+  // content first (made taller where a scroll bar shows), so that its AR copy needs no scroll bar
+  // and its QarOS panel is made at the final size. The click returns at once; the stream is added
+  // when two looks agree (startPendingDockStreams(), which comes back here without fitting).
+  QString copy_error;
+  QWidget * captured = widget;
+  if (QWidget * const copy = arCopyForDock(manager_key, widget, copy_error)) {
+    captured = copy;
+    const auto fit = ar_copy_fits_.find(manager_key);
+    if (!ar_copy_fit_resumed_ && fit != ar_copy_fits_.end() && fit->second.needs_fit &&
+      beginArCopyFit(manager_key, /*stream_when_done=*/true))
+    {
+      // The X of the dock ends the start while it waits (the hook of a stream is put in only when
+      // the stream is added, and the dock can be closed before that).
+      watchDockClose(manager_key, widget, /*say=*/false);
+      return true;
+    }
+  } else if (!dock_start_resumed_ && growDockBeforeStreaming(key, widget)) {
     return true;
   }
 
@@ -6330,16 +8402,31 @@ bool QarStreamingPanel::streamPanelByKey(const QString & key)
   // counting it here would shove the next operator-chosen panel a step further
   // out for no reason.
   options.placement.pose.position =
-    to_seam(fixedPanelPosition(panel_slot_x(streamed_panels_.size()), -1.0f));
+    to_seam(fixedPanelPosition(panel_slot_x(streamed_panels_.size(), panelSlotStepM()), -1.0f));
   options.placement.pose.orientation = seam::Quaternion{0.0f, 0.0f, 0.0f, 1.0f};
+  // An enlarged copy covers more metres per logical pixel and is captured at the same factor as
+  // a render scale, so its height - and the ground rule below - is the scaled one. A revived slot
+  // keeps the scale its stream has; applyArCopySize() takes it to the choice in force after the
+  // add.
+  const bool scaled = ar_copy_scales_key(manager_key);
+  ArCopyScale copy_scale;
+  if (scaled) {
+    const auto running = stream_scale_.find(manager_key);
+    copy_scale = reviving && running != stream_scale_.end() ?
+      running->second : arCopyScaleFor(manager_key, *captured);
+    options.meters_per_logical_px =
+      qar_qt_streaming::kDefaultMetersPerLogicalPx * copy_scale.factor;
+    options.render_scale = copy_scale.render_scale;
+  }
   // The lower edge of the panel stays above the RViz ground (the height the manager gives the
   // panel once it is laid out: its video inside the frame of QarOS).
   const GroundedPose grounded = liftAboveGround(
-    to_c(options.placement.pose), panel_manager_->ar_panel_height_m(*widget, options));
+    to_c(options.placement.pose), panel_manager_->ar_panel_height_m(*captured, options));
   options.placement.pose = to_seam(grounded.pose);
   // A dock holding an RViz Image/Camera display carries video (variant b): the
-  // 15 fps control-panel default would halve a 30 fps stream, so match openVideoPanel.
-  if (getDisplayContext() != nullptr) {
+  // 15 fps control-panel default would halve a 30 fps stream, so match openVideoPanel. An AR copy
+  // has no render window.
+  if (captured == widget && getDisplayContext() != nullptr) {
     std::vector<rviz_common::Display *> video_displays;
     collectVideoDisplays(getDisplayContext()->getRootDisplayGroup(), widget, video_displays);
     if (!video_displays.empty()) {
@@ -6353,13 +8440,20 @@ bool QarStreamingPanel::streamPanelByKey(const QString & key)
     applyUniqueDisplayName(manager_key, options);
   }
 
+  // The copy of this panel shows what the panel shows when its stream starts; the sync before each
+  // capture (tickArPanels()) keeps it so.
+  if (captured != widget && self_ar_copy_ && captured == self_ar_copy_.get()) {
+    self_ar_copy_->sync();
+  }
   const seam::Result added =
-    panel_manager_->add_panel(manager_key, widget, options);
+    panel_manager_->add_panel(manager_key, captured, options);
   if (!added.ok()) {
     setLastError(QString("AR panel: %1").arg(QString::fromStdString(added.message)));
     return false;
   }
-  // One entry per key, whatever the key went through before.
+  // One entry per key, whatever the key went through before. The entry keeps the DOCK content,
+  // also when an AR copy streams: the census of the docks, the sweep of destroyed widgets and the
+  // hook that follows the close of the dock all follow the dock.
   streamed_panels_.erase(
     std::remove_if(
       streamed_panels_.begin(), streamed_panels_.end(),
@@ -6368,11 +8462,43 @@ bool QarStreamingPanel::streamPanelByKey(const QString & key)
       }),
     streamed_panels_.end());
   streamed_panels_.emplace_back(manager_key, QPointer<QWidget>(widget));
+  if (scaled) {
+    stream_pose_[manager_key] = grounded.pose;
+    if (reviving) {
+      applyArCopySize(manager_key);
+    } else {
+      stream_scale_[manager_key] = copy_scale;
+      appendLog(QString::fromStdString(ar_copy_scale_line(manager_key, copy_scale)));
+    }
+  }
   // Closing the RViz dock this widget lives in (its X button) closes the AR panel.
   watchDockClose(manager_key, widget);
-  // Variant (b): substitute ROS video for any RViz Image/Camera display whose
-  // render window lives inside this dock — a no-op for every other panel.
-  attachVideoRegions(manager_key, widget);
+  if (captured != widget) {
+    if (manager_key == kSelfPanelKey) {
+      appendLog(
+        QString("AR PANEL: '%1' streams an AR copy of this QAR panel (%2x%3 px, shown "
+          "off-screen only, %4 controls bound, its own tab); the panel on the desktop does not "
+          "change.")
+        .arg(key).arg(captured->width()).arg(captured->height()).arg(self_ar_copy_->bound_count()));
+    } else {
+      const auto * const dock_panel = qobject_cast<const rviz_common::Panel *>(widget);
+      // A copy that shows property trees has their item dragging switched off; one that shows
+      // text only (the Help panel) has no drag to switch off, and the line does not claim one.
+      const ArCopyPanelClass * const copy_class = ar_copy_panel_class(
+        dock_panel != nullptr ? dock_panel->getClassId().toStdString() : std::string());
+      const QString dragging = copy_class != nullptr && copy_class->has_property_tree ?
+        QStringLiteral(", item dragging off") : QString();
+      appendLog(
+        QString("AR PANEL: '%1' streams an AR copy of RViz's '%2' panel (%3x%4 px, shown "
+          "off-screen only%5); the panel on the desktop does not change.")
+        .arg(key, dock_panel != nullptr ? dock_panel->getClassId() : QString())
+        .arg(captured->width()).arg(captured->height()).arg(dragging));
+    }
+  } else {
+    // Variant (b): substitute ROS video for any RViz Image/Camera display whose
+    // render window lives inside this dock - a no-op for every other panel.
+    attachVideoRegions(manager_key, widget);
+  }
   if (parked) {
     // The show is carried out by the next tick. Recorded like every other show, so that a
     // refusal is reported (hiding is the way of the switch: nothing is closed or made again).
@@ -6389,29 +8515,8 @@ bool QarStreamingPanel::streamPanelByKey(const QString & key)
         "is created on the next tick, off this click.").arg(key));
   }
   logGroundRaise(key, grounded);
-  markParkedPanelsInCombo();
   updateArPanelStatus();
   return true;
-}
-
-void QarStreamingPanel::onStopSelectedPanel()
-{
-  const QString key = ar_panel_combo_->currentData().toString();
-  if (key.isEmpty() || !panel_manager_) {
-    return;
-  }
-  // Through the manager's close mode, like every other Qt-side close: by default
-  // the AR panel is closed and its video sender destroyed; under
-  // QAR_PANEL_CLOSE_MODE=notice, the escape hatch for a QarOS runtime that does
-  // not survive destroying a sender mid-session, it stays up as "this window has
-  // closed on the RViz side, you may close the panel" and keeps its video sender
-  // (qar_ogre_adapter docs/QAROS_INTEGRATION_NOTES.md, "Teardown and destroy
-  // order"); while "AR Visibility" says hide it is hidden and parked, and neither the QarOS
-  // panel nor the sender is touched. Pressed in AR on the very panel it stops, this runs
-  // inside that panel's own click delivery; the manager defers the teardown until the click
-  // has returned.
-  closeStreamedPanel(
-    key.toStdString(), "stopped in RViz", "Streaming of this window was stopped in RViz.");
 }
 
 bool QarStreamingPanel::closeStreamedPanel(
@@ -6500,7 +8605,6 @@ bool QarStreamingPanel::closeStreamedPanel(
       "session ends).")
       .arg(key, short_reason));
   }
-  markParkedPanelsInCombo();
   updateArPanelStatus();
   return true;
 }
@@ -6524,7 +8628,7 @@ void QarStreamingPanel::watchDockClose(
       dock, &rviz_common::PanelDockWidget::closed, this,
       [this, manager_key]() {
         // The dock was closed in RViz. No automatic reopen when it is shown again:
-        // the operator streams it again with "Stream panel to AR".
+        // the operator streams it again with "Stream to AR".
         closeStreamedPanel(
           manager_key, "closed in RViz",
           "This window has been closed in RViz, so its picture is no longer live.");
@@ -6583,26 +8687,46 @@ void QarStreamingPanel::applyUniqueDisplayName(
 // The hidden RViz Displays panel
 // ---------------------------------------------------------------------------
 
+bool QarStreamingPanel::hiddenDisplaysStartWanted() const
+{
+  const bool setting_on =
+    setting_bool(effective_settings_, settings_key::kHiddenDisplaysOnConnect);
+  const auto found = effective_settings_.find(settings_key::kHiddenDisplaysOnConnect);
+  const bool from_environment =
+    found != effective_settings_.end() && found->second.source == SettingSource::Environment;
+  // The variable decides; else the RViz config says whether the copy was on in AR; else the
+  // setting does.
+  return from_environment ? setting_on : hidden_displays_starts(restore_plan_, setting_on);
+}
+
 void QarStreamingPanel::startHiddenDisplaysStreamOnConnect()
 {
-  // The "Hidden Displays On Connect" setting as it is now: QAR_PANEL_HIDDEN_DISPLAYS when it is
-  // set and acceptable, else the saved value or the Settings tab's choice, else on.
-  if (!setting_bool(effective_settings_, settings_key::kHiddenDisplaysOnConnect)) {
+  // The "Hidden Displays On Connect" setting as it stands: QAR_PANEL_HIDDEN_DISPLAYS when it is
+  // set and acceptable, else the saved value or the Settings tab's choice, else on; an entry of
+  // the RViz config for the copy decides in place of the setting.
+  if (!hiddenDisplaysStartWanted()) {
     if (!hidden_displays_disabled_logged_) {
       hidden_displays_disabled_logged_ = true;
       const auto found = effective_settings_.find(settings_key::kHiddenDisplaysOnConnect);
       const bool from_environment =
         found != effective_settings_.end() && found->second.source == SettingSource::Environment;
+      const bool setting_on =
+        setting_bool(effective_settings_, settings_key::kHiddenDisplaysOnConnect);
+      QString why;
+      if (from_environment) {
+        why = QString("%1=%2").arg(
+          QString::fromStdString(found->second.env_name),
+          QString::fromStdString(found->second.env_raw).trimmed());
+      } else if (setting_on) {
+        why = QStringLiteral("the RViz config says the copy was off in AR");
+      } else {
+        why = QStringLiteral(
+          "the setting \"Start the hidden Displays copy when connecting\" is off");
+      }
       appendLog(
         QString("AR PANEL: the hidden Displays panel is not started on connect (%1). "
           "'%2' in the panel list still starts it by hand.")
-        .arg(
-          from_environment
-          ? QString("%1=%2").arg(
-            QString::fromStdString(found->second.env_name),
-            QString::fromStdString(found->second.env_raw).trimmed())
-          : QString("the setting \"Start the hidden Displays copy when connecting\" is off"),
-          hiddenDisplaysLabel()));
+        .arg(why, hiddenDisplaysLabel()));
     }
     return;
   }
@@ -6617,14 +8741,18 @@ void QarStreamingPanel::startHiddenDisplaysWhenAPeerStreams()
   // A copy made earlier would sit unserved and show black until the first frame arrives. The
   // setting is checked by startHiddenDisplaysStreamOnConnect().
   hidden_displays_start_pending_ = false;
-  if (!hidden_displays_ &&
-    setting_bool(effective_settings_, settings_key::kHiddenDisplaysOnConnect))
-  {
+  if (!hidden_displays_ && hiddenDisplaysStartWanted()) {
     appendLog(
       "AR PANEL: the hidden Displays copy starts now; it waited for the first peer's 3D "
       "stream so that it is not made before anything can receive it.");
   }
   startHiddenDisplaysStreamOnConnect();
+  // The entry of the RViz config is used once, at the first start after the load.
+  restore_plan_.panels.erase(
+    std::remove_if(
+      restore_plan_.panels.begin(), restore_plan_.panels.end(),
+      [](const ArPanelState & panel) {return panel.key == kHiddenDisplaysKey;}),
+    restore_plan_.panels.end());
 }
 
 QString QarStreamingPanel::startHiddenDisplaysStream()
@@ -6643,7 +8771,7 @@ QString QarStreamingPanel::startHiddenDisplaysStream()
 
   // The widget, once. Created on this (the Qt GUI) thread, shown off-screen, and kept for
   // the life of this panel: "Stop streaming", and the operator closing its AR panel, only
-  // ever end the STREAM, so "Stream panel to AR" finds the same widget again.
+  // ever end the STREAM, so "Stream to AR" finds the same widget again.
   if (!hidden_displays_) {
     rviz_common::DisplayContext * context = getDisplayContext();
     if (context == nullptr) {
@@ -6677,7 +8805,14 @@ QString QarStreamingPanel::startHiddenDisplaysStream()
           reason));
       return reason;
     }
-    if (!qar_qt_streaming::show_offscreen(made.panel.get(), size.width, size.height)) {
+    // The style of the size in force goes on before the copy is shown, and a copy whose controls
+    // are larger is wider (the indentation of its tree grows); a size the operator chose is kept.
+    applyArCopyStyle(kHiddenDisplaysKey, *made.panel);
+    hidden_displays_base_width_ = size.width;
+    hidden_displays_width_explicit_ = size.explicitly_chosen;
+    const int shown_width =
+      size.explicitly_chosen ? size.width : arCopyWidthFor(kHiddenDisplaysKey, size.width);
+    if (!qar_qt_streaming::show_offscreen(made.panel.get(), shown_width, size.height)) {
       const QString reason = "the new panel could not be shown off-screen";
       appendLog(
         QString("AR PANEL: could not create the hidden Displays panel: %1 -- continuing "
@@ -6691,7 +8826,7 @@ QString QarStreamingPanel::startHiddenDisplaysStream()
     // member timer before it streams (advanceHiddenDisplaysFit()), so that its first frame is
     // the final size and shows no scroll bar.
     const bool has_tree = hidden_displays_->findChild<QTreeView *>() != nullptr;
-    hidden_displays_fit_width_ = size.width;
+    hidden_displays_fit_width_ = shown_width;
     hidden_displays_needs_fit_ = !size.explicitly_chosen && has_tree;
 
     appendLog(
@@ -6708,9 +8843,13 @@ QString QarStreamingPanel::startHiddenDisplaysStream()
         made.help_area_hidden ? QStringLiteral(" and its help area hidden") : QString()));
   }
 
+  // The size in force may have changed while the copy did not stream.
+  restyleArCopy(kHiddenDisplaysKey);
+
   // The copy is made as high as its display tree needs before its stream is made. A fit that is
   // running already is not started twice: the stream follows its end.
   if (hidden_displays_needs_fit_) {
+    hidden_displays_stream_after_fit_ = true;
     if (hidden_displays_fit_) {
       appendLog(
         QString("AR PANEL: the hidden Displays copy is being fitted to its display tree; it "
@@ -6747,6 +8886,7 @@ bool QarStreamingPanel::beginHiddenDisplaysFit()
 
 void QarStreamingPanel::advanceHiddenDisplaysFit()
 {
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: hidden Displays fit");
   if (!hidden_displays_ || !hidden_displays_fit_) {
     hidden_displays_fit_.reset();
     return;
@@ -6778,8 +8918,14 @@ void QarStreamingPanel::advanceHiddenDisplaysFit()
   appendLog(
     QString("AR PANEL: '%1' %2")
     .arg(key_text, QString::fromStdString(describe_fit_result(step, hidden_displays_->height()))));
+  rememberFittedArCopyHeight(kHiddenDisplaysKey, hidden_displays_->height());
   hidden_displays_fit_.reset();
   hidden_displays_needs_fit_ = false;
+  if (!hidden_displays_stream_after_fit_) {
+    // The fit that follows a change of the style of a copy that streams already: no stream to add.
+    hidden_displays_stream_after_fit_ = true;
+    return;
+  }
   const QString error = streamHiddenDisplaysPanel();
   if (!error.isEmpty()) {
     setLastError("AR panel: " + error);
@@ -6837,6 +8983,7 @@ void QarStreamingPanel::onHiddenDisplaysTreeChanged()
 
 void QarStreamingPanel::requestHiddenDisplaysCensus()
 {
+  const StallSlotScope stall_slot(stall_watchdog_.get(), "slot: hidden Displays census");
   // The manager asks nothing of a copy that is hidden, parked, closed in AR or a notice.
   if (panel_manager_) {
     panel_manager_->request_scroll_census(kHiddenDisplaysKey, "display tree changed");
@@ -6852,7 +8999,7 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
   }
 
   // The stream's state. A live one is left alone (the idempotent case: "Connect to QarOS"
-  // or "Stream panel to AR" pressed again). A stream the OPERATOR closed in AR is not live
+  // or "Stream to AR" pressed again). A stream the OPERATOR closed in AR is not live
   // and not gone either: capture stopped, but the entry stays because its Qt window never
   // closes - nothing would ever retire it. Hiding as the way of the switch asks QarOS to show
   // that panel again and closes nothing; closing as the way of the switch clears the entry
@@ -6882,7 +9029,6 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
       if (!requestPanelVisibility(key, true)) {
         return QString("QarOS could not be asked to show the panel again");
       }
-      markParkedPanelsInCombo();
       return QString();
     }
     if (!tombstoned && !parked) {
@@ -6899,9 +9045,25 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
   // kPanelSlotStepM: no call asks QarOS where the operator is looking (qar_ogre_adapter
   // docs/QAROS_INTEGRATION_NOTES.md, "Known SDK limitations"), so the placement is
   // fixed. The dialogs this panel opens (the Add-display box) are
-  // placed by the manager 0.5 m to its +X, which lands them between this and the rest.
+  // placed by the manager 0.5 m (times the scale of the copy) to its +X, which lands them
+  // between this and the rest; an enlarged copy sits farther out by the same factor, so that
+  // its dialogs, which are enlarged too, stay clear of the first slot.
   options.placement.pose.position = to_seam(fixedPanelPosition(-1.2f, -1.0f));
   options.placement.pose.orientation = seam::Quaternion{0.0f, 0.0f, 0.0f, 1.0f};
+  // The copy is scaled like the Qt panels (see streamPanelByKey()); a revived slot keeps the
+  // scale its stream has.
+  ArCopyScale copy_scale;
+  {
+    const bool revived_slot = parked || panel_manager_->is_tombstoned(key);
+    const auto running = stream_scale_.find(key);
+    copy_scale = revived_slot && running != stream_scale_.end() ?
+      running->second : arCopyScaleFor(key, *hidden_displays_);
+    options.meters_per_logical_px =
+      qar_qt_streaming::kDefaultMetersPerLogicalPx * copy_scale.factor;
+    options.render_scale = copy_scale.render_scale;
+    options.placement.pose.position =
+      to_seam(fixedPanelPosition(-1.2f * static_cast<float>(copy_scale.factor), -1.0f));
+  }
   // The lower edge of the copy stays above the RViz ground (its height in metres is the one the
   // manager gives the panel: its video inside the frame of QarOS).
   const GroundedPose grounded = liftAboveGround(
@@ -6924,6 +9086,13 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
       .arg(key_text, reason));
     return reason;
   }
+  stream_pose_[key] = grounded.pose;
+  if (reviving) {
+    applyArCopySize(key);
+  } else {
+    stream_scale_[key] = copy_scale;
+    appendLog(QString::fromStdString(ar_copy_scale_line(key, copy_scale)));
+  }
   watchHiddenDisplaysTree();
   // Deliberately NOT added to streamed_panels_: that list drives the destroyed-widget
   // sweep and the dock-closed hooks, and this widget has neither a dock nor an RViz close
@@ -6940,7 +9109,7 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
   appendLog(
     QString("AR PANEL: streaming the hidden Displays panel as '%1' (\"%2\", %3x%4 px) at "
       "room (%5) m. The QarOS panel itself is created on the next tick, off "
-      "this call. 'Stop streaming' and 'Stream panel to AR' act on the stream only: the widget "
+      "this call. 'Stop streaming' and 'Stream to AR' act on the stream only: the widget "
       "stays shown off-screen.")
     .arg(key_text, QString::fromLatin1(kHiddenDisplaysPanelName))
     .arg(hidden_displays_->width())
@@ -6951,23 +9120,40 @@ QString QarStreamingPanel::streamHiddenDisplaysPanel()
   return QString();
 }
 
-void QarStreamingPanel::keepHiddenDisplaysShown()
+void QarStreamingPanel::keepArCopiesShown()
 {
-  if (!hidden_displays_ || hidden_displays_->isVisible()) {
-    return;
+  if (hidden_displays_ && !hidden_displays_->isVisible()) {
+    // Something hid it (a close() or hide() on its window). A hidden Qt widget is not painted,
+    // so the stream would go on sending a blank rectangle; the same call that showed it the first
+    // time puts it back, at the size it already has.
+    qar_qt_streaming::show_offscreen(
+      hidden_displays_.get(), hidden_displays_->width(), hidden_displays_->height());
+    if (!hidden_displays_reshown_logged_) {
+      hidden_displays_reshown_logged_ = true;
+      appendLog(
+        "AR PANEL: the hidden Displays panel had been hidden by something (a hide() or "
+        "close() on it); it is shown off-screen again. Said once: a hidden widget would "
+        "have streamed a blank rectangle.");
+    }
   }
-  // Something hid it (a close() or hide() on its window). A hidden Qt widget is not
-  // painted, so the stream would go on sending a blank rectangle; the same call that
-  // showed it the first time puts it back, at the size it already has.
-  qar_qt_streaming::show_offscreen(
-    hidden_displays_.get(), hidden_displays_->width(), hidden_displays_->height());
-  if (!hidden_displays_reshown_logged_) {
-    hidden_displays_reshown_logged_ = true;
-    appendLog(
-      "AR PANEL: the hidden Displays panel had been hidden by something (a hide() or "
-      "close() on it); it is shown off-screen again. Said once: a hidden widget would "
-      "have streamed a blank rectangle.");
+  // The same for the AR copies of the docks and of this panel.
+  const auto show_again = [this](const std::string & key, QWidget * copy) {
+      if (copy == nullptr || copy->isVisible()) {
+        return;
+      }
+      qar_qt_streaming::show_offscreen(copy, copy->width(), copy->height());
+      if (!ar_copies_reshown_logged_) {
+        ar_copies_reshown_logged_ = true;
+        appendLog(
+          QString("AR PANEL: the AR copy of '%1' had been hidden by something (a hide() or "
+            "close() on it); it is shown off-screen again. Said once: a hidden widget would "
+            "have streamed a blank rectangle.").arg(QString::fromStdString(key)));
+      }
+    };
+  for (const auto & copy : ar_copy_panels_) {
+    show_again(copy.first, copy.second.get());
   }
+  show_again(kSelfPanelKey, self_ar_copy_.get());
 }
 
 void QarStreamingPanel::tickArPanels()
@@ -6976,8 +9162,9 @@ void QarStreamingPanel::tickArPanels()
     return;
   }
 
-  // Before anything is captured: a hidden Displays copy is put back first.
-  keepHiddenDisplaysShown();
+  // Before anything is captured: a copy that was hidden is put back first.
+  stallStep("AR panels: housekeeping");
+  keepArCopiesShown();
 
   // Retire any stream whose source widget has been destroyed BEFORE capturing:
   // QtPanelStream holds a raw QWidget*, so a closed dock panel would otherwise be
@@ -6997,6 +9184,7 @@ void QarStreamingPanel::tickArPanels()
 
   // Adopt each live video panel's aspect ratio before the capture tick reads
   // it, and stop any ROS subscription whose panel has since been tombstoned.
+  stallStep("AR panels: video panels");
   tickVideoPanels();
   // Variant (b)'s own throttled upkeep (~0.5 s, self-paced inside the call) —
   // same per-tick hook as tickVideoPanels() just above, for the same reason.
@@ -7004,8 +9192,11 @@ void QarStreamingPanel::tickArPanels()
 
   // Same Qt GUI thread as the widgets themselves — the only thread allowed to
   // paint a QWidget — so there is no handoff and no lock here, unlike the Ogre path.
+  stallStep("AR panels: panel manager tick (capture, submit, drain results)");
+  syncSelfArCopy();
   panel_manager_->tick();
   // A hide or show asked for since the last tick has been carried out, or refused, by now.
+  stallStep("AR panels: visibility and diagnostics");
   checkVisibilityOutcomes();
   // Rate-limited per-panel/per-region breakdown (~2 s) — this tick's counters
   // are current now that panel_manager_->tick() just ran.
@@ -7042,6 +9233,7 @@ void QarStreamingPanel::scheduleArPanelInputPump()
     this,
     [this]() {
       ar_input_pump_pending_ = false;
+      const StallSlotScope stall_slot(stall_watchdog_.get(), "AR panel input (posted)");
       if (panel_manager_ != nullptr) {
         panel_manager_->pump_input();
       }
@@ -7051,35 +9243,45 @@ void QarStreamingPanel::scheduleArPanelInputPump()
 
 void QarStreamingPanel::updateArPanelStatus()
 {
+  updateArPanelList();
   if (ar_panel_status_label_ == nullptr) {
     return;
   }
+  // The text of the box is shortened for the width of each view that shows it: the panel's own
+  // window and, where there is one, its AR copy, which is as wide as its own style makes it.
+  const auto show_readout = [this](
+    const QStringList & head, const QStringList & items, const QString & more_format) {
+      const int dropped = set_view_readout(desktopView(), head, items, more_format);
+      if (self_ar_copy_) {
+        set_view_readout(self_ar_copy_->view(), head, items, more_format);
+      }
+      return dropped;
+    };
   if (!panel_manager_) {
-    ar_panel_status_label_->setText("AR panels: none");
+    show_readout({QStringLiteral("AR panels: none")}, {}, QString());
     return;
   }
 
-  // The panel list follows the manager: an entry whose AR panel is parked says so.
-  markParkedPanelsInCombo();
-
   const auto snapshot = panel_manager_->diagnostics();
+  lowerArCopiesOverHeightLimit(snapshot);
   if (snapshot.panels.empty()) {
     // Nothing is streaming. In the default close mode the panels that were are not
     // kept anywhere, so say how many were closed rather than a bare "none".
-    ar_panel_status_label_->setText(
-      snapshot.panels_closed > 0
-      ? QString("AR panels: none (live=0 closed=%1)")
-        .arg(static_cast<qulonglong>(snapshot.panels_closed))
-      : QString("AR panels: none"));
+    show_readout(
+      {snapshot.panels_closed > 0
+        ? QString("AR panels: none (live=0 closed=%1)")
+          .arg(static_cast<qulonglong>(snapshot.panels_closed))
+        : QString("AR panels: none")},
+      {}, QString());
     return;
   }
 
-  // What the box shows: the heading, the manager-wide input line, the life line and one short line
-  // per panel. The long counters of every panel (its size in metres, the supersample ratio, the
-  // input it received and delivered, ...) are in the heartbeat of the log: the box holds sixteen
-  // lines and may not scroll, so a line that is not needed at the desktop is not shown.
+  // What the box shows: the manager-wide input line, the life line and one short line per panel;
+  // the group box around it already carries the title. The long counters of every panel (its size
+  // in metres, the supersample ratio, the input it received and delivered, ...) are in the
+  // heartbeat of the log: the box holds ten lines and may not scroll, so a line that is not
+  // needed at the desktop is not shown.
   QStringList head;
-  head.append(QStringLiteral("AR panels:"));
   // Manager-wide input FIRST: this is the line that says whether any pointer
   // sample reached the library at all. "in" counts everything drained from the
   // input source, "missed" the ones that resolved to no panel (pointing at
@@ -7174,6 +9376,13 @@ void QarStreamingPanel::updateArPanelStatus()
     if (panel.adapter_rebuilds > 1 || panel.resize_pending) {
       flags.append(QString("rebuilds %1").arg(static_cast<qulonglong>(panel.adapter_rebuilds)));
     }
+    if (panel.key == kSelfPanelKey && self_ar_copy_) {
+      const qar_qt_streaming::WidgetTwinBinder::Counters twin = self_ar_copy_->binder().counters();
+      flags.append(
+        QString("copy sync %1/%2, fwd %3, refused %4")
+        .arg(static_cast<qulonglong>(twin.passes)).arg(static_cast<qulonglong>(twin.writes))
+        .arg(static_cast<qulonglong>(twin.forwarded)).arg(static_cast<qulonglong>(twin.refused)));
+    }
     if (!panel.last_error.empty()) {
       flags.append(
         QString("error: %1").arg(QString::fromStdString(printableText(panel.last_error, 48))));
@@ -7184,38 +9393,8 @@ void QarStreamingPanel::updateArPanelStatus()
     panel_lines.append(line);
   }
 
-  const ReadoutBox box{ar_panel_status_scroll_, ar_panel_status_label_};
-  set_readout_text(
-    box, head, panel_lines,
-    QStringLiteral("... and %1 more panel(s); all counters are in the log"), readoutTextWidth());
-}
-
-int QarStreamingPanel::readoutTextWidth() const
-{
-  if (ar_panel_status_scroll_ == nullptr) {
-    return 0;
-  }
-  // The page of the readout is on show: the box knows its own width.
-  if (ar_panel_status_scroll_->isVisible()) {
-    return ar_panel_status_scroll_->viewport()->width();
-  }
-  // Another page is on show. A page that is not on show keeps the size it had when it was last
-  // laid out, so its box is no guide; all pages share one viewport, and the readout is that wide
-  // less the margins of its page and the frame of the box.
-  int width = 0;
-  if (const auto * current =
-    qobject_cast<const QScrollArea *>(tabs_ != nullptr ? tabs_->currentWidget() : nullptr))
-  {
-    width = current->viewport()->width();
-    if (const QWidget * page = ar_panel_status_scroll_->parentWidget()) {
-      if (const QLayout * layout = page->layout()) {
-        width -= layout->contentsMargins().left() + layout->contentsMargins().right();
-      }
-    }
-    width -= 2 * ar_panel_status_scroll_->frameWidth();
-  }
-  // A panel that has not been laid out yet: the width its dock starts with, less the margins.
-  return width > 100 ? width : kDefaultDockWidth - 60;
+  show_readout(
+    head, panel_lines, QStringLiteral("... and %1 more panel(s); all counters are in the log"));
 }
 
 
@@ -7495,6 +9674,17 @@ QString QarStreamingPanel::exposeEntity(const AddTopicSelection & selection)
   ar_tools_.push_back(std::move(tool));
   refreshExposureList();
 
+  // Whether the tool can publish, and why: the rule of the type (a service or an action has its
+  // own form), and whether the operator changed the box of the dialog from it.
+  const ArToolWriteDefault write_rule = default_write_for(entity.kind, entity.type_name);
+  const bool exposed_writable =
+    entity.kind == RosEntityKind::Topic ? request.writable : write_rule.writable;
+  appendLog(
+    QString("AR TOOL: %1 [%2] exposed %3 (%4; %5)")
+    .arg(selection.name, selection.message_type,
+      exposed_writable ? QString("writable") : QString("read-only"),
+      QString::fromStdString(write_rule.reason),
+      selection.write_chosen ? QString("chosen") : QString("default")));
   appendLog(
     QString("AR TOOL: exposed %1 as '%2' (%3) at %4. The QarOS panel is created "
     "on the next tick, off this click.")
@@ -7862,6 +10052,7 @@ void QarStreamingPanel::refreshExposureList()
       exposure_list_->setCurrentItem(item);
     }
   }
+  refreshExposureWritableButton();
 
   if (exposure_status_label_ == nullptr) {
     return;
@@ -7900,6 +10091,191 @@ void QarStreamingPanel::onRemoveExposure()
     return;
   }
   retireExposure(row->entity.kind, QString::fromStdString(row->entity.name));
+  Q_EMIT configChanged();  // the tools are saved in the RViz config
+}
+
+void QarStreamingPanel::refreshExposureWritableButton()
+{
+  if (toggle_writable_button_ == nullptr) {
+    return;
+  }
+  // Only a topic has a publish flag; a service or an action has its request or goal form.
+  const ExposedEntity * row = selectedExposure();
+  const bool topic = row != nullptr && row->entity.kind == RosEntityKind::Topic;
+  const QString text = topic && row->writable ? QStringLiteral("Make read-only")
+                                              : QStringLiteral("Allow publishing");
+  if (toggle_writable_button_->text() != text) {
+    toggle_writable_button_->setText(text);
+  }
+  // With closing as the way of the switch the toggle would close the QarOS panel of the tool
+  // and make a new one, so it waits for hiding or for the end of the session.
+  const bool needs_hiding = writableToggleNeedsHiding();
+  const bool enabled = topic && !needs_hiding;
+  if (toggle_writable_button_->isEnabled() != enabled) {
+    toggle_writable_button_->setEnabled(enabled);
+  }
+  const QString tip = QString::fromLatin1(
+    needs_hiding ? kWritableToggleNeedsHidingToolTip : kWritableToggleToolTip);
+  if (toggle_writable_button_->toolTip() != tip) {
+    toggle_writable_button_->setToolTip(tip);
+  }
+}
+
+bool QarStreamingPanel::writableToggleNeedsHiding() const
+{
+  return !arVisibilityHides() && qar_factory_ && !attach_pending_;
+}
+
+QString QarStreamingPanel::reexposeWithWritable(const ExposedEntity & row, bool writable)
+{
+  // The row is gone after the retirement, so everything is copied first.
+  AddTopicSelection selection;
+  selection.kind = row.entity.kind;
+  selection.name = QString::fromStdString(row.entity.name);
+  selection.message_type = QString::fromStdString(row.entity.type_name);
+  selection.expose_as_ar_tool = true;
+  selection.allow_publish = writable;
+  selection.write_chosen = true;
+  const bool previous_writable = row.writable;
+
+  // What the tool had before: its place in both lists (the slot of its AR panel and the order of
+  // the lists come from it) and whether it was hidden in AR.
+  const std::string old_panel_id = row.panel_id;
+  const std::string entity_name = row.entity.name;
+  const std::size_t tool_index = arToolIndex(old_panel_id);
+  const std::size_t row_index = exposureIndex(old_panel_id);
+  bool was_hidden = false;
+  if (const ArToolPanel * old_tool = findArTool(old_panel_id)) {
+    was_hidden = (old_tool->ar_hidden || old_tool->pending_hide || old_tool->restore_hidden) &&
+      !old_tool->pending_show;
+  }
+
+  retireExposure(selection.kind, selection.name);
+  const QString error = exposeEntity(selection);
+  if (error.isEmpty()) {
+    putExposureBack(selection.kind, entity_name, tool_index, row_index, was_hidden);
+    return QString();
+  }
+  // Leave the operator the tool they had, as it was chosen: a flag that is the rule of the type
+  // was not a choice.
+  selection.allow_publish = previous_writable;
+  selection.write_chosen = previous_writable !=
+    default_write_for(selection.kind, selection.message_type.toStdString()).writable;
+  const QString restore_error = exposeEntity(selection);
+  if (restore_error.isEmpty()) {
+    putExposureBack(selection.kind, entity_name, tool_index, row_index, was_hidden);
+    return error + "; the tool is back as it was";
+  }
+  return error + "; and the tool could not be made again: " + restore_error;
+}
+
+std::size_t QarStreamingPanel::arToolIndex(const std::string & panel_id) const
+{
+  for (std::size_t i = 0; i < ar_tools_.size(); ++i) {
+    if (ar_tools_[i]->panel_id == panel_id) {
+      return i;
+    }
+  }
+  return ar_tools_.size();
+}
+
+std::size_t QarStreamingPanel::exposureIndex(const std::string & panel_id) const
+{
+  const auto & entries = exposures_.entries();
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    if (entries[i].panel_id == panel_id) {
+      return i;
+    }
+  }
+  return entries.size();
+}
+
+void QarStreamingPanel::putExposureBack(
+  RosEntityKind kind, const std::string & name, std::size_t tool_index, std::size_t row_index,
+  bool was_hidden)
+{
+  // A tool that is made again is the last of both lists; it goes back to the place it had, so that
+  // the slot of its AR panel, the list and the AR control panel keep their order.
+  if (tool_index < ar_tools_.size() - 1) {
+    std::rotate(ar_tools_.begin() + static_cast<std::ptrdiff_t>(tool_index),
+      ar_tools_.end() - 1, ar_tools_.end());
+  }
+  if (row_index < exposures_.size() - 1) {
+    std::vector<ExposedEntity> rows = exposures_.entries();
+    std::rotate(rows.begin() + static_cast<std::ptrdiff_t>(row_index), rows.end() - 1, rows.end());
+    exposures_.clear();
+    for (const ExposedEntity & entry : rows) {
+      std::string add_error;
+      if (!exposures_.add(entry, &add_error)) {
+        appendLog(QString("AR TOOL: could not keep the order of the tools - %1")
+          .arg(QString::fromStdString(add_error)));
+      }
+    }
+  }
+  // A tool that was hidden in AR stays hidden: the QarOS panel is hidden again as soon as it is
+  // pointed at the new page, the way the RViz config restores it.
+  if (was_hidden) {
+    if (const ExposedEntity * made = exposures_.find(kind, name)) {
+      if (ArToolPanel * tool = findArTool(made->panel_id)) {
+        tool->restore_hidden = true;
+      }
+    }
+  }
+  refreshExposureList();
+  ar_control_dirty_ = true;
+}
+
+void QarStreamingPanel::onToggleExposureWritable()
+{
+  const ExposedEntity * row = selectedExposure();
+  if (row == nullptr || row->entity.kind != RosEntityKind::Topic) {
+    return;
+  }
+  if (writableToggleNeedsHiding()) {
+    return;  // the button is grey; this keeps any other caller from closing the panel
+  }
+  const bool writable = !row->writable;
+  const RosEntityKind kind = row->entity.kind;
+  const std::string name = row->entity.name;
+  // The AR list keeps the selection by key, and the remade tool has another panel id.
+  const QString old_key = QString("tool:") + QString::fromStdString(row->panel_id);
+  const bool list_selected = ar_panel_list_ != nullptr && ar_panel_list_->selected_key() == old_key;
+  ArPanelListWidget * const copy_list = copyArPanelList();
+  const bool copy_list_selected = copy_list != nullptr && copy_list->selected_key() == old_key;
+  const QString error = reexposeWithWritable(*row, writable);
+  if (!error.isEmpty()) {
+    setLastError("AR tool: " + error);
+    appendLog(QString("AR TOOL: could not make %1 %2 - %3")
+      .arg(QString::fromStdString(name),
+        writable ? QStringLiteral("writable") : QStringLiteral("read-only"), error));
+  }
+  // The remade tool has another panel id: the selection follows the entity.
+  if (const ExposedEntity * made = exposures_.find(kind, name);
+    made != nullptr && exposure_list_ != nullptr)
+  {
+    const QString panel_id = QString::fromStdString(made->panel_id);
+    for (int i = 0; i < exposure_list_->count(); ++i) {
+      if (exposure_list_->item(i)->data(Qt::UserRole).toString() == panel_id) {
+        exposure_list_->setCurrentRow(i);
+        break;
+      }
+    }
+  }
+  refreshExposureWritableButton();
+  updateArPanelList();
+  if (list_selected || copy_list_selected) {
+    if (const ExposedEntity * made = exposures_.find(kind, name)) {
+      const QString new_key = QString("tool:") + QString::fromStdString(made->panel_id);
+      if (list_selected) {
+        ar_panel_list_->select_key(new_key);
+      }
+      if (copy_list_selected) {
+        copy_list->select_key(new_key);
+      }
+    }
+  }
+  // The flag is saved in the RViz config, so RViz is told that the config changed.
+  Q_EMIT configChanged();
 }
 
 void QarStreamingPanel::onReopenExposure()
@@ -8119,16 +10495,20 @@ QarStreamingPanel::ParkedToolPanelTakeOver QarStreamingPanel::takeOverParkedTool
   if (parked->second.pending_hide) {
     carryOutParkedHide(parked->second);
   }
-  // Pointed at the new page, sized and shown. If QarOS refuses a step the panel stays parked,
-  // nothing is closed or made, and the attempt is repeated later.
+  // Pointed at the new page, sized and shown (or kept hidden, for a tool that was hidden in AR).
+  // If QarOS refuses a step the panel stays parked, nothing is closed or made, and the attempt is
+  // repeated later.
   const std::shared_ptr<qar_ar_core::IQarUrlPanelAdapter> adapter = parked->second.adapter;
+  const bool stay_hidden = tool.restore_hidden;
   std::string step;
   if (!adapter->navigate(row.page_url)) {
     step = "navigate";
   } else if (!adapter->set_placement(placement)) {
     step = "set_placement";
-  } else if (!adapter->set_state(QAR_GUI_PANEL_STATE_VISIBLE)) {
-    step = "set_state(VISIBLE)";
+  } else if (!adapter->set_state(
+      stay_hidden ? QAR_GUI_PANEL_STATE_HIDDEN : QAR_GUI_PANEL_STATE_VISIBLE))
+  {
+    step = stay_hidden ? "set_state(HIDDEN)" : "set_state(VISIBLE)";
   }
   if (!step.empty()) {
     row.last_error = "could not take over the parked QarOS panel (" + step + "): " +
@@ -8140,14 +10520,19 @@ QarStreamingPanel::ParkedToolPanelTakeOver QarStreamingPanel::takeOverParkedTool
   tool.ar_panel = adapter;
   parked_tool_panels_.erase(parked);
   tool.placement = placement;
-  tool.ar_hidden = false;
+  tool.ar_hidden = stay_hidden;
+  tool.restore_hidden = false;
   tool.ar_panel_pending = false;
   tool.pending_logged = false;
   row.ar_panel_open = true;
   row.last_error.clear();
   refreshExposureList();
+  ar_control_dirty_ = true;
   const QString name = QString::fromStdString(tool.entity.name);
   appendLog(QString("AR TOOL: %1 reuses its parked QarOS panel (no new QarOS panel).").arg(name));
+  if (stay_hidden) {
+    appendLog(QString("AR TOOL: %1 stays hidden in AR, as it was.").arg(name));
+  }
   appendLog(QString("AR TOOL: %1 - %2.").arg(name, size_note));
   return ParkedToolPanelTakeOver::Done;
 }
@@ -8219,6 +10604,25 @@ void QarStreamingPanel::pushArToolData(
   }
 }
 
+void QarStreamingPanel::noteArToolClosedInAr(ArToolPanel & tool)
+{
+  // The flag is one atomic that the runtime's thread writes: no QarOS call here. Without a panel
+  // there is nothing to report, and the change of the panel itself refreshes the list.
+  const bool closed = tool.ar_panel && tool.ar_panel->closed_in_ar();
+  if (closed == tool.ar_closed_seen) {
+    return;
+  }
+  tool.ar_closed_seen = closed;
+  if (!tool.ar_panel) {
+    return;
+  }
+  const QString name = QString::fromStdString(tool.entity.name);
+  appendLog(closed ? QString("AR TOOL: %1 was closed in AR").arg(name)
+    : QString("AR TOOL: %1 is shown in AR again").arg(name));
+  updateArPanelList();
+  ar_control_dirty_ = true;
+}
+
 void QarStreamingPanel::tickArToolPanels()
 {
   // First, and whether or not a tool is left: the panels that retirements parked since the last
@@ -8250,6 +10654,7 @@ void QarStreamingPanel::tickArToolPanels()
 
   for (auto & tool : ar_tools_) {
     drainArToolResults(*tool);
+    noteArToolClosedInAr(*tool);
     if (tool->pending_hide) {
       hideArTool(*tool);
     }
@@ -8267,6 +10672,14 @@ void QarStreamingPanel::tickArToolPanels()
         appendLog(QString("AR TOOL: %1 is served but not in AR yet — %2")
           .arg(QString::fromStdString(tool->entity.name), error));
       }
+    }
+    if (tool->restore_hidden && tool->ar_panel && !tool->ar_panel_pending) {
+      // The RViz config says the tool was hidden in AR: its QarOS panel is hidden as soon as it
+      // exists; nothing is closed.
+      tool->restore_hidden = false;
+      appendLog(QString("AR TOOL: %1 is hidden in AR, as the RViz config says")
+        .arg(QString::fromStdString(tool->entity.name)));
+      hideArTool(*tool);
     }
     pushArToolData(*tool, now);
   }
@@ -8571,7 +10984,7 @@ QarStreamingPanel::VideoPanelStart QarStreamingPanel::startPendingVideoPanel(
   // Actual video, not a status form: the 15 Hz control-panel default would
   // visibly stutter a camera feed.
   options.max_fps = 30;
-  // Same placement rule onStreamSelectedPanel uses: no call asks QarOS where the operator
+  // Same placement rule streamPanelByKey uses: no call asks QarOS where the operator
   // is looking, only a render sender reports the viewer's pose (qar_ogre_adapter
   // docs/QAROS_INTEGRATION_NOTES.md, "Known SDK limitations"), so a fixed spot, stepped
   // sideways per already-streamed panel, is the best available choice.
@@ -8581,7 +10994,7 @@ QarStreamingPanel::VideoPanelStart QarStreamingPanel::startPendingVideoPanel(
   // no existing conversion — not the "straightforward" case, so this uses the
   // same fallback slot logic rather than inventing that conversion here.
   options.placement.pose.position =
-    to_seam(fixedPanelPosition(panel_slot_x(streamed_panels_.size()), -1.0f));
+    to_seam(fixedPanelPosition(panel_slot_x(streamed_panels_.size(), panelSlotStepM()), -1.0f));
   options.placement.pose.orientation = seam::Quaternion{0.0f, 0.0f, 0.0f, 1.0f};
   // The lower edge stays above the RViz ground. The widget has the aspect ratio of the video
   // now, so the height the manager gives the panel (its video inside the frame of QarOS) is the
@@ -8827,7 +11240,7 @@ void QarStreamingPanel::attachVideoRegions(const std::string & manager_key, QWid
   }
   if (!ros_node_) {
     // No ROS node yet to subscribe with. Not fatal: the next successful
-    // add_panel() for this dock ("Stop streaming", then "Stream panel to AR") retries.
+    // add_panel() for this dock ("Stop streaming", then "Stream to AR") retries.
     return;
   }
 
@@ -8914,7 +11327,7 @@ void QarStreamingPanel::maintainVideoRegions()
       // set_panel_region_source) is that a tombstoned stream's regions simply
       // stop matching and match again on revive, so the registration itself
       // is left alone here. Entries are KEPT (not erased) so the topic/
-      // display bookkeeping survives to the next "Stream panel to AR", which
+      // display bookkeeping survives to the next "Stream to AR", which
       // subscribes again (attachVideoRegions()).
       const QString what = panel_manager_->is_parked(key)
         ? QStringLiteral("parked") : QStringLiteral("closed");
@@ -9177,8 +11590,8 @@ void QarStreamingPanel::startSpatialGestureSource()
     appendLog("SPATIAL: no app volume in this session — AR pointer gestures are not subscribed.");
     return;
   }
-  auto source =
-    std::make_unique<qar_qar_adapter::QarCApiSpatialGestureSource>(qar_factory_->session());
+  auto source = std::make_unique<qar_qar_adapter::QarCApiSpatialGestureSource>(
+    qar_factory_->session(), qar_factory_->release_lane());
   if (!source->subscribe(volume)) {
     spatial_subscription_note_ = QString::fromStdString(source->last_error());
     appendLog(QString("SPATIAL: could not subscribe to AR pointer gestures — %1")
@@ -9298,6 +11711,9 @@ void QarStreamingPanel::refreshScenePlacement()
 
 void QarStreamingPanel::tickSpatialInteraction()
 {
+  // The topics of the ROS graph for the pick topics: at most every five seconds, and only while a
+  // mode is armed.
+  refreshPickGraphTopics(std::chrono::steady_clock::now(), false);
   // Hand whatever the runtime reported since the last tick to the same queue the
   // rest of the panel pushes into, so everything downstream sees one ordered
   // stream and one thread. Draining here rather than in the callback is what
@@ -9467,6 +11883,11 @@ void QarStreamingPanel::refreshSpatialUi()
   }
   const SpatialInteractionStatus status = spatial_.status();
   QString text = QString("Spatial: %1").arg(QString::fromUtf8(to_string(status.mode)));
+  if (status.mode != SpatialMode::Off) {
+    // The topic that a confirmed pick of this mode goes to.
+    text += QString(" -> %1").arg(
+      QString::fromStdString(spatial_.publish_config(status.mode).topic));
+  }
   if (!status.summary.empty()) {
     text += QString(" - %1").arg(QString::fromStdString(status.summary));
   } else if (status.mode != SpatialMode::Off) {
@@ -9486,6 +11907,7 @@ void QarStreamingPanel::refreshSpatialUi()
     spatial_.area_shape() == qar_ar_core::AreaShape::Polygon);
   spatial_target_combo_->setEnabled(armed);
   spatial_frame_edit_->setEnabled(armed);
+  refreshPickTopicCombo(false);
 }
 
 QString QarStreamingPanel::spatialCountersLine() const
@@ -9528,6 +11950,8 @@ QString QarStreamingPanel::spatialCountersLine() const
     .arg(static_cast<qulonglong>(
       in.ignored_mode_off + in.ignored_not_spatial + in.ignored_pending +
       in.ignored_by_session));
+  // How often the ROS graph was read for the pick topics: at most once in five seconds.
+  text += QString(" pick_graph_queries=%1").arg(static_cast<qulonglong>(pick_graph_queries_));
   // Its own number, not folded into ignored= above (of which it is a part): a
   // click the runtime resolved to NOTHING is the operator aiming at empty space,
   // and it must read as that rather than as a silent drop.
@@ -9587,6 +12011,9 @@ void QarStreamingPanel::onSpatialModeChanged(int index)
   if (mode == SpatialMode::Area) {
     spatial_.set_area_shape(shape);
   }
+  pick_topic_dropped_ = false;
+  // The options of the mode come from the graph as it is when the mode is armed.
+  refreshPickGraphTopics(std::chrono::steady_clock::now(), true);
   appendLog(QString("SPATIAL: mode = %1%2")
     .arg(
       QString::fromUtf8(to_string(mode)),
@@ -9629,6 +12056,7 @@ void QarStreamingPanel::onSpatialConfirm()
 QString QarStreamingPanel::confirmSpatialPick(std::string * published_topic)
 {
   const SpatialPublishRequest request = spatial_.confirm();
+  pick_topic_dropped_ = false;
   if (published_topic != nullptr) {
     *published_topic = request.topic;
   }
@@ -9643,6 +12071,7 @@ QString QarStreamingPanel::confirmSpatialPick(std::string * published_topic)
 void QarStreamingPanel::onSpatialCancel()
 {
   spatial_.cancel();
+  pick_topic_dropped_ = false;
   appendLog("SPATIAL: pick canceled");
   refreshSpatialUi();
 }
@@ -9653,6 +12082,298 @@ void QarStreamingPanel::onSpatialClosePolygon()
     setLastError("Close polygon: need at least three vertices in polygon area mode.");
   }
   refreshSpatialUi();
+}
+
+// ===========================================================================
+//  The topic a pick is published to
+// ===========================================================================
+//
+// The rules are in pick_topic_choice.hpp. The panel keeps the topic in force of a mode as an
+// override of the controller, reads the topics of the ROS graph (the graph cache of the node: no
+// QarOS call) at most every five seconds while a mode is armed, and writes the choice into the
+// "Pick Topics" setting.
+
+namespace
+{
+
+constexpr double kPickGraphPeriodSeconds = 5.0;
+constexpr SpatialMode kPickModes[] = {
+  SpatialMode::Point, SpatialMode::NavGoal, SpatialMode::InitialPose, SpatialMode::Area};
+
+std::string pickModeName(SpatialMode mode)
+{
+  return mode == SpatialMode::Off ? std::string("off") : std::string(pick_mode_word(mode));
+}
+
+}  // namespace
+
+void QarStreamingPanel::refreshPickGraphTopics(
+  std::chrono::steady_clock::time_point now, bool force)
+{
+  if (spatial_.mode() == SpatialMode::Off) {
+    return;
+  }
+  if (!force && pick_graph_last_.time_since_epoch().count() != 0 &&
+    std::chrono::duration<double>(now - pick_graph_last_).count() < kPickGraphPeriodSeconds)
+  {
+    return;
+  }
+  pick_graph_last_ = now;
+  ++pick_graph_queries_;
+  std::vector<GraphTopic> topics;
+  {
+    QAR_GUI_TIMED("pick_graph_query");
+    for (const RosGraphEntry & entry : queryRosGraph()) {
+      if (entry.kind != RosEntityKind::Topic) {
+        continue;
+      }
+      GraphTopic topic;
+      topic.name = entry.name.toStdString();
+      for (const QString & type : entry.types) {
+        topic.types.push_back(type.toStdString());
+      }
+      topics.push_back(std::move(topic));
+    }
+  }
+  if (topics == pick_graph_topics_) {
+    return;
+  }
+  pick_graph_topics_ = std::move(topics);
+
+  // A topic in force whose type the graph reports differently is not acceptable: its mode goes
+  // back to the conventional topic. One whose type is another of the mode's types takes that type.
+  bool saved_changed = false;
+  for (auto it = pick_topic_chosen_.begin(); it != pick_topic_chosen_.end();) {
+    const SpatialMode mode = it->first;
+    const std::string topic = it->second;
+    const std::string type = pick_type_for_topic(mode, topic, pick_graph_topics_);
+    std::string reason;
+    if (!pick_topic_acceptable(mode, topic, type, pick_graph_topics_, reason)) {
+      appendLog(
+        QString("SPATIAL: topic %1 refused for %2: %3")
+        .arg(
+          QString::fromStdString(printableText(topic, kMaxPickTopicBytes)),
+          QString::fromStdString(pickModeName(mode)), QString::fromStdString(reason)));
+      spatial_.clear_publish_override(mode);
+      if (mode == spatial_.mode() && spatial_.has_pending()) {
+        spatial_.cancel();
+        pick_topic_dropped_ = true;
+      }
+      it = pick_topic_chosen_.erase(it);
+      saved_changed = true;
+      continue;
+    }
+    SpatialPublishConfig config = spatial_.publish_config(mode);
+    if (config.type_name != type) {
+      config.type_name = type;
+      spatial_.set_publish_override(mode, config);
+      if (mode == spatial_.mode() && spatial_.has_pending()) {
+        spatial_.cancel();
+        pick_topic_dropped_ = true;
+      }
+      appendLog(
+        QString("SPATIAL: topic of %1 = %2 [%3] (graph)")
+        .arg(
+          QString::fromStdString(pickModeName(mode)),
+          QString::fromStdString(printableText(topic, kMaxPickTopicBytes)),
+          QString::fromStdString(type)));
+    }
+    ++it;
+  }
+  if (saved_changed) {
+    savePickTopics();
+  }
+  ar_control_dirty_ = true;
+  refreshSpatialUi();
+}
+
+std::vector<PickTopicOption> QarStreamingPanel::pickTopicOptionsFor(SpatialMode mode) const
+{
+  const auto configured = pick_topics_configured_.find(mode);
+  const auto chosen = pick_topic_chosen_.find(mode);
+  return pick_topic_options(
+    mode, configured != pick_topics_configured_.end() ? configured->second :
+    std::vector<std::string>(),
+    pick_graph_topics_, chosen != pick_topic_chosen_.end() ? chosen->second : std::string());
+}
+
+bool QarStreamingPanel::setPickTopic(
+  SpatialMode mode, const std::string & topic, PickTopicSource source, bool save,
+  std::string * out_reason)
+{
+  const std::string type = pick_type_for_topic(mode, topic, pick_graph_topics_);
+  std::string reason;
+  if (!pick_topic_acceptable(mode, topic, type, pick_graph_topics_, reason)) {
+    if (out_reason != nullptr) {
+      *out_reason = reason;
+    }
+    appendLog(
+      QString("SPATIAL: topic %1 refused for %2: %3")
+      .arg(
+        QString::fromStdString(printableText(topic, kMaxPickTopicBytes)),
+        QString::fromStdString(pickModeName(mode)), QString::fromStdString(reason)));
+    return false;
+  }
+  const SpatialPublishConfig current = spatial_.publish_config(mode);
+  if (current.topic == topic && current.type_name == type) {
+    return true;  // already in force: nothing changes and nothing is dropped
+  }
+
+  // A pick that waits was made for the topic of the page, so it goes with that topic.
+  bool dropped = false;
+  if (mode == spatial_.mode() && spatial_.has_pending()) {
+    spatial_.cancel();
+    dropped = true;
+  }
+  const SpatialPublishConfig conventional = default_publish_config(publish_target_for(mode));
+  if (topic == conventional.topic && type == conventional.type_name) {
+    spatial_.clear_publish_override(mode);
+    pick_topic_chosen_.erase(mode);
+  } else {
+    SpatialPublishConfig config = conventional;
+    config.target = SpatialPublishTarget::Custom;
+    config.topic = topic;
+    config.type_name = type;
+    spatial_.set_publish_override(mode, config);
+    pick_topic_chosen_[mode] = topic;
+  }
+  pick_topic_dropped_ = dropped;
+  appendLog(
+    QString("SPATIAL: topic of %1 = %2 [%3] (%4)")
+    .arg(
+      QString::fromStdString(pickModeName(mode)), QString::fromStdString(topic),
+      QString::fromStdString(type), QString::fromLatin1(to_string(source))));
+  if (save) {
+    savePickTopics();
+  }
+  ar_control_dirty_ = true;
+  refreshSpatialUi();
+  return true;
+}
+
+void QarStreamingPanel::applyPickTopicsSetting()
+{
+  // What an earlier read of the setting did is undone first: the setting is the whole truth.
+  for (const SpatialMode mode : kPickModes) {
+    spatial_.clear_publish_override(mode);
+  }
+  pick_topic_chosen_.clear();
+  pick_topic_dropped_ = false;
+
+  std::vector<std::string> warnings;
+  pick_topics_configured_ =
+    parse_pick_topics(setting_text(effective_settings_, settings_key::kPickTopics), warnings);
+  for (const std::string & warning : warnings) {
+    appendLog(QString("SETTINGS: %1").arg(QString::fromStdString(warning)));
+  }
+  // The first topic of a mode is the one in force; the graph is not known yet, so a name is
+  // judged by its form and the type of its mode, and judged again when the graph is read.
+  for (const auto & entry : pick_topics_configured_) {
+    if (!entry.second.empty()) {
+      setPickTopic(entry.first, entry.second.front(), PickTopicSource::Setting, false);
+    }
+  }
+}
+
+void QarStreamingPanel::savePickTopics()
+{
+  // The variable decides the setting: a choice made here holds for this RViz session only, and
+  // the operator's own value in the RViz config stays as it was.
+  if (!setting_edit_is_kept(effective_settings_, settings_key::kPickTopics)) {
+    const auto in_force = effective_settings_.find(settings_key::kPickTopics);
+    appendLog(
+      QString(
+        "SETTINGS: %1 is decided by the environment variable %2; the topic chosen holds for this "
+        "RViz session and is not written to the RViz config")
+      .arg(
+        QString::fromLatin1(settings_key::kPickTopics),
+        in_force != effective_settings_.end() ?
+        QString::fromStdString(in_force->second.env_name) : QString()));
+    return;
+  }
+  // A mode that holds a list of topics in the setting but publishes to its conventional topic
+  // writes that topic first, so that reading the setting does not mistake the list's first
+  // topic for the choice.
+  std::map<SpatialMode, std::string> chosen;
+  for (const SpatialMode mode : kPickModes) {
+    const auto found = pick_topic_chosen_.find(mode);
+    const auto listed = pick_topics_configured_.find(mode);
+    if (found != pick_topic_chosen_.end()) {
+      chosen[mode] = found->second;
+    } else if (listed != pick_topics_configured_.end() && !listed->second.empty()) {
+      chosen[mode] = default_publish_config(publish_target_for(mode)).topic;
+    }
+  }
+  onSettingEdited(
+    settings_key::kPickTopics,
+    QString::fromStdString(format_pick_topics(chosen, pick_topics_configured_)));
+}
+
+void QarStreamingPanel::refreshPickTopicCombo(bool force)
+{
+  if (spatial_topic_combo_ == nullptr) {
+    return;
+  }
+  const SpatialMode armed = spatial_.mode();
+  // While nothing is armed the row shows the topic of Point, greyed.
+  const SpatialMode mode = armed != SpatialMode::Off ? armed : SpatialMode::Point;
+  const std::vector<PickTopicOption> options = pickTopicOptionsFor(mode);
+  QLineEdit * edit = spatial_topic_combo_->lineEdit();
+  const bool typing = edit != nullptr && edit->hasFocus() && !force;
+  const QString typed = typing ? edit->text() : QString();
+
+  bool same = mode == pick_combo_mode_ && options.size() == pick_combo_options_.size();
+  for (std::size_t i = 0; same && i < options.size(); ++i) {
+    same = options[i].topic == pick_combo_options_[i].topic;
+  }
+  {
+    const QSignalBlocker blocker(spatial_topic_combo_);
+    if (!same) {
+      spatial_topic_combo_->clear();
+      for (const PickTopicOption & option : options) {
+        spatial_topic_combo_->addItem(QString::fromStdString(option.topic));
+      }
+      pick_combo_options_ = options;
+      pick_combo_mode_ = mode;
+    }
+    if (typing) {
+      edit->setText(typed);
+    } else {
+      const QString in_force = QString::fromStdString(spatial_.publish_config(mode).topic);
+      const int index = spatial_topic_combo_->findText(in_force, Qt::MatchExactly);
+      if (index >= 0) {
+        spatial_topic_combo_->setCurrentIndex(index);
+      } else {
+        spatial_topic_combo_->setEditText(in_force);
+      }
+    }
+  }
+  spatial_topic_combo_->setEnabled(
+    armed != SpatialMode::Off &&
+    setting_edit_is_kept(effective_settings_, settings_key::kPickTopics));
+}
+
+void QarStreamingPanel::onPickTopicEntered(const QString & text)
+{
+  const SpatialMode mode = spatial_.mode();
+  if (mode == SpatialMode::Off) {
+    refreshPickTopicCombo(true);
+    return;
+  }
+  const std::string topic = text.trimmed().toStdString();
+  PickTopicSource source = PickTopicSource::Typed;
+  for (const PickTopicOption & option : pickTopicOptionsFor(mode)) {
+    if (option.topic == topic) {
+      source = option.source;
+      break;
+    }
+  }
+  std::string reason;
+  if (!setPickTopic(mode, topic, source, true, &reason)) {
+    // The topic in force stays; the reason is the last error of the panel.
+    setLastError(QString::fromStdString(reason));
+    refreshPickTopicCombo(true);
+  }
 }
 
 // ===========================================================================
@@ -9725,9 +12446,35 @@ QString QarStreamingPanel::ensureArControlPage()
 
 void QarStreamingPanel::onArControlViewers(std::size_t count)
 {
+  constexpr double kRestartGapS = 2.0;
+  const std::size_t before = ar_control_viewers_;
+  const SteadyTime now = std::chrono::steady_clock::now();
   ar_control_viewers_ = count;
   ar_control_status_dirty_ = true;
   appendLog(QString("AR CONTROL PANEL: page viewers %1").arg(static_cast<qulonglong>(count)));
+  if (before > 0 && count == 0) {
+    ar_control_viewers_zero_at_ = now;
+    return;
+  }
+  if (before != 0 || count == 0) {
+    return;
+  }
+  // A page that connects again after a short gap is a reload or a dropped connection. A viewer
+  // that was away for longer, or a stream that came back from a stall in the meantime, is what a
+  // restarted Visualizer looks like.
+  const bool dropped = ar_control_viewers_zero_at_.time_since_epoch().count() != 0;
+  const double away_s =
+    dropped ? std::chrono::duration<double>(now - ar_control_viewers_zero_at_).count() : 0.0;
+  const bool stalled = ar_control_stall_at_zero_;
+  ar_control_viewers_zero_at_ = SteadyTime{};
+  ar_control_stall_at_zero_ = false;
+  if (stalled || away_s > kRestartGapS) {
+    requestArControlRecords(
+      stalled ? QStringLiteral("page viewers 0 -> %1 after a stream stall")
+        .arg(static_cast<qulonglong>(count)) :
+      QStringLiteral("page viewers 0 -> %1 after %2 s").arg(static_cast<qulonglong>(count))
+      .arg(away_s, 0, 'f', 1), true, now);
+  }
 }
 
 void QarStreamingPanel::onArControlViewport(const qar_web_panels::PanelViewportReport & report)
@@ -10140,6 +12887,58 @@ void QarStreamingPanel::onArControlEvent(
       return;
     }
 
+    case ControlPanelCommandKind::SetPickTopic: {
+      // The slots stand for the options that the last snapshot held, for the mode it held them for.
+      const SpatialMode mode = spatial_.mode();
+      if (mode == SpatialMode::Off) {
+        refuseArControl(session, event, "arm Point or Nav goal first");
+        return;
+      }
+      if (command.slot >= pick_page_options_.size() || command.slot >= kPickTopicSlots) {
+        refuseArControl(session, event, "no topic in this slot");
+        return;
+      }
+      if (mode != pick_page_mode_) {
+        refuseArControl(session, event, "the pick mode changed: choose the topic again");
+        return;
+      }
+      const PickTopicOption option = pick_page_options_[command.slot];
+      if (!command.on) {
+        // Off is not a choice: the switch of the topic in force stays on, and the page is told.
+        if (option.topic == spatial_.publish_config(mode).topic) {
+          ar_control_resync_ = true;
+          ar_control_dirty_ = true;
+        }
+        acceptArControl(session, event, "publishes to " + spatial_.publish_config(mode).topic);
+        return;
+      }
+      std::string reason;
+      if (!setPickTopic(mode, option.topic, option.source, true, &reason)) {
+        refuseArControl(session, event, reason);
+        return;
+      }
+      acceptArControl(session, event, "publishes to " + option.topic);
+      return;
+    }
+
+    case ControlPanelCommandKind::SetArCopySize: {
+      // The global setting, exactly as the desktop's Settings row sets it: the copies that have no
+      // choice of their own follow at once. A variable that decides it is refused.
+      if (!setting_edit_is_kept(effective_settings_, settings_key::kArCopySize)) {
+        const auto in_force = effective_settings_.find(settings_key::kArCopySize);
+        refuseArControl(
+          session, event,
+          "the size of the Qt panels is set by the environment variable " +
+          (in_force != effective_settings_.end() ? in_force->second.env_name : std::string()));
+        return;
+      }
+      onSettingEdited(
+        settings_key::kArCopySize, QString::fromLatin1(to_string(command.ar_copy_size)));
+      acceptArControl(
+        session, event, std::string("Qt panels: ") + to_string(command.ar_copy_size));
+      return;
+    }
+
     case ControlPanelCommandKind::None:
       break;
   }
@@ -10181,7 +12980,8 @@ void QarStreamingPanel::runArControlCommands(SteadyTime now)
   ar_control_dirty_ = true;
 }
 
-void QarStreamingPanel::runToolSwitch(const QueuedControlCommand & command, SteadyTime now)
+void QarStreamingPanel::runToolSwitch(
+  const QueuedControlCommand & command, SteadyTime now, bool from_page)
 {
   ArToolPanel * tool = findArTool(command.key);
   ExposedEntity * row = exposures_.find_by_panel_id(command.key);
@@ -10191,9 +12991,11 @@ void QarStreamingPanel::runToolSwitch(const QueuedControlCommand & command, Stea
   // Switching a tool on shows its QarOS panel and switching it off hides it; the exposure, the
   // page and the ROS entity stay either way, and nothing is closed. The QarOS call is made by
   // the render tick that follows (tickArToolPanels()). A tool whose panel is not made yet needs
-  // no request: the tick makes it.
+  // no request: the tick makes it. A panel the operator closed in AR is asked to be shown like a
+  // hidden one; if QarOS refuses, the refusal is reported the way a refused show always is.
   if (command.on) {
-    if (tool->ar_panel && tool->ar_hidden) {
+    tool->restore_hidden = false;  // the person's switch wins over the RViz config
+    if (tool->ar_panel && (tool->ar_hidden || tool->ar_panel->closed_in_ar())) {
       tool->pending_show = true;
       tool->pending_hide = false;
       appendLog(QString("AR TOOL: %1 will be shown again on the next tick.")
@@ -10206,6 +13008,9 @@ void QarStreamingPanel::runToolSwitch(const QueuedControlCommand & command, Stea
       .arg(QString::fromStdString(row->entity.name)));
   }
 
+  if (!from_page) {
+    return;
+  }
   // The page has already drawn the switch the way the operator turned it: remember it, and tell
   // the page the truth if the tool does not end up that way.
   control_toggles_.erase(
@@ -10381,6 +13186,17 @@ void QarStreamingPanel::tickArControlPlacement(SteadyTime now)
     }
     peers.push_back(peer);
   }
+  // A peer whose 3D sender is being made again still counts as present: it has no pose to place
+  // an instance by, but the instance it has stays shown.
+  if (!remade_stream_peers_.peers().empty()) {
+    remade_stream_peers_.keep_if_target_stays(
+      [this](const QarPeerId & id) {return targetStaysOnline(id);});
+    for (const QarPeerId & id : remade_stream_peers_.peers()) {
+      ControlPanelPeer peer;
+      peer.peer = id;
+      peers.push_back(peer);
+    }
+  }
 
   // An instance that is created without the pose of a viewer hangs from a fixed place as well.
   if (fixed_pose_mode_ == FixedPoseMode::Ground) {
@@ -10433,11 +13249,80 @@ qar_web_panels::UrlPanelSizeResult QarStreamingPanel::arControlPanelSize()
     ar_control_session_->model(), web_panel_server_->config().render.theme, sizing);
 }
 
+void QarStreamingPanel::requestArControlRecords(
+  const QString & reason, bool visualizer_restart, SteadyTime now)
+{
+  constexpr std::chrono::seconds kLeastBetweenReads(10);
+  QString note;
+  const bool reassert = environmentSwitch("QAR_AR_CONTROL_REASSERT", false, note);
+  bool announced = false;
+  for (ArControlInstance & instance : control_instances_) {
+    if (!instance.adapter || instance.adapter->pending() ||
+      (instance.record_asked_at.time_since_epoch().count() != 0 &&
+      now - instance.record_asked_at < kLeastBetweenReads))
+    {
+      continue;
+    }
+    if (visualizer_restart && !announced) {
+      announced = true;
+      appendLog(
+        QString("AR CONTROL PANEL: Visualizer restart suspected (%1); re-reading the panel "
+          "record").arg(reason));
+    }
+    instance.record_asked_at = now;
+    if (!instance.adapter->log_runtime_record()) {
+      continue;
+    }
+    if (reassert && visualizer_restart && instance.wanted_visible) {
+      // The pose again, then the panel off and on, in the order the owner runs the calls.
+      appendLog(
+        QString("AR CONTROL PANEL: instance '%1' placed again and hidden and shown again "
+          "(QAR_AR_CONTROL_REASSERT=on)").arg(QString::fromStdString(instance.key)));
+      instance.adapter->set_placement(instance.placement);
+      instance.adapter->set_state(QAR_GUI_PANEL_STATE_HIDDEN);
+      instance.adapter->set_state(QAR_GUI_PANEL_STATE_VISIBLE);
+    }
+  }
+}
+
+bool QarStreamingPanel::arControlWaitsForHiddenDisplays(SteadyTime now)
+{
+  constexpr std::chrono::seconds kLongestWait(4);
+  const bool queued = panel_manager_ && panel_manager_->has_panel(kHiddenDisplaysKey);
+  if (queued || !hiddenDisplaysStartWanted()) {
+    control_waits_for_copy_since_ = SteadyTime{};
+    return false;
+  }
+  if (control_waits_for_copy_since_.time_since_epoch().count() == 0) {
+    control_waits_for_copy_since_ = now;
+  }
+  if (now - control_waits_for_copy_since_ >= kLongestWait) {
+    if (!control_waits_for_copy_logged_) {
+      control_waits_for_copy_logged_ = true;
+      appendLog(
+        "AR CONTROL PANEL: the hidden Displays copy was not queued within 4 s; the AR control "
+        "panel is made without waiting for it.");
+    }
+    return false;
+  }
+  if (!control_waits_for_copy_logged_) {
+    control_waits_for_copy_logged_ = true;
+    appendLog(
+      "AR CONTROL PANEL: waits for the hidden Displays copy to be queued first (at most 4 s); "
+      "the owner makes the QarOS panels in the order they are queued.");
+  }
+  return true;
+}
+
 bool QarStreamingPanel::createArControlInstance(ArControlInstance & instance, SteadyTime now)
 {
   if (!sessionReadyForPanels() || !ar_control_session_ || !web_panel_server_) {
     instance.next_attempt = now + std::chrono::seconds(1);
     return false;  // no QarOS session yet: not a failure to report
+  }
+  if (arControlWaitsForHiddenDisplays(now)) {
+    instance.next_attempt = now + std::chrono::milliseconds(200);
+    return false;  // the copy of the Displays panel is queued first
   }
   ensureUrlPanelFactory();
 
@@ -10534,6 +13419,15 @@ void QarStreamingPanel::drainArControlResults(ArControlInstance & instance, Stea
       instance.show_asked = false;
     }
     if (result.ok) {
+      if (result.op == qar_ar_core::PanelOpResult::Op::Create) {
+        // A panel found again: its record in the runtime is what the next session of the
+        // Visualizer starts from. A new panel is not read: it has no earlier record, and the read
+        // is a QarOS query that delays the panels queued after it.
+        if (result.reattached) {
+          requestArControlRecords(
+            QStringLiteral("the AR control panel is found again"), false, now);
+        }
+      }
       continue;  // the success branch ran when the call was accepted
     }
     const std::string reason = result.error.empty() ? std::string("QarOS refused the request")
@@ -10829,6 +13723,7 @@ ControlPanelSnapshot QarStreamingPanel::controlPanelSnapshot()
   ControlPanelSnapshot snapshot;
   if (live_stream_mode_) {
     const bool joining = connection_phase_ == ConnectionPhase::Loading ||
+      connection_phase_ == ConnectionPhase::Lost ||
       connection_phase_ == ConnectionPhase::WaitingForApproval;
     if (joining) {
       snapshot.connection = ConnectionState::Connecting;
@@ -10869,6 +13764,23 @@ ControlPanelSnapshot QarStreamingPanel::controlPanelSnapshot()
   snapshot.pick_auto_confirm = pick.auto_confirm;
   snapshot.pick_summary = pick.summary;
   snapshot.pick_error = pick.error;
+  // The topic block: the topic in force of the armed mode and the options the switches stand for.
+  pick_page_mode_ = pick.mode;
+  pick_page_options_.clear();
+  if (pick.mode != SpatialMode::Off) {
+    const SpatialPublishConfig config = spatial_.publish_config(pick.mode);
+    snapshot.pick_topic = config.topic;
+    snapshot.pick_type = short_type(config.type_name);
+    pick_page_options_ = pickTopicOptionsFor(pick.mode);
+    snapshot.pick_topic_index = pick_page_options_.size();
+    for (std::size_t i = 0; i < pick_page_options_.size(); ++i) {
+      snapshot.pick_topic_options.push_back(pick_page_options_[i].topic);
+      if (pick_page_options_[i].topic == config.topic) {
+        snapshot.pick_topic_index = i;
+      }
+    }
+    snapshot.pick_topic_dropped = pick_topic_dropped_;
+  }
 
   // The panels: the desktop's list, in its order, each with where it stands as an AR panel.
   seam::PanelDiagnosticsSnapshot diagnostics;
@@ -10880,17 +13792,19 @@ ControlPanelSnapshot QarStreamingPanel::controlPanelSnapshot()
     panel.key = entry.key.toStdString();
     panel.name = entry.title.toStdString();
     panel.state = arStateOf(findPanelDiagnostics(diagnostics, panel.key));
+    panel.size_text = arCopyCaptionSize(panel.key);
     snapshot.panels.push_back(std::move(panel));
   }
+  snapshot.ar_copy_size = to_string(globalArCopySize());
   for (const ExposedEntity & row : exposures_.entries()) {
     ControlPanelToolEntry tool;
     tool.panel_id = row.panel_id;
     tool.name = row.entity.name;
     tool.in_ar = row.ar_panel_open;
-    // The tool's switch reads on while its QarOS panel exists and is shown.
+    // The tool's switch reads on while its QarOS panel exists and is shown, not closed in AR.
     const ArToolPanel * running = findArTool(row.panel_id);
     tool.on = row.ar_panel_open && running != nullptr && running->ar_panel &&
-      !running->ar_hidden;
+      !running->ar_hidden && !running->ar_panel->closed_in_ar();
     snapshot.tools.push_back(std::move(tool));
   }
   return snapshot;
@@ -10911,6 +13825,8 @@ void QarStreamingPanel::publishArControlState(SteadyTime now)
     return;
   }
   ar_control_snapshot_last_ = now;
+  // The list of panels the snapshot is about to hold is the one of this very look.
+  pollDockCensus(now, /*force=*/true);
   ar_control_dirty_ = false;
 
   const ControlPanelSnapshot snapshot = controlPanelSnapshot();

@@ -129,10 +129,26 @@ struct StableHints
 /// bar and the tallest page at its smallest (a page's list or log counts at its minimum, and a
 /// wrapped label at the height its text needs at the hint's width), with the frame of the tab
 /// widget added, capped at @p max_height. `minimum` is 200 pixels wide and the strip, the tab bar
-/// and 120 pixels high. Call it when every page exists and holds its first content.
+/// and 120 pixels high, unless @p minimum_height_cap is above 0: then `minimum` is as high as
+/// `hint`, but at most @p minimum_height_cap pixels (and never lower than the 120 pixel rule), so
+/// that a dock next to the panel cannot squeeze it below what its tallest page needs
+/// (@ref minimum_height_cap says how to choose the cap). Call it when
+/// every page exists and holds its first content.
 StableHints compute_stable_hints(
   const QTabWidget & tabs, const std::vector<QWidget *> & page_contents,
-  const QWidget & status_strip, int max_height = 700);
+  const QWidget & status_strip, int max_height = 700, int minimum_height_cap = 0);
+
+/// @brief The cap of the minimum height of a panel: 6/10 of the available height of its screen
+/// and 55/100 of the height of the top-level window that holds it, whichever is lower, but never
+/// below the 120 pixel page rule. A height of 0 or less means "unknown" and sets no limit; the
+/// result is 0 (no cap) when both are unknown. Pass it as @p minimum_height_cap of
+/// @ref compute_stable_hints or to @ref capped_minimum_height.
+int minimum_height_cap(int screen_height, int window_height);
+
+/// @brief The minimum height of a panel under @p cap: @p hint_height, but at most @p cap, and
+/// never lower than @p plain_minimum_height (the minimum without a cap). A @p cap of 0 or less
+/// gives @p plain_minimum_height.
+int capped_minimum_height(int plain_minimum_height, int hint_height, int cap);
 
 /// @brief The height of the tab bar of @p tabs, or 0 when it has none.
 int tab_bar_height(const QTabWidget & tabs);
@@ -499,7 +515,7 @@ std::string describe_start_fit(
 // ---------------------------------------------------------------------------------------------
 
 /// The number of lines of its own font the readout box holds.
-constexpr int kReadoutLines = 16;
+constexpr int kReadoutLines = 10;
 
 /// @brief The box and the label inside it.
 struct ReadoutBox

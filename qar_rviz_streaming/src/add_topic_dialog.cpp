@@ -18,6 +18,8 @@
 
 #include <utility>
 
+#include "qar_rviz_streaming/ar_tool_writability.hpp"
+
 namespace qar_rviz_streaming
 {
 namespace
@@ -87,30 +89,33 @@ AddTopicDialog::AddTopicDialog(
   tree_->setSelectionMode(QAbstractItemView::SingleSelection);
   layout->addWidget(tree_, 1);
 
-  expose_check_ = new QCheckBox(tr("Expose as a QAR AR tool"), this);
-  expose_check_->setToolTip(
-    tr("Generate a panel from the type and open it in the headset. A service or "
-    "an action can only be used this way — RViz has no display for either."));
   publish_check_ = new QCheckBox(tr("Allow publishing from AR"), this);
   publish_check_->setToolTip(
-    tr("The AR panel also gets an editable form and a Publish button. Off by "
-    "default: publishing to a topic is a robot command."));
-  layout->addWidget(expose_check_);
+    tr("Ticked: the AR tool has a form and a Publish button that asks for a second press. "
+    "The default comes from the type: a switch or velocity sliders can be used "
+    "without a keyboard, anything else is read-only. Publishing to a topic is a command "
+    "to a robot."));
   layout->addWidget(publish_check_);
 
   detail_label_ = new QLabel(this);
+  detail_label_->setObjectName("add_topic_detail");
   detail_label_->setWordWrap(true);
   layout->addWidget(detail_label_);
 
   buttons_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
   buttons_->button(QDialogButtonBox::Ok)->setText(tr("Add"));
+  buttons_->button(QDialogButtonBox::Ok)->setToolTip(
+    tr("Create the display (for a topic) and generate the AR tool."));
+  display_only_button_ = buttons_->addButton(tr("Add display only"), QDialogButtonBox::ActionRole);
+  display_only_button_->setToolTip(
+    tr("Create the display and pin the topic to the watch list; no AR tool is generated."));
   layout->addWidget(buttons_);
 
   connect(filter_edit_, &QLineEdit::textChanged, this, &AddTopicDialog::onFilterChanged);
   connect(refresh_button, &QPushButton::clicked, this, &AddTopicDialog::refreshRequested);
   connect(tree_, &QTreeWidget::itemSelectionChanged, this, &AddTopicDialog::onSelectionChanged);
   connect(tree_, &QTreeWidget::itemActivated, this, &AddTopicDialog::onItemActivated);
-  connect(expose_check_, &QCheckBox::toggled, this, &AddTopicDialog::onExposeToggled);
+  connect(display_only_button_, &QPushButton::clicked, this, &AddTopicDialog::onAddDisplayOnly);
   connect(publish_check_, &QCheckBox::toggled, this, [this](bool) { updateSelectionState(); });
   connect(buttons_, &QDialogButtonBox::accepted, this, &QDialog::accept);
   connect(buttons_, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -226,9 +231,15 @@ AddTopicDialog::onItemActivated(QTreeWidgetItem * item, int)
 }
 
 void
-AddTopicDialog::onExposeToggled(bool)
+AddTopicDialog::onAddDisplayOnly()
 {
+  display_only_ = true;
   updateSelectionState();
+  if (selection_.empty()) {
+    display_only_ = false;
+    return;
+  }
+  accept();
 }
 
 void
@@ -237,12 +248,14 @@ AddTopicDialog::updateSelectionState()
   const QTreeWidgetItem * current = tree_->currentItem();
   const QString name = current == nullptr ? QString() : current->data(0, kNameRole).toString();
 
-  const AddTopicSelection previous = selection_;
   selection_ = AddTopicSelection{};
   if (name.isEmpty()) {
+    // box_key_ is kept: a rebuild of the tree (filter, refresh) clears the selection for a
+    // moment and then selects the same entity again, and the box must survive that.
+    display_only_ = false;
     detail_label_->setText(tr("Select a topic, service or action."));
     buttons_->button(QDialogButtonBox::Ok)->setEnabled(false);
-    expose_check_->setEnabled(false);
+    display_only_button_->setEnabled(false);
     publish_check_->setEnabled(false);
     return;
   }
@@ -250,37 +263,47 @@ AddTopicDialog::updateSelectionState()
   selection_.kind = static_cast<RosEntityKind>(current->data(0, kKindRole).toInt());
   selection_.name = name;
   selection_.message_type = current->data(0, kTypeRole).toString();
-  if (selection_.kind == RosEntityKind::Topic) {
+  const bool is_topic = selection_.kind == RosEntityKind::Topic;
+  if (is_topic) {
     selection_.display_class = catalog_.best_class_for_message_type(selection_.message_type);
   }
 
-  // A service or an action has no RViz display and nothing to pin, so exposing
-  // it is the only thing "Add" can mean: forced on, and said so on the button.
-  const bool forced = selection_.kind != RosEntityKind::Topic;
-  QSignalBlocker block_expose(expose_check_);
-  QSignalBlocker block_publish(publish_check_);
-  expose_check_->setEnabled(!forced);
-  if (forced) {
-    expose_check_->setChecked(true);
-  } else if (previous.kind != selection_.kind) {
-    expose_check_->setChecked(false);  // back to a topic: a plain RViz display is the default
-  }
-  selection_.expose_as_ar_tool = expose_check_->isChecked();
+  // "Add" always generates the AR tool; only a topic can be added as a display alone.
+  const bool display_only = is_topic && display_only_;
+  selection_.expose_as_ar_tool = !display_only;
+  display_only_button_->setVisible(is_topic);
+  // An image topic has no other way into AR than its tool, but its display is the choice of
+  // "Add display only": it needs a display class that handles the type.
+  display_only_button_->setEnabled(
+    is_topic &&
+    !(is_image_message_type(selection_.message_type.toStdString()) &&
+    selection_.display_class.isEmpty()));
 
-  // Publishing only makes sense for an exposed topic; a service/action panel
-  // always has its own request/goal form.
-  const bool publishable =
-    selection_.kind == RosEntityKind::Topic && selection_.expose_as_ar_tool;
-  publish_check_->setEnabled(publishable);
-  if (!publishable) {
-    publish_check_->setChecked(false);
+  // The publish box starts in the state the rule of the type gives, whenever the SELECTION
+  // changes; a rebuild of the same selection keeps what the operator made of it. A service or
+  // an action has its own request or goal form, so the box is off and disabled for it.
+  const ArToolWriteDefault rule =
+    default_write_for(selection_.kind, selection_.message_type.toStdString());
+  const QString key = selectionKey(selection_.kind, name);
+  const bool selection_changed = key != box_key_;
+  box_key_ = key;
+  const bool publishable = is_topic && selection_.expose_as_ar_tool;
+  {
+    QSignalBlocker block_publish(publish_check_);
+    publish_check_->setEnabled(is_topic);
+    if (!is_topic) {
+      publish_check_->setChecked(false);
+    } else if (selection_changed) {
+      publish_check_->setChecked(rule.writable);
+    }
   }
   selection_.allow_publish = publishable && publish_check_->isChecked();
+  selection_.write_chosen = publishable && publish_check_->isChecked() != rule.writable;
 
   QStringList lines;
   lines << QString("%1 %2  [%3]")
     .arg(QString::fromLatin1(to_string(selection_.kind)), name, selection_.message_type);
-  if (selection_.kind == RosEntityKind::Topic) {
+  if (is_topic) {
     // The same pure decision onAddTopic acts on, so the summary never promises a
     // display the Add button will then not create.
     if (should_skip_display_for_exposed_topic(
@@ -296,9 +319,16 @@ AddTopicDialog::updateSelectionState()
     }
   }
   if (selection_.expose_as_ar_tool) {
-    lines << (selection_.allow_publish
-      ? tr("Will generate an AR panel with a publish form.")
-      : tr("Will generate a read-only AR panel."));
+    const QString reason = QString::fromStdString(rule.reason);
+    if (!is_topic) {
+      lines << tr("Will generate an AR tool with %1.").arg(reason);
+    } else if (selection_.allow_publish) {
+      lines << tr("Will generate an AR tool that can publish (Publish asks for a second press): %1")
+        .arg(selection_.write_chosen ? tr("%1 (changed from the default)").arg(reason) : reason);
+    } else {
+      lines << tr("Will generate a read-only AR tool: %1")
+        .arg(selection_.write_chosen ? tr("%1 (changed from the default)").arg(reason) : reason);
+    }
   }
   detail_label_->setText(lines.join('\n'));
   buttons_->button(QDialogButtonBox::Ok)->setEnabled(true);

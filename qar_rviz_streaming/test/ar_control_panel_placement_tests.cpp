@@ -630,6 +630,121 @@ TEST(ControlPanelPlacementPolicy, LeaveHidesReturnShows)
   EXPECT_FALSE(changes[0].visible);
 }
 
+// --- A stream that is made again does not hide the panels of its peer ------------------------
+
+TEST(RemadeStreamPeers, AClosedStreamOfATargetThatStaysIsListedUntilTheStreamIsOpenAgain)
+{
+  qar_rviz_streaming::RemadeStreamPeers remade;
+  remade.stream_closed(peer_id(1), true);
+  remade.stream_closed(peer_id(2), false);  // the target left: nothing to keep
+  ASSERT_EQ(remade.peers().size(), 1u);
+  EXPECT_EQ(control_panel_instance_key(remade.peers()[0]), control_panel_instance_key(peer_id(1)));
+
+  remade.stream_closed(peer_id(1), true);  // listed once
+  EXPECT_EQ(remade.peers().size(), 1u);
+
+  remade.stream_opened(peer_id(1));
+  EXPECT_TRUE(remade.peers().empty());
+}
+
+TEST(RemadeStreamPeers, ATargetThatLeavesWhileItsStreamIsMadeAgainIsDropped)
+{
+  qar_rviz_streaming::RemadeStreamPeers remade;
+  remade.stream_closed(peer_id(1), true);
+  remade.stream_closed(peer_id(2), true);
+  remade.keep_if_target_stays([](const QarPeerId & id) {return id.data[0] == 2;});
+  ASSERT_EQ(remade.peers().size(), 1u);
+  EXPECT_EQ(remade.peers()[0].data[0], 2);
+  remade.clear();
+  EXPECT_TRUE(remade.peers().empty());
+}
+
+TEST(RemadeStreamPeers, TheTargetOfASenderHeldForAHubRestartIsPresumedToStay)
+{
+  using qar_rviz_streaming::target_stays_for_panels;
+  EXPECT_TRUE(target_stays_for_panels(true, false)) << "the Hub is gone: the list is its old one";
+  EXPECT_TRUE(target_stays_for_panels(true, true));
+  EXPECT_TRUE(target_stays_for_panels(false, true));
+  EXPECT_FALSE(target_stays_for_panels(false, false));
+}
+
+TEST(ControlPanelPlacementPolicy, AHubRestartKeepsTheInstanceAndATargetThatDoesNotReturnHidesIt)
+{
+  // The Hub process ends: the 3D sender of the peer is released, the owner's target list shows
+  // the target offline for a while. The instance stays shown until the new Hub reports.
+  ControlPanelPlacementPolicy policy;
+  policy.session_started(0.0);
+  ASSERT_EQ(policy.tick(1.0, {peer(1, true)}).size(), 1u);
+  EXPECT_TRUE(policy.take_visibility_changes().empty());
+
+  qar_rviz_streaming::RemadeStreamPeers remade;
+  bool held = true;
+  bool online = false;
+  const auto stays = [&held, &online](const QarPeerId &) {
+      return qar_rviz_streaming::target_stays_for_panels(held, online);
+    };
+  remade.stream_closed(peer_id(1), stays(peer_id(1)));
+  ASSERT_EQ(remade.peers().size(), 1u);
+  for (double t = 2.0; t < 30.0; t += 2.0) {
+    remade.keep_if_target_stays(stays);
+    std::vector<ControlPanelPeer> peers;
+    for (const QarPeerId & id : remade.peers()) {
+      ControlPanelPeer entry;
+      entry.peer = id;
+      peers.push_back(entry);
+    }
+    EXPECT_TRUE(policy.tick(t, peers).empty());
+    EXPECT_TRUE(policy.take_visibility_changes().empty()) << "at " << t;
+  }
+
+  // The new Hub runs and the target is not among its online targets: the instance is hidden.
+  held = false;
+  remade.keep_if_target_stays(stays);
+  EXPECT_TRUE(remade.peers().empty());
+  EXPECT_TRUE(policy.tick(31.0, {}).empty());
+  const std::vector<ControlPanelVisibilityChange> changes = policy.take_visibility_changes();
+  ASSERT_EQ(changes.size(), 1u);
+  EXPECT_FALSE(changes[0].visible);
+}
+
+TEST(ControlPanelPlacementPolicy, ARecycledStreamKeepsItsInstanceShownAndATargetThatLeavesHidesIt)
+{
+  // The panel lists a peer whose 3D sender is made again next to the peers that have a stream
+  // (without a pose). The instance of the peer stays shown across the gap.
+  ControlPanelPlacementPolicy policy;
+  policy.session_started(0.0);
+  ASSERT_EQ(policy.tick(1.0, {peer(1, true)}).size(), 1u);
+  EXPECT_TRUE(policy.take_visibility_changes().empty());
+
+  qar_rviz_streaming::RemadeStreamPeers remade;
+  // The recycle: the stream is destroyed and a new one follows.
+  remade.stream_closed(peer_id(1), true);
+  for (double t = 2.0; t < 300.0; t += 10.0) {
+    std::vector<ControlPanelPeer> peers;
+    for (const QarPeerId & id : remade.peers()) {
+      ControlPanelPeer entry;
+      entry.peer = id;
+      peers.push_back(entry);
+    }
+    EXPECT_TRUE(policy.tick(t, peers).empty());
+    EXPECT_TRUE(policy.take_visibility_changes().empty()) << "at " << t;
+  }
+
+  // The new stream opens: still no change, and no second instance.
+  remade.stream_opened(peer_id(1));
+  EXPECT_TRUE(policy.tick(301.0, {peer(1, false)}).empty());
+  EXPECT_TRUE(policy.take_visibility_changes().empty());
+
+  // Another close, but the target leaves: only now the instance is hidden.
+  remade.stream_closed(peer_id(1), true);
+  EXPECT_EQ(remade.peers().size(), 1u);
+  remade.keep_if_target_stays([](const QarPeerId &) {return false;});
+  EXPECT_TRUE(policy.tick(303.0, {}).empty());
+  const std::vector<ControlPanelVisibilityChange> changes = policy.take_visibility_changes();
+  ASSERT_EQ(changes.size(), 1u);
+  EXPECT_FALSE(changes[0].visible);
+}
+
 // --- The height of the fallback pose follows the choice of the panel ------------------------
 
 TEST(ControlPanelFallback, TheTopEdgeIsAParameterAndTheDefaultIsTheFixedHeight)
