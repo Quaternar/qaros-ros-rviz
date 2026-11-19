@@ -4,22 +4,22 @@ qar_rviz_plugin 0.2.1 streams RViz2 into QarOS. A panel inside RViz2 joins the Q
 
 ## TL;DR
 
-You need a Windows 11 machine with the toolchain, Qt, ROS 2 with its repairs (on Windows the Humble binary distribution, see [Installation](docs/INSTALL.md#ros-2-humble-for-windows)) and the variables of the layout ([Installation](docs/INSTALL.md) walks through all of it), and QAROS installed on this PC. Build and install the two libraries first. They do not depend on each other, so the order does not matter:
+You need a Windows 11 machine with the toolchain, Qt, ROS 2 with its repairs (on Windows the Humble binary distribution, see [Installation](docs/INSTALL.md#ros-2-humble-for-windows)) and the variables of the layout ([Installation](docs/INSTALL.md) walks through all of it), and QAROS installed on this PC. Build and install the two libraries first. They do not depend on each other, so the order does not matter. Each clone brings its submodule `external/qaros` (`--recurse-submodules`; in an existing clone `git submodule update --init`):
 
 ```powershell
-git clone https://github.com/Quaternar/qaros-ogre "$env:QAR_ROOT\src\qar_ogre_adapter"
+git clone --recurse-submodules https://github.com/Quaternar/qaros-ogre "$env:QAR_ROOT\src\qar_ogre_adapter"
 Set-Location "$env:QAR_ROOT\src\qar_ogre_adapter"
 cmake --preset vs2019-x64
 cmake --build --preset vs2019-x64
 cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFIX
-git clone https://github.com/Quaternar/qaros-qt "$env:QAR_ROOT\src\qar_qt_streaming"
+git clone --recurse-submodules https://github.com/Quaternar/qaros-qt "$env:QAR_ROOT\src\qar_qt_streaming"
 Set-Location "$env:QAR_ROOT\src\qar_qt_streaming"
 cmake --preset vs2019-x64
 cmake --build --preset vs2019-x64
 cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFIX
 ```
 
-Then clone this repository, build and install the plugin, check the launch configuration and start RViz2:
+Then clone this repository with its submodule `external/qaros`, which holds the QarOS headers (`--recurse-submodules`, or `git submodule update --init` in an existing clone), build and install the plugin, check the launch configuration and start RViz2:
 
 ```powershell
 git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz "$env:QAR_ROOT\src\qar_rviz_plugin"
@@ -38,10 +38,9 @@ Start QAROS from the Start menu, open a Visualizer window from it, and click `Ad
 .\scripts\run_live_rviz_stream_real.ps1 -Confirm
 ```
 
-In RViz2 press `"Connect to QarOS"` on the tab `Connection` of the panel `"Qar Streaming"`. The first time, QAROS asks in a window of its own whether `rviz2` may join: click Allow in the prompt of the QAROS Hub. The scene of RViz2 then appears in the Visualizer. The plugin always joins the Hub of this PC as a local app. To reach the Hub of another PC, make the Hub of this PC a member of it; the plugin still joins the Hub of its own PC ([Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/)).
+In RViz2 the panel presses `"Connect to QarOS"` by itself when it has loaded, because the launcher sets `QAR_PANEL_AUTO_CONNECT` to 1; press it yourself on the tab `Connection` of the panel `"Qar Streaming"` if it did not. The first time, QAROS asks in a window of its own whether `rviz2` may join: click Allow in the prompt of the QAROS Hub. The scene of RViz2 then appears in the Visualizer. The panel joins the Hub of this PC and has no pairing code to type; [Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/) describes the Visualizer side of the join.
 
 The steps from a clean machine, with every output, are in [Quick start](docs/QUICKSTART.md); the details of each step are in the documents of the [Documentation](#documentation) table, and the web documentation at <https://docs.quaternar.com/> describes the stack in the context of QAROS: [Ogre and Qt in RViz](https://docs.quaternar.com/docs/next/developer-guide/ogre-qt-rviz/), [Ogre streaming](https://docs.quaternar.com/docs/next/developer-guide/ogre-streaming/), [Qt AR panels](https://docs.quaternar.com/docs/next/developer-guide/qt-ar-panels/), [SDK limits](https://docs.quaternar.com/docs/next/developer-guide/sdk-limits/) and [the RViz2 plugin](https://docs.quaternar.com/docs/next/operator-guide/rviz2-plugin/). The onboarding itself is described by the vendor in [Onboarding and sessions](https://docs.quaternar.com/docs/next/developer-guide/onboarding-and-sessions/), [Source applications](https://docs.quaternar.com/docs/next/operator-guide/source-applications/) and [Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/).
-
 
 ## Who this is for
 
@@ -65,19 +64,19 @@ Everything that is not QarOS is installed from a fresh Windows 11 machine, step 
 - **Picking in AR.** The pointer of the headset publishes a point, a navigation goal, an initial pose or an area on the topics of the tools of RViz2.
 - **Two launchers and an offline preview.** `scripts\run_live_rviz_stream_real.ps1` starts RViz2 with the live panel and without `-Confirm` only prints what it would do; `scripts\run_rviz_with_plugin.ps1` starts an offline preview with simulated peers.
 - **Three web libraries.** `qar_ui_model`, `qar_web_panels` and `qar_ros_ui` turn a UI model into a page that QarOS opens as a URL panel, serve it and connect it to the ROS 2 graph; a program of your own can use them without RViz, as the two examples do.
-- **Known limitations.** The code that calls the real QAROS library is tested against a fake of the C API, and the live checks with the installed QAROS covered the join to the Hub of this PC, the scene, the AR panels and the dialogs; the answers Deny and no answer, a stopped Hub, invitations and a session with a headset have not been run in a live session. [What the live sessions showed](docs/VERIFICATION.md#what-the-live-sessions-showed) lists the evidence, and [SDK compatibility](docs/SDK_COMPATIBILITY.md#known-sdk-limitations) what the SDK does not document.
+- **Known limitations.** The code that calls the real QAROS library is tested against a fake of the C API, and the live checks with the installed QAROS covered the join to the Hub of this PC, the answers Deny and no answer, a Hub that was quit or ended, the scene, the AR panels and their dialogs, the enlarged AR copies of the Qt panels, the panel switches, the pick topic and the AR state in the RViz configuration; a suspended Hub, invitations and a session with a headset have not been run in a live session. [What the live sessions showed](docs/VERIFICATION.md#what-the-live-sessions-showed) lists the evidence, and [SDK compatibility](docs/SDK_COMPATIBILITY.md#known-sdk-limitations) what the SDK does not document.
 
 Each feature is described in [Feature details](docs/ARCHITECTURE.md#feature-details).
 
 ## Where this fits
 
-This repository is one of three that together stream an Ogre scene, Qt widgets, web pages and RViz into QarOS. Each repository has its own version, the file `VERSION` at its root, which is 0.2.1 in all three for this documentation; a repository asks for the same minor version of the repositories it builds on, so the three have to be at matching minor versions. What changed in each version is in its `CHANGELOG.md`. The table lists the three in the order in which they are installed: `qar_ogre_adapter` and `qar_qt_streaming` are independent of each other, and `qar_rviz_plugin` comes last because it builds on both.
+This repository is one of three that together stream an Ogre scene, Qt widgets, web pages and RViz into QarOS. Each repository has its own version, the file `VERSION` at its root, and releases on its own; a repository asks for the same minor version of the repositories it builds on, so the three have to be at matching minor versions. What changed in each version is in its `CHANGELOG.md`. The table lists the three in the order in which they are installed: `qar_ogre_adapter` and `qar_qt_streaming` are independent of each other, and `qar_rviz_plugin` comes last because it builds on both.
 
-| Repository | Version | What it provides | Depends on | Also needs |
-|---|---|---|---|---|
-| qar_ogre_adapter | 0.2.1 | The QarOS integration layer: renders an Ogre scene for each eye and streams it to QarOS; the adapter for the QarOS C API | none | The ROS 2 distribution, for Ogre only |
-| qar_qt_streaming | 0.2.1 | Qt widgets as QarOS AR GUI panels, as a Qt library that needs no ROS 2, no RViz and no Ogre | none | Qt 5.15.2 or Qt 6.5 and newer, the QarOS C++ SDK headers |
-| **qar_rviz_plugin** (this repository) | 0.2.1 | The RViz2 plugin that streams RViz into QarOS, and web AR panels from a UI model and from the ROS 2 graph | qar_ogre_adapter, qar_qt_streaming | The ROS 2 distribution with its repairs, Qt 5.15.2, colcon |
+| Repository | What it provides | Depends on | Also needs |
+|---|---|---|---|
+| qar_ogre_adapter | The QarOS integration layer: renders an Ogre scene for each eye and streams it to QarOS; the adapter for the QarOS C API; the QarOS headers of the qaros submodule | none | The ROS 2 distribution, for Ogre only |
+| qar_qt_streaming | Qt widgets as QarOS AR GUI panels, as a Qt library that needs no ROS 2, no RViz and no Ogre | none | Qt 5.15.2 or Qt 6.5 and newer, the QarOS C++ SDK headers (the submodule `external/qaros`) |
+| **qar_rviz_plugin** (this repository) | The RViz2 plugin that streams RViz into QarOS, and web AR panels from a UI model and from the ROS 2 graph | qar_ogre_adapter, qar_qt_streaming | The ROS 2 distribution with its repairs, Qt 5.15.2, colcon |
 
 The installation document of each repository installs the repositories it depends on, with the commands for each, so you can start from any of them.
 
