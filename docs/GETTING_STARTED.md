@@ -74,34 +74,25 @@ $ros = '.\build\vs2019-x64\examples\ros_topic_panel_example\RelWithDebInfo\qar_r
 ```
 
 ```text
-Usage: qar_web_panel_example [--local | --hub HOST:PORT [--code CODE] | --forget | --no-qaros]
                              [--connect-only] [--serve-seconds N] [--loopback] [--port N]
   --local            join the QAROS Hub of this PC (the default). QAROS asks once to allow
                      this program, and again after each rebuild of it: click Allow in the
                      QAROS window
-  --hub H:P          join the Hub of another PC at host H and onboarding port P (the port is
-                     shown with the pairing code in the Visualizer of that PC)
-  --code CODE        the pairing code that the Hub of that PC shows for a new device
-                     (see the QAROS documentation); it works once. Only the first join
-                     needs it: the pairing is stored for the next start
-  --forget           erase the stored pairing with another PC's Hub and exit
+                     The Hub of another PC is reached by making the Hub of this PC a
+                     member of it
   --no-qaros         do not join QAROS: only serve the page, for a desktop browser
   --connect-only     join QAROS, print the runtime, the mode, this program's peer and the
                      targets, and exit; no server, no panel
   --serve-seconds N  serve the panel for N seconds, then exit (default 60)
   --loopback         listen on 127.0.0.1 only, so that no other machine can connect (default: all interfaces)
   --port N           TCP port of the panel server (default 0: the operating system picks a free port)
-Usage: qar_ros_topic_panel_example [--local | --hub HOST:PORT [--code CODE] | --forget | --no-qaros]
+Usage: qar_ros_topic_panel_example [--local | --no-qaros]
                                    [--connect-only] [--serve-seconds N] [--loopback]
   --local            join the QAROS Hub of this PC (the default). QAROS asks once to allow
                      this program, and again after each rebuild of it: click Allow in the
                      QAROS window
-  --hub H:P          join the Hub of another PC at host H and onboarding port P (the port is
-                     shown with the pairing code in the Visualizer of that PC)
-  --code CODE        the pairing code that the Hub of that PC shows for a new device
-                     (see the QAROS documentation); it works once. Only the first join
-                     needs it: the pairing is stored for the next start
-  --forget           erase the stored pairing with another PC's Hub and exit
+                     The Hub of another PC is reached by making the Hub of this PC a
+                     member of it
   --no-qaros         do not join QAROS: only serve the page, for a desktop browser
   --connect-only     join QAROS, print the runtime, the mode, this program's peer and the
                      targets, and exit; no node, no server, no panel
@@ -185,13 +176,17 @@ The launcher has two modes. Without `-Confirm` it only prints the configuration 
 .\scripts\run_live_rviz_stream_real.ps1
 ```
 ```text
+
+...
 === RViz -> QAROS Hub live stream ===
   scene            : C:\qar\install\share\qar_rviz_streaming\config\test_scenes\scene3_grid_marker.rviz
   QAROS install    : C:\Program Files\Quaternar\QAROS (from registry)
   QAROS_RUNTIME_DIR        = (not set: the plugin uses the installed QAROS)
   QAR_PANEL_LIVE_STREAM    = 1
+  QAR_PANEL_AUTO_CONNECT   = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = (none - pass -InvitePeers to invite devices)
   QAR_PANEL_AR_COPY_SCALE  = (not set: the saved value or 2.00 - pass -ArCopyScale 1.0..3.0 to change it)
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
@@ -220,17 +215,18 @@ The launcher has two modes. Without `-Confirm` it only prints the configuration 
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
                              no Hub service runs, so these values can be left over from an earlier start
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   No Hub service runs now: the plugin will start QAROS when you press Connect.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
 ...
   GPU memory (nvidia-smi)  : NVIDIA GeForce RTX 4080 Laptop GPU: 0 MiB used of 12282 MiB, 0 % busy
-  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145254.checks.txt (written with -Confirm)
+  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184424.checks.txt (written with -Confirm)
   QAR log dir              : C:\Users\<user>\AppData\Local\Temp\quaternar (no *.log over 256 MB)
-  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145254.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
-  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261113_145254.launcher_<name>
-  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261113_145254.<report> (no .dmp files)
+  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184424.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
+  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261119_184424.launcher_<name>
+  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261119_184424.<report> (no .dmp files)
   VC++ runtime (rviz2 dir) : 14.50.35719.0 (ok, needs 14.40 or newer)
   tinyxml.dll (rviz2 dir)  : present
 
@@ -559,13 +555,17 @@ You can also invite devices when the plugin has joined the Hub, with the launche
 .\scripts\run_live_rviz_stream_real.ps1 -InvitePeers hololens:HOLOLENS-A2B3
 ```
 ```text
+
+...
 === RViz -> QAROS Hub live stream ===
   scene            : C:\qar\install\share\qar_rviz_streaming\config\test_scenes\scene3_grid_marker.rviz
   QAROS install    : C:\Program Files\Quaternar\QAROS (from registry)
   QAROS_RUNTIME_DIR        = (not set: the plugin uses the installed QAROS)
   QAR_PANEL_LIVE_STREAM    = 1
+  QAR_PANEL_AUTO_CONNECT   = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = hololens:HOLOLENS-A2B3
   QAR_PANEL_AR_COPY_SCALE  = (not set: the saved value or 2.00 - pass -ArCopyScale 1.0..3.0 to change it)
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
@@ -594,17 +594,18 @@ You can also invite devices when the plugin has joined the Hub, with the launche
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
                              no Hub service runs, so these values can be left over from an earlier start
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   No Hub service runs now: the plugin will start QAROS when you press Connect.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
 ...
   GPU memory (nvidia-smi)  : NVIDIA GeForce RTX 4080 Laptop GPU: 0 MiB used of 12282 MiB, 0 % busy
-  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145322.checks.txt (written with -Confirm)
+  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184428.checks.txt (written with -Confirm)
   QAR log dir              : C:\Users\<user>\AppData\Local\Temp\quaternar (no *.log over 256 MB)
-  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145322.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
-  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261113_145322.launcher_<name>
-  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261113_145322.<report> (no .dmp files)
+  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184428.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
+  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261119_184428.launcher_<name>
+  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261119_184428.<report> (no .dmp files)
   VC++ runtime (rviz2 dir) : 14.50.35719.0 (ok, needs 14.40 or newer)
   tinyxml.dll (rviz2 dir)  : present
 

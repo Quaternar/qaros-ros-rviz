@@ -35,6 +35,9 @@ git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz "$env
 ```text
 Cloning into 'C:\qar\src\qar_rviz_plugin'...
 done.
+Submodule 'external/qaros' (https://github.com/Quaternar/qaros.git) registered for path 'external/qaros'
+Cloning into 'C:/qar/src/qar_rviz_plugin/external/qaros'...
+Submodule path 'external/qaros': checked out '0f2cb2eb8dc89a2d52deb7148ce3ff52e595bd8e'
 ```
 
 ```powershell
@@ -206,6 +209,9 @@ git clone --recurse-submodules https://github.com/Quaternar/qaros-ogre "$env:QAR
 ```text
 Cloning into 'C:\qar\src\qar_ogre_adapter'...
 done.
+Submodule 'external/qaros' (https://github.com/Quaternar/qaros.git) registered for path 'external/qaros'
+Cloning into 'C:/qar/src/qar_ogre_adapter/external/qaros'...
+Submodule path 'external/qaros': checked out '0f2cb2eb8dc89a2d52deb7148ce3ff52e595bd8e'
 ```
 
 ```powershell
@@ -226,12 +232,13 @@ Preset CMake variables:
 -- The CXX compiler identification is MSVC 19.29.30151.0
 ...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
+-- qaros headers: C:/qar/src/qar_ogre_adapter/external/qaros
 -- Found rviz_ogre_vendor: 11.2.25 (C:/qar/deps/ros2_humble/ros2-windows/share/rviz_ogre_vendor/cmake)
 ...
 -- qar_qar_adapter: QarOS SDK backend, DYNAMIC loading of C:\Program Files\Quaternar\QAROS/bin/qar-streaming-c.dll (no import lib linked)
 ...
--- Configuring done (12.8s)
--- Generating done (0.3s)
+-- Configuring done (14.8s)
+-- Generating done (0.8s)
 -- Build files have been written to: C:/qar/src/qar_ogre_adapter/build/vs2019-x64
 ```
 
@@ -246,15 +253,15 @@ cmake --build --preset vs2019-x64
   qar_ogre_streaming.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\RelWithDebInfo\qar_ogre_streaming.lib
 ...
   qar_qar_adapter_render.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\RelWithDebInfo\qar_qar_adapter_render.lib
-...
   qar_ogre_standalone_streaming_sample.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\ogre_standalone_streaming_sample\RelWithDebInfo\qar_ogre_standalone_streaming_sample.exe
 ...
   qar_ogre_live_stream_example.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\qaros_live_stream\RelWithDebInfo\qar_ogre_live_stream_example.exe
 ...
   qar_ogre_adapter_doc_snippets.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\docs\snippets\RelWithDebInfo\qar_ogre_adapter_doc_snippets.exe
 ...
-  qar_qar_adapter_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\test\RelWithDebInfo\qar_qar_adapter_tests.exe
   qar_ogre_streaming_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\test\RelWithDebInfo\qar_ogre_streaming_tests.exe
+...
+  qar_qar_adapter_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\test\RelWithDebInfo\qar_qar_adapter_tests.exe
 ```
 
 ```powershell
@@ -266,8 +273,12 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/lib/qar_qar_adapter_capi.lib
 ...
 -- Installing: C:\qar\install/include/qar_qar_adapter/target_rule.hpp
+...
 -- Installing: C:\qar\install/include/qar_streaming.h
--- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE.qar_streaming_header
+...
+-- Installing: C:\qar\install/include/qar_streaming_cpp/Runtime.hpp
+...
+-- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE.qaros
 -- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterTargets.cmake
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterTargets-relwithdebinfo.cmake
@@ -283,6 +294,9 @@ git clone --recurse-submodules https://github.com/Quaternar/qaros-qt "$env:QAR_R
 ```text
 Cloning into 'C:\qar\src\qar_qt_streaming'...
 done.
+Submodule 'external/qaros' (https://github.com/Quaternar/qaros.git) registered for path 'external/qaros'
+Cloning into 'C:/qar/src/qar_qt_streaming/external/qaros'...
+Submodule path 'external/qaros': checked out '0f2cb2eb8dc89a2d52deb7148ce3ff52e595bd8e'
 ```
 
 ```powershell
@@ -297,12 +311,11 @@ Preset CMake variables:
 
   QAR_BUILD_TESTS="ON"
   QAR_QT_ROOT="C:\qar\deps\Qt\5.15.2\msvc2019_64"
-  QAR_SDK_ROOT="C:\Program Files\Quaternar\QAROS"
 ...
 -- Qt 5.15.2: C:/qar/deps/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5
--- QarOS SDK headers: third_party/
+-- QarOS SDK headers: QarOS repository C:/qar/src/qar_qt_streaming/external/qaros
 ...
--- Configuring done (12.5s)
+-- Configuring done (10.5s)
 -- Generating done (0.3s)
 -- Build files have been written to: C:/qar/src/qar_qt_streaming/build/vs2019-x64
 ```
@@ -315,8 +328,8 @@ cmake --build --preset vs2019-x64
 ...
   qar_qt_streaming_qaros.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\RelWithDebInfo\qar_qt_streaming_qaros.lib
 ...
-  qar_qt_streaming_seam_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\test\RelWithDebInfo\qar_qt_streaming_seam_tests.exe
   qar_qt_streaming_qaros_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\test\RelWithDebInfo\qar_qt_streaming_qaros_tests.exe
+  qar_qt_streaming_seam_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\test\RelWithDebInfo\qar_qt_streaming_seam_tests.exe
 ...
   qar_qt_streaming.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\RelWithDebInfo\qar_qt_streaming.lib
 ...
@@ -334,7 +347,7 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/lib/qar_qt_streaming_seam.lib
 -- Installing: C:\qar\install/lib/qar_qt_streaming.lib
 -- Installing: C:\qar\install/lib/qar_qt_streaming_qaros.lib
--- Installing: C:\qar\install/include
+-- Up-to-date: C:\qar\install/include
 -- Installing: C:\qar\install/include/qar_qt_streaming
 -- Installing: C:\qar\install/include/qar_qt_streaming/seam
 ...
@@ -387,13 +400,17 @@ Overlay (dot-source it): C:\qar\install\local_setup.ps1
 .\scripts\run_live_rviz_stream_real.ps1
 ```
 ```text
+
+...
 === RViz -> QAROS Hub live stream ===
   scene            : C:\qar\install\share\qar_rviz_streaming\config\test_scenes\scene3_grid_marker.rviz
   QAROS install    : C:\Program Files\Quaternar\QAROS (from registry)
   QAROS_RUNTIME_DIR        = (not set: the plugin uses the installed QAROS)
   QAR_PANEL_LIVE_STREAM    = 1
+  QAR_PANEL_AUTO_CONNECT   = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = (none - pass -InvitePeers to invite devices)
   QAR_PANEL_AR_COPY_SCALE  = (not set: the saved value or 2.00 - pass -ArCopyScale 1.0..3.0 to change it)
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
@@ -422,17 +439,18 @@ Overlay (dot-source it): C:\qar\install\local_setup.ps1
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
                              no Hub service runs, so these values can be left over from an earlier start
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   No Hub service runs now: the plugin will start QAROS when you press Connect.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
 ...
   GPU memory (nvidia-smi)  : NVIDIA GeForce RTX 4080 Laptop GPU: 0 MiB used of 12282 MiB, 0 % busy
-  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145254.checks.txt (written with -Confirm)
+  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184424.checks.txt (written with -Confirm)
   QAR log dir              : C:\Users\<user>\AppData\Local\Temp\quaternar (no *.log over 256 MB)
-  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145254.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
-  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261113_145254.launcher_<name>
-  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261113_145254.<report> (no .dmp files)
+  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184424.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
+  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261119_184424.launcher_<name>
+  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261119_184424.<report> (no .dmp files)
   VC++ runtime (rviz2 dir) : 14.50.35719.0 (ok, needs 14.40 or newer)
   tinyxml.dll (rviz2 dir)  : present
 

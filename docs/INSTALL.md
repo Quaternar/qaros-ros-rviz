@@ -373,6 +373,9 @@ git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz "$env
 ```text
 Cloning into 'C:\qar\src\qar_rviz_plugin'...
 done.
+Submodule 'external/qaros' (https://github.com/Quaternar/qaros.git) registered for path 'external/qaros'
+Cloning into 'C:/qar/src/qar_rviz_plugin/external/qaros'...
+Submodule path 'external/qaros': checked out '0f2cb2eb8dc89a2d52deb7148ce3ff52e595bd8e'
 ```
 
 Go to the folder of the clone; the next steps run there:
@@ -674,6 +677,9 @@ git clone --recurse-submodules https://github.com/Quaternar/qaros-ogre "$env:QAR
 ```text
 Cloning into 'C:\qar\src\qar_ogre_adapter'...
 done.
+Submodule 'external/qaros' (https://github.com/Quaternar/qaros.git) registered for path 'external/qaros'
+Cloning into 'C:/qar/src/qar_ogre_adapter/external/qaros'...
+Submodule path 'external/qaros': checked out '0f2cb2eb8dc89a2d52deb7148ce3ff52e595bd8e'
 ```
 
 Go to the folder of the clone; the commands below run there:
@@ -698,12 +704,13 @@ Preset CMake variables:
 -- The CXX compiler identification is MSVC 19.29.30151.0
 ...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
+-- qaros headers: C:/qar/src/qar_ogre_adapter/external/qaros
 -- Found rviz_ogre_vendor: 11.2.25 (C:/qar/deps/ros2_humble/ros2-windows/share/rviz_ogre_vendor/cmake)
 ...
 -- qar_qar_adapter: QarOS SDK backend, DYNAMIC loading of C:\Program Files\Quaternar\QAROS/bin/qar-streaming-c.dll (no import lib linked)
 ...
--- Configuring done (12.8s)
--- Generating done (0.3s)
+-- Configuring done (14.8s)
+-- Generating done (0.8s)
 -- Build files have been written to: C:/qar/src/qar_ogre_adapter/build/vs2019-x64
 ```
 
@@ -720,15 +727,15 @@ cmake --build --preset vs2019-x64
   qar_ogre_streaming.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\RelWithDebInfo\qar_ogre_streaming.lib
 ...
   qar_qar_adapter_render.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\RelWithDebInfo\qar_qar_adapter_render.lib
-...
   qar_ogre_standalone_streaming_sample.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\ogre_standalone_streaming_sample\RelWithDebInfo\qar_ogre_standalone_streaming_sample.exe
 ...
   qar_ogre_live_stream_example.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\qaros_live_stream\RelWithDebInfo\qar_ogre_live_stream_example.exe
 ...
   qar_ogre_adapter_doc_snippets.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\docs\snippets\RelWithDebInfo\qar_ogre_adapter_doc_snippets.exe
 ...
-  qar_qar_adapter_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\test\RelWithDebInfo\qar_qar_adapter_tests.exe
   qar_ogre_streaming_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\test\RelWithDebInfo\qar_ogre_streaming_tests.exe
+...
+  qar_qar_adapter_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\test\RelWithDebInfo\qar_qar_adapter_tests.exe
 ```
 
 Install it into the prefix. The install puts the libraries of the three modules `qar_ar_core`, `qar_ogre_streaming` and `qar_qar_adapter` and the QarOS C and C++ headers of the qaros submodule below `$env:QAR_PREFIX`, together with the CMake package that the other repositories of this stack find there.
@@ -742,8 +749,12 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/lib/qar_qar_adapter_capi.lib
 ...
 -- Installing: C:\qar\install/include/qar_qar_adapter/target_rule.hpp
+...
 -- Installing: C:\qar\install/include/qar_streaming.h
--- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE.qar_streaming_header
+...
+-- Installing: C:\qar\install/include/qar_streaming_cpp/Runtime.hpp
+...
+-- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE.qaros
 -- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterTargets.cmake
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterTargets-relwithdebinfo.cmake
@@ -763,6 +774,9 @@ git clone --recurse-submodules https://github.com/Quaternar/qaros-qt "$env:QAR_R
 ```text
 Cloning into 'C:\qar\src\qar_qt_streaming'...
 done.
+Submodule 'external/qaros' (https://github.com/Quaternar/qaros.git) registered for path 'external/qaros'
+Cloning into 'C:/qar/src/qar_qt_streaming/external/qaros'...
+Submodule path 'external/qaros': checked out '0f2cb2eb8dc89a2d52deb7148ce3ff52e595bd8e'
 ```
 
 Go to the folder of the clone; the commands below run there:
@@ -781,12 +795,11 @@ Preset CMake variables:
 
   QAR_BUILD_TESTS="ON"
   QAR_QT_ROOT="C:\qar\deps\Qt\5.15.2\msvc2019_64"
-  QAR_SDK_ROOT="C:\Program Files\Quaternar\QAROS"
 ...
 -- Qt 5.15.2: C:/qar/deps/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5
--- QarOS SDK headers: third_party/
+-- QarOS SDK headers: QarOS repository C:/qar/src/qar_qt_streaming/external/qaros
 ...
--- Configuring done (12.5s)
+-- Configuring done (10.5s)
 -- Generating done (0.3s)
 -- Build files have been written to: C:/qar/src/qar_qt_streaming/build/vs2019-x64
 ```
@@ -801,8 +814,8 @@ cmake --build --preset vs2019-x64
 ...
   qar_qt_streaming_qaros.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\RelWithDebInfo\qar_qt_streaming_qaros.lib
 ...
-  qar_qt_streaming_seam_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\test\RelWithDebInfo\qar_qt_streaming_seam_tests.exe
   qar_qt_streaming_qaros_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\test\RelWithDebInfo\qar_qt_streaming_qaros_tests.exe
+  qar_qt_streaming_seam_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\test\RelWithDebInfo\qar_qt_streaming_seam_tests.exe
 ...
   qar_qt_streaming.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\RelWithDebInfo\qar_qt_streaming.lib
 ...
@@ -822,7 +835,7 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/lib/qar_qt_streaming_seam.lib
 -- Installing: C:\qar\install/lib/qar_qt_streaming.lib
 -- Installing: C:\qar\install/lib/qar_qt_streaming_qaros.lib
--- Installing: C:\qar\install/include
+-- Up-to-date: C:\qar\install/include
 -- Installing: C:\qar\install/include/qar_qt_streaming
 -- Installing: C:\qar\install/include/qar_qt_streaming/seam
 ...
@@ -861,11 +874,13 @@ Preset CMake variables:
 ...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
 ...
+-- qaros headers: C:/qar/src/qar_rviz_plugin/external/qaros
+...
 -- qar_ogre_adapter 0.2.0: C:/qar/install/share/qar_ogre_adapter/cmake
 -- qar_qt_streaming 0.2.0: C:/qar/install/share/qar_qt_streaming/cmake
 ...
--- Configuring done (6.2s)
--- Generating done (0.4s)
+-- Configuring done (12.7s)
+-- Generating done (0.6s)
 -- Build files have been written to: C:/qar/src/qar_rviz_plugin/build/vs2019-x64
 ```
 
@@ -873,10 +888,7 @@ Preset CMake variables:
 cmake --build --preset vs2019-x64
 ```
 ```text
-...
   qar_capi_panels_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_capi_panels\test\RelWithDebInfo\qar_capi_panels_tests.exe
-...
-  qar_rviz_streaming_widget_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_widget_tests.exe
 ...
   qar_rviz_streaming_ros_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_ros_tests.exe
 ...
@@ -886,8 +898,9 @@ cmake --build --preset vs2019-x64
 ...
   qar_rviz_streaming_image_source_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_image_source_tests.exe
 ...
-  qar_rviz_streaming_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_tests.exe
+  qar_rviz_streaming_widget_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_widget_tests.exe
 ...
+  qar_rviz_streaming_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_tests.exe
 ```
 
 The build produces nine test executables, and the tests need no QAROS and open no window. [Testing](TESTING.md) explains what they cover. Run them now:
@@ -897,19 +910,19 @@ ctest --preset vs2019-x64
 ```
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
-        Start   1: check_layering_qar_ui_model
-  1/937 Test   #1: check_layering_qar_ui_model ..................................................................   Passed    0.16 sec
-        Start   2: check_layering_qar_web_panels
-  2/937 Test   #2: check_layering_qar_web_panels ................................................................   Passed    0.09 sec
-        Start   3: check_layering_qar_ros_ui
-  3/937 Test   #3: check_layering_qar_ros_ui ....................................................................   Passed    0.12 sec
-        Start   4: check_layering_qar_capi_panels
-  4/937 Test   #4: check_layering_qar_capi_panels ...............................................................   Passed    0.12 sec
+          Start    1: check_layering_qar_ui_model
+   1/1252 Test    #1: check_layering_qar_ui_model ........................................................................................   Passed    0.16 sec
+          Start    2: check_layering_qar_web_panels
+   2/1252 Test    #2: check_layering_qar_web_panels ......................................................................................   Passed    0.09 sec
+          Start    3: check_layering_qar_ros_ui
+   3/1252 Test    #3: check_layering_qar_ros_ui ..........................................................................................   Passed    0.11 sec
+          Start    4: check_layering_qar_capi_panels
+   4/1252 Test    #4: check_layering_qar_capi_panels .....................................................................................   Passed    0.12 sec
 ...
 
-100% tests passed, 0 tests failed out of 937
+100% tests passed, 0 tests failed out of 1252
 
-Total Test time (real) = 108.66 sec
+Total Test time (real) = 155.30 sec
 ```
 
 The test project never compiles the file that holds the panel, `qar_streaming_panel.cpp`, because that file needs RViz. Only the `colcon` build below compiles it, so a green `ctest` run is no proof that the plugin builds.
@@ -1032,7 +1045,7 @@ QAROS starts RViz2 with this plugin from the "ROS 2 Rviz" source application of 
 Added the local record for humble / windows-x64 in C:\Users\<user>\AppData\Roaming\Quaternar\ros-plugins.json
   ROS 2 root     : C:\qar\deps\ros2_humble\ros2-windows
   prefix         : C:\qar\install
-  plugin version : 0.2.1
+  plugin version : 0.3.0
   C API SHA-256  : 94d248d2a3f660e89458e1df865eac41a2365cef1c9f971af111bc866e8a2762
                    (from C:\qar\install\share\qar_rviz_streaming\qar_streaming_h.sha256)
 ```

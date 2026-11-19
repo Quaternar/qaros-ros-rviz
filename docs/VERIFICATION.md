@@ -50,11 +50,13 @@ Preset CMake variables:
 ...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
 ...
+-- qaros headers: C:/qar/src/qar_rviz_plugin/external/qaros
+...
 -- qar_ogre_adapter 0.2.0: C:/qar/install/share/qar_ogre_adapter/cmake
 -- qar_qt_streaming 0.2.0: C:/qar/install/share/qar_qt_streaming/cmake
 ...
--- Configuring done (6.2s)
--- Generating done (0.4s)
+-- Configuring done (12.7s)
+-- Generating done (0.6s)
 -- Build files have been written to: C:/qar/src/qar_rviz_plugin/build/vs2019-x64
 ```
 
@@ -63,10 +65,7 @@ cmake --build --preset vs2019-x64
 ```
 
 ```text
-...
   qar_capi_panels_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_capi_panels\test\RelWithDebInfo\qar_capi_panels_tests.exe
-...
-  qar_rviz_streaming_widget_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_widget_tests.exe
 ...
   qar_rviz_streaming_ros_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_ros_tests.exe
 ...
@@ -76,8 +75,9 @@ cmake --build --preset vs2019-x64
 ...
   qar_rviz_streaming_image_source_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_image_source_tests.exe
 ...
-  qar_rviz_streaming_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_tests.exe
+  qar_rviz_streaming_widget_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_widget_tests.exe
 ...
+  qar_rviz_streaming_tests.vcxproj -> C:\qar\src\qar_rviz_plugin\build\vs2019-x64\qar_rviz_streaming\test\RelWithDebInfo\qar_rviz_streaming_tests.exe
 ```
 
 ### Run all tests
@@ -90,19 +90,19 @@ ctest --preset vs2019-x64
 
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
-        Start   1: check_layering_qar_ui_model
-  1/937 Test   #1: check_layering_qar_ui_model ..................................................................   Passed    0.16 sec
-        Start   2: check_layering_qar_web_panels
-  2/937 Test   #2: check_layering_qar_web_panels ................................................................   Passed    0.10 sec
-        Start   3: check_layering_qar_ros_ui
-  3/937 Test   #3: check_layering_qar_ros_ui ....................................................................   Passed    0.13 sec
-        Start   4: check_layering_qar_capi_panels
-  4/937 Test   #4: check_layering_qar_capi_panels ...............................................................   Passed    0.11 sec
+          Start    1: check_layering_qar_ui_model
+   1/1252 Test    #1: check_layering_qar_ui_model ........................................................................................   Passed    0.14 sec
+          Start    2: check_layering_qar_web_panels
+   2/1252 Test    #2: check_layering_qar_web_panels ......................................................................................   Passed    0.08 sec
+          Start    3: check_layering_qar_ros_ui
+   3/1252 Test    #3: check_layering_qar_ros_ui ..........................................................................................   Passed    0.11 sec
+          Start    4: check_layering_qar_capi_panels
+   4/1252 Test    #4: check_layering_qar_capi_panels .....................................................................................   Passed    0.12 sec
 ...
 
-100% tests passed, 0 tests failed out of 937
+100% tests passed, 0 tests failed out of 1252
 
-Total Test time (real) = 108.60 sec
+Total Test time (real) = 155.56 sec
 ```
 
 [Testing](TESTING.md#what-the-automated-tests-do-not-cover) lists what these tests leave out: the panel in RViz, every call into QarOS, the JavaScript of the pages, the accuracy of a pick and a real network. Of the checks of the next levels, only those of Level 1 were run for this release: the dry runs of the launcher, which start nothing, and the two examples of the web libraries over the loopback interface. The panel in RViz and the calls into QarOS were exercised only in the live sessions and checks of Level 2: the two sessions ran with builds that were made before the last changes of the code, and the live checks on the desktop Visualizer ran a build that differs from this release only in comments and the text of one tool tip. No accuracy of a pick has been measured.
@@ -120,8 +120,8 @@ check_layering examples: OK (2 files)
 check_layering qar_ui_model: OK (37 files)
 check_layering qar_web_panels: OK (18 files)
 check_layering qar_ros_ui: OK (35 files)
-check_layering qar_capi_panels: OK (13 files)
-check_layering qar_rviz_streaming: OK (97 files)
+check_layering qar_capi_panels: OK (17 files)
+check_layering qar_rviz_streaming: OK (150 files)
 ```
 
 ```powershell
@@ -241,13 +241,17 @@ The default run shows the scene, the programs of QarOS, the overlay of the plugi
 ```
 
 ```text
+
+...
 === RViz -> QAROS Hub live stream ===
   scene            : C:\qar\install\share\qar_rviz_streaming\config\test_scenes\scene3_grid_marker.rviz
   QAROS install    : C:\Program Files\Quaternar\QAROS (from registry)
   QAROS_RUNTIME_DIR        = (not set: the plugin uses the installed QAROS)
   QAR_PANEL_LIVE_STREAM    = 1
+  QAR_PANEL_AUTO_CONNECT   = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = (none - pass -InvitePeers to invite devices)
   QAR_PANEL_AR_COPY_SCALE  = (not set: the saved value or 2.00 - pass -ArCopyScale 1.0..3.0 to change it)
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
@@ -276,17 +280,18 @@ The default run shows the scene, the programs of QarOS, the overlay of the plugi
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
                              no Hub service runs, so these values can be left over from an earlier start
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   No Hub service runs now: the plugin will start QAROS when you press Connect.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
 ...
   GPU memory (nvidia-smi)  : NVIDIA GeForce RTX 4080 Laptop GPU: 0 MiB used of 12282 MiB, 0 % busy
-  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145254.checks.txt (written with -Confirm)
+  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184424.checks.txt (written with -Confirm)
   QAR log dir              : C:\Users\<user>\AppData\Local\Temp\quaternar (no *.log over 256 MB)
-  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145254.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
-  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261113_145254.launcher_<name>
-  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261113_145254.<report> (no .dmp files)
+  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184424.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
+  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261119_184424.launcher_<name>
+  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261119_184424.<report> (no .dmp files)
   VC++ runtime (rviz2 dir) : 14.50.35719.0 (ok, needs 14.40 or newer)
   tinyxml.dll (rviz2 dir)  : present
 
@@ -347,13 +352,17 @@ The parameter `-InvitePeers` takes entries of the form `kind:host`, separated by
 ```
 
 ```text
+
+...
 === RViz -> QAROS Hub live stream ===
   scene            : C:\qar\install\share\qar_rviz_streaming\config\test_scenes\scene3_grid_marker.rviz
   QAROS install    : C:\Program Files\Quaternar\QAROS (from registry)
   QAROS_RUNTIME_DIR        = (not set: the plugin uses the installed QAROS)
   QAR_PANEL_LIVE_STREAM    = 1
+  QAR_PANEL_AUTO_CONNECT   = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
+  QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = hololens:HOLOLENS-A2B3
   QAR_PANEL_AR_COPY_SCALE  = (not set: the saved value or 2.00 - pass -ArCopyScale 1.0..3.0 to change it)
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
@@ -382,17 +391,18 @@ The parameter `-InvitePeers` takes entries of the form `kind:host`, separated by
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
                              no Hub service runs, so these values can be left over from an earlier start
+  Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
   No Hub service runs now: the plugin will start QAROS when you press Connect.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
 ...
   GPU memory (nvidia-smi)  : NVIDIA GeForce RTX 4080 Laptop GPU: 0 MiB used of 12282 MiB, 0 % busy
-  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145322.checks.txt (written with -Confirm)
+  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184428.checks.txt (written with -Confirm)
   QAR log dir              : C:\Users\<user>\AppData\Local\Temp\quaternar (no *.log over 256 MB)
-  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261113_145322.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
-  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261113_145322.launcher_<name>
-  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261113_145322.<report> (no .dmp files)
+  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184428.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
+  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261119_184428.launcher_<name>
+  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261119_184428.<report> (no .dmp files)
   VC++ runtime (rviz2 dir) : 14.50.35719.0 (ok, needs 14.40 or newer)
   tinyxml.dll (rviz2 dir)  : present
 

@@ -22,19 +22,19 @@ ctest --preset vs2019-x64
 ```
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
-        Start   1: check_layering_qar_ui_model
-  1/937 Test   #1: check_layering_qar_ui_model ..................................................................   Passed    0.16 sec
-        Start   2: check_layering_qar_web_panels
-  2/937 Test   #2: check_layering_qar_web_panels ................................................................   Passed    0.10 sec
-        Start   3: check_layering_qar_ros_ui
-  3/937 Test   #3: check_layering_qar_ros_ui ....................................................................   Passed    0.13 sec
-        Start   4: check_layering_qar_capi_panels
-  4/937 Test   #4: check_layering_qar_capi_panels ...............................................................   Passed    0.11 sec
+          Start    1: check_layering_qar_ui_model
+   1/1252 Test    #1: check_layering_qar_ui_model ........................................................................................   Passed    0.14 sec
+          Start    2: check_layering_qar_web_panels
+   2/1252 Test    #2: check_layering_qar_web_panels ......................................................................................   Passed    0.08 sec
+          Start    3: check_layering_qar_ros_ui
+   3/1252 Test    #3: check_layering_qar_ros_ui ..........................................................................................   Passed    0.11 sec
+          Start    4: check_layering_qar_capi_panels
+   4/1252 Test    #4: check_layering_qar_capi_panels .....................................................................................   Passed    0.12 sec
 ...
 
-100% tests passed, 0 tests failed out of 937
+100% tests passed, 0 tests failed out of 1252
 
-Total Test time (real) = 108.60 sec
+Total Test time (real) = 155.56 sec
 ```
 
 The last lines are the summary: how many tests passed, and the names of those that failed. A test that is skipped is reported as skipped and does not count as a failure.
@@ -49,19 +49,19 @@ ctest --preset vs2019-x64 -N
 ```
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
-  Test   #1: check_layering_qar_ui_model
-  Test   #2: check_layering_qar_web_panels
-  Test   #3: check_layering_qar_ros_ui
-  Test   #4: check_layering_qar_capi_panels
-  Test   #5: check_layering_qar_rviz_streaming
-  Test   #6: check_layering_examples
-  Test   #7: check_layering_selftest
+  Test    #1: check_layering_qar_ui_model
+  Test    #2: check_layering_qar_web_panels
+  Test    #3: check_layering_qar_ros_ui
+  Test    #4: check_layering_qar_capi_panels
+  Test    #5: check_layering_qar_rviz_streaming
+  Test    #6: check_layering_examples
+  Test    #7: check_layering_selftest
 ...
-  Test #935: HubConnectionWidget.NoTextCanWidenTheGroup
-  Test #936: HubConnectionWidget.ShowingAndHidingTheRemoteFieldsMovesNothing
-  Test #937: HubConnectionWidget.TheModeComboOffersTheThreeHubs
+  Test #1250: RenderTickTimer.ASwitchLeavesAStoppedTimerStopped
+  Test #1251: RenderTickTimer.AnActiveZeroIntervalTimerSwitchedToIdleStopsSpinning
+  Test #1252: PluginVersion.IsTheVersionFileWithTheDerivedPart
 
-Total Tests: 937
+Total Tests: 1252
 ```
 
 ```powershell
@@ -70,7 +70,7 @@ ctest --preset vs2019-x64 -R check_layering_selftest
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
     Start 7: check_layering_selftest
-1/1 Test #7: check_layering_selftest ..........   Passed    0.09 sec
+1/1 Test #7: check_layering_selftest ..........   Passed    0.08 sec
 
 100% tests passed, 0 tests failed out of 1
 
@@ -264,8 +264,8 @@ check_layering examples: OK (2 files)
 check_layering qar_ui_model: OK (37 files)
 check_layering qar_web_panels: OK (18 files)
 check_layering qar_ros_ui: OK (35 files)
-check_layering qar_capi_panels: OK (13 files)
-check_layering qar_rviz_streaming: OK (97 files)
+check_layering qar_capi_panels: OK (17 files)
+check_layering qar_rviz_streaming: OK (150 files)
 ```
 
 ```powershell
