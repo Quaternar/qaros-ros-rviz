@@ -23,18 +23,18 @@ ctest --preset vs2019-x64
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
           Start    1: check_layering_qar_ui_model
-   1/1252 Test    #1: check_layering_qar_ui_model ........................................................................................   Passed    0.14 sec
+   1/1257 Test    #1: check_layering_qar_ui_model ........................................................................................   Passed    0.20 sec
           Start    2: check_layering_qar_web_panels
-   2/1252 Test    #2: check_layering_qar_web_panels ......................................................................................   Passed    0.08 sec
+   2/1257 Test    #2: check_layering_qar_web_panels ......................................................................................   Passed    0.13 sec
           Start    3: check_layering_qar_ros_ui
-   3/1252 Test    #3: check_layering_qar_ros_ui ..........................................................................................   Passed    0.11 sec
+   3/1257 Test    #3: check_layering_qar_ros_ui ..........................................................................................   Passed    0.16 sec
           Start    4: check_layering_qar_capi_panels
-   4/1252 Test    #4: check_layering_qar_capi_panels .....................................................................................   Passed    0.12 sec
+   4/1257 Test    #4: check_layering_qar_capi_panels .....................................................................................   Passed    0.18 sec
 ...
 
-100% tests passed, 0 tests failed out of 1252
+100% tests passed, 0 tests failed out of 1257
 
-Total Test time (real) = 155.56 sec
+Total Test time (real) = 179.96 sec
 ```
 
 The last lines are the summary: how many tests passed, and the names of those that failed. A test that is skipped is reported as skipped and does not count as a failure.
@@ -57,11 +57,11 @@ Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
   Test    #6: check_layering_examples
   Test    #7: check_layering_selftest
 ...
-  Test #1250: RenderTickTimer.ASwitchLeavesAStoppedTimerStopped
-  Test #1251: RenderTickTimer.AnActiveZeroIntervalTimerSwitchedToIdleStopsSpinning
-  Test #1252: PluginVersion.IsTheVersionFileWithTheDerivedPart
+  Test #1255: RenderTickTimer.ASwitchLeavesAStoppedTimerStopped
+  Test #1256: RenderTickTimer.AnActiveZeroIntervalTimerSwitchedToIdleStopsSpinning
+  Test #1257: PluginVersion.IsTheVersionFileWithTheDerivedPart
 
-Total Tests: 1252
+Total Tests: 1257
 ```
 
 ```powershell
@@ -127,7 +127,7 @@ The unit tests are eleven GoogleTest executables, three for the web libraries, o
 | | `SettledHeightFit`, `DockGrowthReason`, `StartFit` | the fit is done when two looks agree, and two looks at different heights do not agree; rows added on a queued call are found by the settled fit; an area that cannot be measured is never said to need no bar; two trees in a splitter are summed and not maximised; an area that scrolls by design never makes the widget taller; the fit gives up at the height limit, at the round limit and when the widget does not grow at all, and says so; a tree that needs less is made lower once but not below the minimum; a trim leaves the slack and one spare row, a spare row is added to every growth, and a widget that had to grow is never trimmed; a dock is looked at again after its hold is released; a need that the census cannot see is counted and named; a horizontal bar is no reason to grow and is not said to be no bar, though a horizontal bar next to a vertical overflow counts with it; a widget that cannot be made higher is given up only when two looks agree, and a stuck look that the next one does not repeat is no give-up; the log lines have the shape that the checks of the logs read; a window that limited the dock is named, a window that grew or did not have to is not blamed, a dock that lost its height after the hold was released says so, and the words take the place of the reason in the last line of the fit; the reasons not to fit the dock at start are given in order, and the line says what became of the dock |
 | | `ReadoutBox` | the box is built so that nothing can move it or scroll it; four panels fit without a bar or one more line; panel lines that do not fit are dropped from the end and counted; a wrapped line counts for all the lines that it takes; the measure agrees with the label itself; every line that fits is kept and one more is not |
 | `qar_capi_panels_tests` | `PanelSender`, `PanelStateGuard` | the panel sender runs on the session owner and a fake of the function tables of QarOS: every call of the consumer returns within milliseconds, a session that is not running refuses the panel, a failed create comes back as a result and leaves the panel unusable, a frame is shown once the panel is ready and never on the thread of the owner, the pointer subscription of the panel starts on the owner thread and ends before the close, a resize swaps the stream and detaches before the new create, and the end of a session hides and detaches a panel before the session is released; of several placements that queue up while the thread is busy only the last is applied, a reattach that fails never closes the panel of an earlier session, frames flow while the attach probe runs, and the probe asks once and finds the panel in a long list; the guard of the state asks QarOS again for a panel that it reports hidden after the reattach, at most three times, not inside the hold after an ask and not six seconds after a change, and it never contests the states closed and minimized |
-| `qar_rviz_streaming_tests` | `StreamOutageTracker`, `ConnectionView` | the words of the strip for every state of the connection, among them the Hub that is not reachable or gone, the joining again, the denied and unanswered approvals and the buttons `"Join again"` and `"Stop rejoining"`, and the tracker that turns the samples of the streams into the note after the counts, the log lines that name a stream in trouble and its end, and the sentence of a missing render request |
+| `qar_rviz_streaming_tests` | `StreamOutageTracker`, `ConnectionView`, `ClassifySkipDetail`, `HeartbeatFps` | the words of the strip for every state of the connection, among them the Hub that is not reachable or gone, the joining again, the denied and unanswered approvals and the buttons `"Join again"` and `"Stop rejoining"`, and the tracker that turns the samples of the streams into the note after the counts, the log lines that name a stream in trouble and its end, and the sentence of a missing render request; the reading of the reason text of a skipped frame, in which the status as a field `code=603` and the token `state=reconnecting` mean a reconnecting receiver and a counter such as `consecutive=1603` does not, and the heartbeat rate, which is 0 for a stream that submitted no frame since the previous heartbeat |
 | `qar_rviz_streaming_tests` | `QtStallWatchdog`, `QtStallWatchdogWindows`, `ExitGuard` | the stall watchdog on a fake clock: the line after the limit, the line when the ticks come back, the stack dump once, a thread that is left behind; the exit guard: it ends the process only when it is armed and the deadline has passed, writes one line with the step, and touches nothing else |
 | `qar_rviz_streaming_tests` | `GpuFrameGate`, `ControlPanelPlacementPolicy`, `RemadeStreamPeers`, `StablePanelLayout` | the gate that stops a frame of RViz while the GPU does not progress, the AR control panel that stays shown while the 3D stream of its target is made again, the target of a sender that is held for a restart of the Hub, which is presumed to stay, so that the AR control panel stays shown through the restart and is hidden when its target does not return, and the minimum height of the panel that the screen and the window cap |
 | `qar_rviz_streaming_tick_tests` | `TickTimerPlan`, `TickTier`, `TickThrottle`, `GuiGapRecordMs`, `RenderTickTimer` | the streaming plan of 0.1 ms and of 0.5 ms is a zero-interval timer with a throttle of the period, and a period from 1 ms is an ordinary interval; the idle plan is an ordinary timer of 50 ms that a longer configured period slows down and never a timer without an interval; the tier is idle when the session is not up and when it is up with no 3D stream and no panel stream, and streaming with a 3D stream, with a panel stream, with a preview that streams and with a scripted run; the throttle admits one tick for each period of its plan and every tick of an ordinary timer, and a new plan forgets the last tick; the gap from which a tick is recorded is 25 ms up to a period of 10 ms and 2.5 periods beyond it; an idle timer fires at most 30 times in 600 ms, a running zero-interval timer that gets the idle plan stops spinning, a switch leaves a stopped timer stopped, and the streaming plan of 0.1 ms is a precise zero-interval timer whose throttled bodies number more than 1500 for each second and at most 10000 |

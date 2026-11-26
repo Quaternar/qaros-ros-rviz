@@ -28,7 +28,7 @@ Set-Location "$env:QAR_ROOT\src\qar_rviz_plugin"
 .\scripts\run_live_rviz_stream_real.ps1
 ```
 
-The build ends with `=== BUILD OK ===`. The units of the plugin, `qar_capi_panels` and the web libraries are built and tested apart from it with `cmake --preset vs2019-x64`, `cmake --build --preset vs2019-x64` and `ctest --preset vs2019-x64` in the clone, which ends with 100% tests passed out of 1252 tests ([Installation](docs/INSTALL.md#configure-build-and-test-the-units)).
+The build ends with `=== BUILD OK ===`. The units of the plugin, `qar_capi_panels` and the web libraries are built and tested apart from it with `cmake --preset vs2019-x64`, `cmake --build --preset vs2019-x64` and `ctest --preset vs2019-x64` in the clone, which ends with 100% tests passed out of 1257 tests ([Installation](docs/INSTALL.md#configure-build-and-test-the-units)).
 
 Without `-Confirm` the launcher only prints what it would do and starts nothing; the block that it prints, recorded from a run, is in [Getting started](docs/GETTING_STARTED.md#check-the-launch-configuration).
 

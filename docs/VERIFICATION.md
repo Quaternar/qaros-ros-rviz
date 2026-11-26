@@ -91,18 +91,18 @@ ctest --preset vs2019-x64
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
           Start    1: check_layering_qar_ui_model
-   1/1252 Test    #1: check_layering_qar_ui_model ........................................................................................   Passed    0.14 sec
+   1/1257 Test    #1: check_layering_qar_ui_model ........................................................................................   Passed    0.20 sec
           Start    2: check_layering_qar_web_panels
-   2/1252 Test    #2: check_layering_qar_web_panels ......................................................................................   Passed    0.08 sec
+   2/1257 Test    #2: check_layering_qar_web_panels ......................................................................................   Passed    0.13 sec
           Start    3: check_layering_qar_ros_ui
-   3/1252 Test    #3: check_layering_qar_ros_ui ..........................................................................................   Passed    0.11 sec
+   3/1257 Test    #3: check_layering_qar_ros_ui ..........................................................................................   Passed    0.16 sec
           Start    4: check_layering_qar_capi_panels
-   4/1252 Test    #4: check_layering_qar_capi_panels .....................................................................................   Passed    0.12 sec
+   4/1257 Test    #4: check_layering_qar_capi_panels .....................................................................................   Passed    0.18 sec
 ...
 
-100% tests passed, 0 tests failed out of 1252
+100% tests passed, 0 tests failed out of 1257
 
-Total Test time (real) = 155.56 sec
+Total Test time (real) = 179.96 sec
 ```
 
 [Testing](TESTING.md#what-the-automated-tests-do-not-cover) lists what these tests leave out: the panel in RViz, every call into QarOS, the JavaScript of the pages, the accuracy of a pick and a real network. Of the checks of the next levels, only those of Level 1 were run for this release: the dry runs of the launcher, which start nothing, and the two examples of the web libraries over the loopback interface. The panel in RViz and the calls into QarOS were exercised only in the live sessions and checks of Level 2: the two sessions ran with builds that were made before the last changes of the code, and the live checks on the desktop Visualizer ran a build that differs from this release only in comments and the text of one tool tip. No accuracy of a pick has been measured.

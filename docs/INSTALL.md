@@ -911,18 +911,18 @@ ctest --preset vs2019-x64
 ```text
 Test project C:/qar/src/qar_rviz_plugin/build/vs2019-x64
           Start    1: check_layering_qar_ui_model
-   1/1252 Test    #1: check_layering_qar_ui_model ........................................................................................   Passed    0.16 sec
+   1/1257 Test    #1: check_layering_qar_ui_model ........................................................................................   Passed    0.17 sec
           Start    2: check_layering_qar_web_panels
-   2/1252 Test    #2: check_layering_qar_web_panels ......................................................................................   Passed    0.09 sec
+   2/1257 Test    #2: check_layering_qar_web_panels ......................................................................................   Passed    0.10 sec
           Start    3: check_layering_qar_ros_ui
-   3/1252 Test    #3: check_layering_qar_ros_ui ..........................................................................................   Passed    0.11 sec
+   3/1257 Test    #3: check_layering_qar_ros_ui ..........................................................................................   Passed    0.13 sec
           Start    4: check_layering_qar_capi_panels
-   4/1252 Test    #4: check_layering_qar_capi_panels .....................................................................................   Passed    0.12 sec
+   4/1257 Test    #4: check_layering_qar_capi_panels .....................................................................................   Passed    0.14 sec
 ...
 
-100% tests passed, 0 tests failed out of 1252
+100% tests passed, 0 tests failed out of 1257
 
-Total Test time (real) = 155.30 sec
+Total Test time (real) = 221.97 sec
 ```
 
 The test project never compiles the file that holds the panel, `qar_streaming_panel.cpp`, because that file needs RViz. Only the `colcon` build below compiles it, so a green `ctest` run is no proof that the plugin builds.

@@ -67,7 +67,7 @@ While a 3D stream is in trouble for 3 seconds or more, the line of the connectio
 
 | The note says | Meaning |
 |---|---|
-| `the receiver is reconnecting` with the seconds, and that the picture comes back by itself | the receiver of the stream, the Visualizer or the device, is joining again |
+| `the receiver is reconnecting` with the seconds, and that the picture comes back by itself | the receiver of the stream, the Visualizer or the device, is joining again; the note comes from the status 603 of the sender or from the stream state *reconnecting*, and from no other text |
 | `QAROS has not asked for 3D frames since it reconnected` with the seconds, and `RViz makes the 3D stream again if this goes on`, and the words `a known QAROS issue after a Hub restart, the 3D view can take minutes` | after a restart of the Hub the runtime may send no request for the frames of the stream that it replays; RViz makes a new 3D stream after 45 seconds without a request, counted from the end of the reconnecting, and a Visualizer may keep asking for the old one, so that the view can take minutes to return, or may not return |
 | the 3D stream of the target `is being set up again` with the attempt | the creation of the sender did not answer; the note adds that, if it stays, the Visualizer may still wait for an earlier RViz, in which case you close the Visualizer and start it again |
 | `is paused (a frame call blocked)` | two frame calls were slow, and the frame calls of that stream pause and are tried again |

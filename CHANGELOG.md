@@ -47,6 +47,7 @@ written and how a version is released is in [AGENTS.md](AGENTS.md).
 
 - The render tick runs every 50 ms while nothing is streamed (the idle tier), where a timer without an interval spun the event loop of RViz; the streaming tier keeps the configured period, 0.1 ms by default, and the tick field of the heartbeat gains `tier=idle` or `tier=stream`.
 - Two compile errors of the Linux builds are fixed in the source: `ActionBridgeImpl` is declared at namespace scope, and a generic subscription is made with the callback type that the installed rclcpp takes (Humble and Jazzy); built and tested on Windows only and not verified on Linux, and the Linux job of the release workflow stays off.
+- A counter in the reason text of a skipped frame that contains `603` does not make the note `the receiver is reconnecting` (only the status field `code=603`, the token `state=reconnecting` and the word of the runtime do), and the heartbeat prints `fps=0.0` for a stream that submitted no frame since the previous heartbeat.
 
 ## [0.3.0] - 2026-11-14
 
