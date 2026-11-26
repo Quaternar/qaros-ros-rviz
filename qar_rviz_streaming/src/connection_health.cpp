@@ -3,6 +3,8 @@
 
 #include "qar_rviz_streaming/connection_health.hpp"
 
+#include <cctype>
+#include <cstddef>
 #include <iterator>
 #include <utility>
 
@@ -62,7 +64,53 @@ std::string sentence_of(
   return std::string();
 }
 
+/// True when @p text holds the status @p number written as a field: "code" (any case), "=" or
+/// ":", optional blanks, the number, and no digit right after it.
+bool has_status_code(const std::string & text, const std::string & number)
+{
+  const auto lower = [](char c) {
+      return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    };
+  const std::string word = "code";
+  for (std::size_t at = 0; at + word.size() <= text.size(); ++at) {
+    std::size_t i = 0;
+    while (i < word.size() && lower(text[at + i]) == word[i]) {
+      ++i;
+    }
+    if (i < word.size()) {
+      continue;
+    }
+    std::size_t pos = at + word.size();
+    if (pos >= text.size() || (text[pos] != '=' && text[pos] != ':')) {
+      continue;
+    }
+    ++pos;
+    while (pos < text.size() && text[pos] == ' ') {
+      ++pos;
+    }
+    if (text.compare(pos, number.size(), number) != 0) {
+      continue;
+    }
+    pos += number.size();
+    if (pos >= text.size() || std::isdigit(static_cast<unsigned char>(text[pos])) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
+
+SkipDetailClass classify_skip_detail(const std::string & detail)
+{
+  SkipDetailClass out;
+  out.reconnecting = has_status_code(detail, "603") ||
+    detail.find("state=reconnecting") != std::string::npos ||
+    detail.find("econnecting") != std::string::npos;
+  out.render_request_missing = !out.reconnecting &&
+    detail.find("try_begin_frame failed") != std::string::npos;
+  return out;
+}
 
 void StreamOutageTracker::sample(double now_s, const std::vector<StreamSample> & streams)
 {

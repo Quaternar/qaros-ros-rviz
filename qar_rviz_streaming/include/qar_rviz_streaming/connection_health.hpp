@@ -40,6 +40,33 @@ inline std::string first_line_limited(const std::string & text, std::size_t max_
   return text.substr(0, end);
 }
 
+/// @brief What the reason text of a skipped frame says about the stream.
+struct SkipDetailClass
+{
+  /// The receiver restarts: the runtime answers status 603, its message names it, or the stream
+  /// state the sender read is "reconnecting".
+  bool reconnecting = false;
+  /// The begin-frame call failed with an error other than the restart of the receiver.
+  bool render_request_missing = false;
+};
+
+/// @brief Reads the reason text that a render sender gives for a frame it skipped. Only the
+/// tokens the sender writes count: the status as "code=603" (also "Code: 603" inside a message
+/// of the runtime), the stream state as "state=reconnecting" and the words of the runtime's own
+/// message. A number inside another number, such as the pending counter "consecutive=1603",
+/// does not.
+SkipDetailClass classify_skip_detail(const std::string & detail);
+
+/// @brief The frame rate a heartbeat line prints for one stream. @p reported is the rolling
+/// rate of the last submits; it keeps its last value while no frame lands. When the submitted
+/// count did not grow since the previous heartbeat (@p have_before), no frame landed in the
+/// window and the rate is 0. A count that fell is a stream made again: the reported rate stands.
+inline double heartbeat_fps(
+  double reported, std::uint64_t submitted, bool have_before, std::uint64_t submitted_before)
+{
+  return have_before && submitted == submitted_before ? 0.0 : reported;
+}
+
 /// The seconds after which the Visualizer closes a panel whose video sender went away.
 constexpr int kOrphanedPanelCloseSeconds = 300;
 

@@ -3540,13 +3540,12 @@ void QarStreamingPanel::sampleStreamHealth()
       sample.not_ready =
         stream.last_skip_reason == qar_ogre_streaming::SkipReason::SenderNotReady ||
         stream.last_skip_reason == qar_ogre_streaming::SkipReason::SenderError;
-      // The receiver restarts: the runtime answers 603, or says it in words.
-      sample.reconnecting = stream.last_skip_detail.find("603") != std::string::npos ||
-        stream.last_skip_detail.find("econnecting") != std::string::npos;
-      // Any other answer of the begin-frame call that is an error: the receiver was reached
-      // again but sends no render request.
-      sample.render_request_missing = !sample.reconnecting &&
-        stream.last_skip_detail.find("try_begin_frame failed") != std::string::npos;
+      // The receiver restarts: the runtime answers 603, says it in words, or the stream state of
+      // the sender is reconnecting. Any other answer of the begin-frame call that is an error:
+      // the receiver was reached again but sends no render request.
+      const SkipDetailClass skip = classify_skip_detail(stream.last_skip_detail);
+      sample.reconnecting = skip.reconnecting;
+      sample.render_request_missing = skip.render_request_missing;
       for (const QarPeerId & id : live_peers_) {
         if (qar_ogre_streaming::peer_id_to_hex(id) == stream.peer_id_hex) {
           const int attempt = qar_factory_->create_attempt(id);
@@ -6142,10 +6141,18 @@ void QarStreamingPanel::emitHeartbeat()
       .arg(snap.stream_count)
       .arg(snap.avg_batch_ms, 0, 'f', 2)
       .arg(static_cast<qulonglong>(snap.budget_skipped_frames));
+    std::map<std::string, std::uint64_t> submitted_now;
     for (const auto & sd : snap.streams) {
+      // The rate of the scheduler is that of the last submits and stays when no frame lands:
+      // a stream whose count did not grow since the previous heartbeat prints 0.
+      const auto before = heartbeat_submitted_.find(sd.peer_id_hex);
+      const double fps = heartbeat_fps(
+        sd.achieved_fps, sd.frames_submitted, before != heartbeat_submitted_.end(),
+        before != heartbeat_submitted_.end() ? before->second : 0);
+      submitted_now[sd.peer_id_hex] = sd.frames_submitted;
       line += QString(" | %1 fps=%2 sub=%3 skip=%4 rend=%5ms")
         .arg(QString::fromStdString(sd.peer_id_hex).left(8))
-        .arg(sd.achieved_fps, 0, 'f', 1)
+        .arg(fps, 0, 'f', 1)
         .arg(static_cast<qulonglong>(sd.frames_submitted))
         .arg(static_cast<qulonglong>(sd.frames_skipped))
         .arg(sd.avg_render_ms, 0, 'f', 2);
@@ -6170,6 +6177,7 @@ void QarStreamingPanel::emitHeartbeat()
       trace_rows_total += sd.frame_trace_rows;
       trace_changed_total += sd.frame_trace_changed_rows;
     }
+    heartbeat_submitted_ = std::move(submitted_now);
   }
   // tick=, prime= and rr= come after the per-stream fields, and the panels section, the
   // spatial counters and vdisp are appended after them, so existing parsers of the earlier

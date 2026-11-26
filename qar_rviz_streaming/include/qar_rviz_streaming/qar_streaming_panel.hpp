@@ -2563,6 +2563,9 @@ private:
   std::chrono::steady_clock::time_point heartbeat_last_{};
   std::chrono::steady_clock::time_point tick_last_{};
   std::uint64_t heartbeat_last_fires_ = 0;
+  /// The submitted-frame count of each stream (by peer id) at the previous heartbeat: a stream
+  /// whose count did not grow prints 0 fps, not the rate of its last frames.
+  std::map<std::string, std::uint64_t> heartbeat_submitted_;
   /// Tick bodies that passed the throttle. In the zero-interval streaming tier the raw timer
   /// callbacks are about 14 times more, and are not counted.
   std::uint64_t render_timer_fires_ = 0;

@@ -14,7 +14,9 @@
 namespace
 {
 
+using qar_rviz_streaming::classify_skip_detail;
 using qar_rviz_streaming::first_line_limited;
+using qar_rviz_streaming::heartbeat_fps;
 using qar_rviz_streaming::panels_losing_stream_text;
 using qar_rviz_streaming::StreamOutageTracker;
 using qar_rviz_streaming::StreamSample;
@@ -424,4 +426,65 @@ TEST(PanelsLosingStream, TheLineSaysHowManyPanelsAndTheThreeHundredSeconds)
     "QarOS: 14 QarOS panel(s) lose their stream now; QAROS closes them in about 300 s unless "
     "RViz connects again before");
   EXPECT_EQ(qar_rviz_streaming::kOrphanedPanelCloseSeconds, 300);
+}
+
+TEST(ClassifySkipDetail, ThePendingCounterIsNotTheStatus603)
+{
+  // The counter of pending answers can hold the digits 603 at any position.
+  for (const char * detail : {
+      "begin-frame pending (no render request from the viewer); consecutive=1603",
+      "begin-frame pending (no render request from the viewer); consecutive=876031",
+      "begin-frame pending (no render request from the viewer); consecutive=603",
+      "begin-frame pending (no render request from the viewer); consecutive=6030"})
+  {
+    const auto got = classify_skip_detail(detail);
+    EXPECT_FALSE(got.reconnecting) << detail;
+    EXPECT_FALSE(got.render_request_missing) << detail;
+  }
+}
+
+TEST(ClassifySkipDetail, TheStatusAsTheSenderWritesItIsTheRestartOfTheReceiver)
+{
+  EXPECT_TRUE(classify_skip_detail("try_begin_frame failed: code=603").reconnecting);
+  EXPECT_TRUE(classify_skip_detail("try_begin_frame failed: code=603 msg=x").reconnecting);
+  EXPECT_TRUE(classify_skip_detail(
+      "try_begin_frame failed: code=803 msg=Code: 603 Desc: MediaStreamingStream [S.hpp:7]")
+    .reconnecting);
+  // A longer number that starts with 603 is another status.
+  const auto other = classify_skip_detail("try_begin_frame failed: code=6031 msg=x");
+  EXPECT_FALSE(other.reconnecting);
+  EXPECT_TRUE(other.render_request_missing);
+}
+
+TEST(ClassifySkipDetail, TheStreamStateReconnectingIsTheRestartOfTheReceiver)
+{
+  const auto got = classify_skip_detail(
+    "begin-frame pending (no render request from the viewer); state=reconnecting; "
+    "consecutive=12");
+  EXPECT_TRUE(got.reconnecting);
+  EXPECT_FALSE(got.render_request_missing);
+  EXPECT_FALSE(classify_skip_detail(
+      "begin-frame pending (no render request from the viewer); state=paused; consecutive=12")
+    .reconnecting);
+}
+
+TEST(ClassifySkipDetail, AnOtherFailedBeginFrameIsAMissingRenderRequest)
+{
+  const auto got = classify_skip_detail(
+    "try_begin_frame failed: code=803 msg=Code: 803 Desc: RenderingProducerUnableToDoBeginFrame");
+  EXPECT_FALSE(got.reconnecting);
+  EXPECT_TRUE(got.render_request_missing);
+  EXPECT_TRUE(classify_skip_detail("the receiver is reconnecting").reconnecting);
+  EXPECT_FALSE(classify_skip_detail("").reconnecting);
+  EXPECT_FALSE(classify_skip_detail("").render_request_missing);
+}
+
+TEST(HeartbeatFps, AStreamWithoutNewFramesPrintsZeroWhateverItsLastRate)
+{
+  EXPECT_EQ(heartbeat_fps(58.1, 21, true, 21), 0.0);
+  EXPECT_EQ(heartbeat_fps(58.1, 2200, true, 2090), 58.1);
+  // No previous heartbeat, or a counter that fell (a stream made again): the rate stands.
+  EXPECT_EQ(heartbeat_fps(58.1, 21, false, 0), 58.1);
+  EXPECT_EQ(heartbeat_fps(58.1, 5, true, 9000), 58.1);
+  EXPECT_EQ(heartbeat_fps(0.0, 0, true, 0), 0.0);
 }
