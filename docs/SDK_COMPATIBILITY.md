@@ -2,12 +2,14 @@
 
 ## Supported QAROS versions
 
-QAROS has a product version. The setup program records it in the registry value `Version` of the key `HKLM\SOFTWARE\Quaternar\QAROS`, for example `0.9.0-dev.3008+65dc9aeb`; the library `qar-streaming-c.dll` itself carries no version resource. This stack states the version that it was verified against.
+QAROS has a product version. The setup program records it in the registry value `Version` of the key `HKLM\SOFTWARE\Quaternar\QAROS`, for example `0.9.0-dev.3008+65dc9aeb`; the library `qar-streaming-c.dll` itself carries no version resource. This stack states the version that earlier builds of it were checked with.
 
 | QAROS version | Status | Meaning |
 |---|---|---|
-| 0.9.0-dev.3008+65dc9aeb | verified | The installation that this stack was built, tested and run against. The stack was built then against the C header of this installation; it now builds against the header of the qaros submodule (below). |
+| 0.9.0-dev.3008+65dc9aeb | checked with earlier builds | The installation that earlier builds of this stack were built, tested and run against. This build compiles against the header of the qaros submodule (below); this installation lacks 12 of the functions that this header requires, so by its rule a module built on it does not load this installation, and this build has not been run against it. |
 | any other version | not verified | The stack may work with it, but nobody has checked. |
+
+The libraries are compiled against the C API of the header in the qaros submodule, and the header has a rule of its own for a runtime that lacks a function. A function whose status in its table is `ACTIVE`, or marks it as deprecated for callers, is required, and a runtime without its symbol fails the load of the module; a function with the status `OPTIONAL_SYMBOL` may be missing, and a call of it returns `QAR_STATUS_NOT_IMPLEMENTED`. A QAROS that does not export every required function of that header cannot be used with these libraries, whatever its version number, and the header does not say from which release of QAROS a function is exported. The installed QAROS 0.9.0-dev.3008+65dc9aeb does not export 12 of the functions that the header of the pinned revision requires, which is read from the export table of its `qar-streaming-c.dll` without loading the library, so by that rule these libraries do not load it; no run has shown that, and a QAROS that exports these functions has not been checked yet. To check another installation, list the exports of its `qar-streaming-c.dll` with the tool of your toolchain that does so, and compare them with the table of the header.
 
 The C header declares these three parts of the C API, all of which the code uses:
 
@@ -31,8 +33,7 @@ $qaros.Version
 55E6E3F48D940CA29331F0528FE475C1B7230FB19A59C31D5525C6E90B097F6C
 ```
 
-The header that this stack compiles against is the header of the verified installation, and the second command prints its hash.
-The repository qar_ogre_adapter installs the header with its libraries, so the command reads it from the install prefix.
+The header that this stack compiles against is `qar-streaming-c\include\qar_streaming.h` of the qaros submodule `external\qaros` of this repository. The repository qar_ogre_adapter installs the header of its own submodule with its libraries, so the second command reads the installed file from the install prefix, and configuring this repository stops when that file differs from the header of its submodule, unless `QAR_QAROS_HEADER_CHECK` is `OFF`.
 
 ```powershell
 (Get-FileHash -LiteralPath (Join-Path $env:QAR_PREFIX 'include\qar_streaming.h') -Algorithm SHA256).Hash
@@ -41,7 +42,7 @@ The repository qar_ogre_adapter installs the header with its libraries, so the c
 55E6E3F48D940CA29331F0528FE475C1B7230FB19A59C31D5525C6E90B097F6C
 ```
 
-If the two hashes are equal, your QAROS has the C API of the verified version. If they differ, your installation is another one. The third command checks whether the header of your installation still declares the parts of the C API that the code uses; it prints True for each item that the header declares.
+If the two hashes are equal, your QAROS has the C API that this stack compiles against. If they differ, your installation and the pinned qaros commit are different versions. The third command checks whether the header of your installation still declares the parts of the C API that the code uses; it prints True for each item that the header declares.
 
 ```powershell
 $qaros = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Quaternar\QAROS'
@@ -266,7 +267,7 @@ The content size is the part of the buffer that the widget covers. This stack al
 
 ## Rebuilding after an SDK update
 
-The plugin is tied to QAROS in two places, and an update touches them differently. The header is compiled in: `qar_streaming.h` comes from the public qaros repository, the git submodule `external/qaros` of this repository (and of qar_ogre_adapter, which installs its copy into the prefix), and configuring the plugin stops when the installed copy differs from the submodule. The library is not compiled in: nothing links an import library, and the session owner of qar_ogre_adapter loads `qar-streaming-c.dll` at run time, from the folder of the plugin first, then from the folder that `QAROS_RUNTIME_DIR` names, then from the installed QAROS and last from the folders of `PATH`.
+The plugin is tied to QAROS in two places, and an update touches them differently. The header is compiled in: `qar_streaming.h` comes from the public qaros repository, the git submodule `external/qaros` of this repository (and of qar_ogre_adapter, which installs its copy into the prefix), and configuring the plugin stops when the installed copy differs from the submodule. The library is not compiled in: nothing links an import library, and the session owner of qar_ogre_adapter loads `qar-streaming-c.dll` at run time, from the folder of the plugin first, then from the runtime folder of the instance that `QAR_INSTANCE` names when it is set, then from the installed QAROS and last from the folders of `PATH`.
 
 **The header is the same.** Compare the hashes as [Identifying the QAROS version](#identifying-the-qaros-version) shows. When they are equal, the C API is the one that the plugin was built against and you rebuild nothing: install the new QAROS and run the launcher without `-Confirm`. The launcher reads the installed version and folder from the registry, uses `-SdkRoot` or `QAR_SDK_ROOT` instead when you give one, and shows the Hub processes of the PC; it only checks and plans, because the plugin loads the library itself.
 

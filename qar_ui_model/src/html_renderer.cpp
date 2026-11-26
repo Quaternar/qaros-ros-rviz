@@ -228,7 +228,9 @@ render_label(std::string & out, const Widget & w)
 void
 render_value(std::string & out, const Widget & w)
 {
-  open_widget(out, w, "div", "qar-widget qar-value");
+  open_widget(
+    out, w, "div",
+    w.compact ? "qar-widget qar-value qar-value-compact" : "qar-widget qar-value");
   caption(out, w);
   readout(out, w);
   help(out, w);
@@ -270,14 +272,26 @@ void
 render_toggle(std::string & out, const Widget & w)
 {
   open_widget(out, w, "div", "qar-widget qar-toggle-widget");
-  caption(out, w);
+  if (!w.compact) {
+    caption(out, w);
+  }
   out += "<button type=\"button\" class=\"qar-toggle\" role=\"switch\" aria-checked=\"false\" "
     "data-qar-role=\"toggle\"";
   if (!w.editable) {
     out += " disabled";
   }
-  out += "><span class=\"qar-toggle-track\"><span class=\"qar-toggle-knob\"></span></span>"
-    "<span class=\"qar-toggle-text\" data-qar-role=\"text\">&mdash;</span></button>";
+  out += "><span class=\"qar-toggle-track\"><span class=\"qar-toggle-knob\"></span></span>";
+  if (w.compact) {
+    // The caption stands inside the switch, between the track and the state word.
+    out += "<span class=\"qar-toggle-title\"";
+    if (!w.label_binding.empty()) {
+      out += " data-qar-role=\"caption\"";
+    }
+    out += '>';
+    text(out, w.display_label());
+    out += "</span>";
+  }
+  out += "<span class=\"qar-toggle-text\" data-qar-role=\"text\">&mdash;</span></button>";
   help(out, w);
   close_tag(out, "div");
 }

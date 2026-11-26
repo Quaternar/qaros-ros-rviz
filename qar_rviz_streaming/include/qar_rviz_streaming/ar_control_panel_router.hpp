@@ -25,6 +25,8 @@
 
 #include "qar_ui_model/ui_protocol.hpp"
 
+#include "qar_rviz_streaming/ar_copy_scale.hpp"
+
 namespace qar_rviz_streaming
 {
 
@@ -41,17 +43,21 @@ enum class ControlPanelCommandKind : std::uint8_t
   ConfirmPick,  ///< publish the pending pick
   CancelPick,   ///< drop the pending pick
   SetPanelOn,   ///< show or hide one panel of the desktop in AR
-  SetToolOn     ///< show or hide the AR panel of one AR tool
+  SetToolOn,    ///< show or hide the AR panel of one AR tool
+  SetPickTopic,  ///< choose the topic of the armed pick mode
+  SetArCopySize  ///< the size of the AR copies of the Qt panels: enlarged or native
 };
-/// "none", "set_pick_mode", "confirm_pick", "cancel_pick", "set_panel_on", "set_tool_on"
+/// "none", "set_pick_mode", "confirm_pick", "cancel_pick", "set_panel_on", "set_tool_on",
+/// "set_pick_topic", "set_ar_copy_size"
 const char * to_string(ControlPanelCommandKind kind);
 
 struct ControlPanelCommand
 {
   ControlPanelCommandKind kind = ControlPanelCommandKind::None;
   ArPickMode pick_mode = ArPickMode::Off;  ///< SetPickMode
-  std::size_t slot = 0;                    ///< SetPanelOn, SetToolOn
-  bool on = false;                         ///< SetPanelOn, SetToolOn
+  std::size_t slot = 0;                    ///< SetPanelOn, SetToolOn, SetPickTopic
+  bool on = false;                         ///< SetPanelOn, SetToolOn, SetPickTopic
+  ArCopySize ar_copy_size = ArCopySize::Enlarged;  ///< SetArCopySize
 };
 
 struct ControlPanelRouting
@@ -69,13 +75,13 @@ struct ControlPanelRouting
 ///    action" for a widget that only shows something;
 ///  * "control '<id>' declares action '<a>' but the event named '<b>'" when the frame names
 ///    another action (a frame that names none is read as the declared one);
-///  * "not a pick mode: '<v>'", "a panel switch needs on or off" and "a tool switch needs on or
-///    off" for a wrong value.
+///  * "not a pick mode: '<v>'", "a panel switch needs on or off", "a tool switch needs on or
+///    off", "a topic switch needs on or off" and "not a Qt panel size: '<v>'" for a wrong value.
 /// A value that is echoed into a refusal is cut and made printable.
 ControlPanelRouting route_control_panel_event(const qar_ui_model::ControlBody & control);
 
-/// SetPanelOn and SetToolOn may call QarOS and run on the next render tick; the others run at
-/// once.
+/// SetPanelOn and SetToolOn may call QarOS and run on the next render tick; the others,
+/// SetPickTopic and SetArCopySize among them, run at once.
 bool control_command_is_deferred(ControlPanelCommandKind kind);
 
 }  // namespace qar_rviz_streaming

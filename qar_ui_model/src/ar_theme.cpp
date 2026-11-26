@@ -239,6 +239,11 @@ input[type=number]{-moz-appearance:textfield}
 .qar-toggle[aria-checked="true"] .qar-toggle-knob{left:calc(var(--qar-chip) + var(--qar-gap-tight) / 2);background:var(--qar-accent-text)}
 .qar-toggle[disabled]{cursor:default;opacity:.7}
 .qar-toggle-text{font-weight:600}
+.qar-toggle-title{flex:1 1 auto;min-width:0;word-break:break-word}
+.qar-value-compact{display:block}
+.qar-value-compact .qar-caption,.qar-value-compact .qar-readout{display:inline}
+.qar-value-compact .qar-caption{margin-right:var(--qar-pad-micro)}
+.qar-value-compact .qar-readout-value{font-size:var(--qar-font-small)}
 .qar-range{flex-grow:1;flex-shrink:1;flex-basis:var(--qar-block);min-width:0;height:var(--qar-touch);-webkit-appearance:none;appearance:none;background:transparent;cursor:pointer}
 )QARCSS";
 

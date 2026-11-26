@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <utility>
 
 namespace qar_rviz_streaming
@@ -264,6 +265,38 @@ std::vector<ControlPanelVisibilityChange> ControlPanelPlacementPolicy::take_visi
   std::vector<ControlPanelVisibilityChange> taken;
   taken.swap(changes_);
   return taken;
+}
+
+namespace
+{
+
+bool same_peer(const QarPeerId & a, const QarPeerId & b)
+{
+  return std::equal(std::begin(a.data), std::end(a.data), std::begin(b.data));
+}
+
+}  // namespace
+
+bool target_stays_for_panels(bool senders_held_for_hub, bool target_online_and_served)
+{
+  return senders_held_for_hub || target_online_and_served;
+}
+
+void RemadeStreamPeers::stream_closed(const QarPeerId & peer, bool target_stays)
+{
+  stream_opened(peer);
+  if (target_stays) {
+    peers_.push_back(peer);
+  }
+}
+
+void RemadeStreamPeers::stream_opened(const QarPeerId & peer)
+{
+  peers_.erase(
+    std::remove_if(
+      peers_.begin(), peers_.end(),
+      [&peer](const QarPeerId & listed) {return same_peer(listed, peer);}),
+    peers_.end());
 }
 
 }  // namespace qar_rviz_streaming

@@ -65,7 +65,8 @@ bool is_display_only(const std::string & id)
   return id == ar_control::kIdConnection || id == ar_control::kIdPanelsHeader ||
          id == ar_control::kIdMorePanels || id == ar_control::kIdToolsHeader ||
          id == ar_control::kIdMoreTools || id == ar_control::kIdPeers ||
-         id == ar_control::kIdError;
+         id == ar_control::kIdError || id == ar_control::kIdPickTopic ||
+         id == ar_control::kIdMoreTopics;
 }
 
 }  // namespace
@@ -109,6 +110,10 @@ const char * to_string(ControlPanelCommandKind kind)
       return "set_panel_on";
     case ControlPanelCommandKind::SetToolOn:
       return "set_tool_on";
+    case ControlPanelCommandKind::SetPickTopic:
+      return "set_pick_topic";
+    case ControlPanelCommandKind::SetArCopySize:
+      return "set_ar_copy_size";
   }
   return "none";
 }
@@ -151,6 +156,15 @@ ControlPanelRouting route_control_panel_event(const qar_ui_model::ControlBody & 
     command.kind = ControlPanelCommandKind::SetToolOn;
     command.slot = slot;
     action = ar_control::kActionToolToggle;
+  } else if (ar_control::parse_slot_id(
+      id, ar_control::kPickTopicIdPrefix, ar_control::kPickTopicSlots, slot))
+  {
+    command.kind = ControlPanelCommandKind::SetPickTopic;
+    command.slot = slot;
+    action = ar_control::kActionPickTopic;
+  } else if (id == ar_control::kIdArCopySize) {
+    command.kind = ControlPanelCommandKind::SetArCopySize;
+    action = ar_control::kActionArCopySize;
   } else if (is_display_only(id)) {
     return refuse("control '" + id + "' has no action");
   } else {
@@ -184,6 +198,25 @@ ControlPanelRouting route_control_panel_event(const qar_ui_model::ControlBody & 
         return refuse("a tool switch needs on or off");
       }
       command.on = control.value.as_bool();
+      break;
+    case ControlPanelCommandKind::SetPickTopic:
+      if (!control.value.is_bool()) {
+        return refuse("a topic switch needs on or off");
+      }
+      command.on = control.value.as_bool();
+      break;
+    case ControlPanelCommandKind::SetArCopySize:
+      // The words of the setting, exactly: the choice sends one of the two it offers.
+      if (!control.value.is_string()) {
+        return refuse("not a Qt panel size: '" + describe(control.value) + "'");
+      }
+      if (control.value.as_string() == to_string(ArCopySize::Enlarged)) {
+        command.ar_copy_size = ArCopySize::Enlarged;
+      } else if (control.value.as_string() == to_string(ArCopySize::Native)) {
+        command.ar_copy_size = ArCopySize::Native;
+      } else {
+        return refuse("not a Qt panel size: '" + describe(control.value) + "'");
+      }
       break;
     case ControlPanelCommandKind::ConfirmPick:
     case ControlPanelCommandKind::CancelPick:

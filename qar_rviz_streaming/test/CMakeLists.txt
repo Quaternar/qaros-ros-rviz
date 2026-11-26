@@ -28,6 +28,15 @@ add_executable(qar_rviz_streaming_tests
   grid_floor_plane_geometry_tests.cpp
   image_topic_transport_tests.cpp
   windows_scheduling_tests.cpp
+  # The gate of the frames of RViz (gpu_frame_gate.hpp): header-only, standard library only.
+  gpu_frame_gate_tests.cpp
+  # The Qt-thread stall watchdog (qt_stall_watchdog.hpp): the core against a fake clock, sink and
+  # dump writer, plus the Windows sink, clock and dump writer on files of the test. Standard
+  # library and Win32 only.
+  qt_stall_watchdog_tests.cpp
+  # The process exit guard (exit_guard.hpp) against a fake clock, sink and terminator: no test ends
+  # its own process.
+  exit_guard_tests.cpp
   # The display name a new QarOS panel is created under (panel_display_names.hpp):
   # header-only, standard library only, so it needs no source file of its own.
   panel_display_names_tests.cpp
@@ -44,12 +53,25 @@ add_executable(qar_rviz_streaming_tests
   panel_settings_tests.cpp
   # What the Connection tab and the status strip say about the join (standard library only).
   connection_view_tests.cpp
+  # What is wrong with a stream of a joined session (standard library only).
+  connection_health_tests.cpp
   ar_control_panel_router_tests.cpp
   ar_control_panel_model_tests.cpp
   ar_control_panel_state_tests.cpp
   ar_control_panel_placement_tests.cpp
   # The rule that keeps an AR panel above the ground (standard library and qar_ar_core only).
   panel_ground_rule_tests.cpp
+  # The size, the factor and the log lines of the enlarged AR copy of a Qt panel (standard library).
+  ar_copy_scale_tests.cpp
+  # Which RViz panels get an AR copy of their own and how wide it is (standard library).
+  ar_copy_panels_tests.cpp
+  # The AR state saved in the RViz configuration and its restore plan (standard library).
+  ar_restore_state_tests.cpp
+  # The rows of the list of AR panels (standard library).
+  ar_panel_list_tests.cpp
+  pick_topic_choice_tests.cpp
+  # Which AR tools publish by default (standard library; cross-checked against the templates).
+  ar_tool_writability_tests.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ros_topic_tree.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/display_class_catalog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ros_graph_tree.cpp
@@ -64,16 +86,25 @@ add_executable(qar_rviz_streaming_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/image_topic_transport.cpp
   # Pure Win32 scheduling opt-out (no Qt, no ROS); a no-op off Windows.
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/windows_scheduling.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/qt_stall_watchdog.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/exit_guard.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/spatial_publish.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/spatial_interaction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/grid_floor_plane_geometry.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/panel_settings.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/connection_view.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/connection_health.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_router.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_model.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_state.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_control_panel_placement.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/panel_ground_rule.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_copy_scale.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_copy_panels.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_restore_state.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_panel_list.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/pick_topic_choice.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_tool_writability.cpp
 )
 
 target_include_directories(qar_rviz_streaming_tests PRIVATE
@@ -311,11 +342,39 @@ if(TARGET Qt5::Widgets AND TARGET qar_qt_streaming::qar_qt_streaming)
     widget_test_main.cpp
     stable_panel_layout_tests.cpp
     hub_connection_widget_tests.cpp
+    add_topic_dialog_tests.cpp
+    # The list of the docks of a main window (Qt Widgets only).
+    dock_census_tests.cpp
+    # The list of AR panels: its widget (Qt Widgets only) and the rows it shows.
+    ar_panel_list_widget_tests.cpp
+    # The panel's widgets as a function and the AR copy built from it.
+    qar_panel_view_tests.cpp
+    qar_panel_ar_copy_tests.cpp
+    # The text of a colour row of an enlarged copy's property tree (Qt Widgets only).
+    ar_copy_color_row_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/stable_panel_layout.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/qar_panel_view.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/qar_panel_ar_copy.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_copy_color_row.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/dock_census.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_panel_list.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_panel_list_widget.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/hub_connection_widget.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/connection_view.cpp
-    # Listed so that AUTOMOC processes the Q_OBJECT header of the Hub group.
+    # The texts of the AR copy controls (standard library only).
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_copy_scale.cpp
+    # The graph browser dialog (Qt Widgets only) and what it decides with (Qt Core and the standard
+    # library): the entities, the tree, the display class catalog and the writable-by-default rule.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/add_topic_dialog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_ros_entity.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ros_graph_tree.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ros_topic_tree.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/display_class_catalog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ar_tool_writability.cpp
+    # Listed so that AUTOMOC processes the Q_OBJECT headers of the Hub group and the dialog.
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/qar_rviz_streaming/hub_connection_widget.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/qar_rviz_streaming/ar_panel_list_widget.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/qar_rviz_streaming/add_topic_dialog.hpp
   )
   # The Hub group has a meta object (signals); the stable layout's pieces have none.
   set_target_properties(qar_rviz_streaming_widget_tests PROPERTIES AUTOMOC ON)
@@ -324,7 +383,11 @@ if(TARGET Qt5::Widgets AND TARGET qar_qt_streaming::qar_qt_streaming)
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
   )
 
+  # qar_ar_core and qar_ui_model: the headers of the pick modes that the panel's Picking page
+  # lists (Qt-free).
   target_link_libraries(qar_rviz_streaming_widget_tests PRIVATE
+    qar_ogre_adapter::qar_ar_core
+    qar_rviz_plugin::qar_ui_model
     qar_qt_streaming::qar_qt_streaming
     Qt5::Widgets
     GTest::gtest
@@ -366,6 +429,47 @@ if(TARGET Qt5::Widgets AND TARGET qar_qt_streaming::qar_qt_streaming)
 else()
   message(STATUS
     "Qt5 Widgets or qar_qt_streaming not found; qar_rviz_streaming_widget_tests is skipped.")
+endif()
+
+# --- The speed of the render tick ------------------------------------------------
+#
+# The plans of the idle and the streaming tier, the choice between them, the throttle of the
+# zero-interval timer and the plan applied to a real QTimer. QtCore only, with its own main() that
+# makes a QCoreApplication (no platform plugin). Two cases measure wall time against the ticks of
+# a timer, so the whole executable runs one test at a time.
+if(TARGET Qt5::Core)
+  add_executable(qar_rviz_streaming_tick_tests
+    render_tick_pacing_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/render_tick_pacing.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/render_tick_timer.cpp
+  )
+
+  target_include_directories(qar_rviz_streaming_tick_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  )
+
+  target_link_libraries(qar_rviz_streaming_tick_tests PRIVATE
+    Qt5::Core
+    GTest::gtest
+  )
+
+  target_compile_features(qar_rviz_streaming_tick_tests PRIVATE cxx_std_17)
+
+  qar_apply_warning_flags(qar_rviz_streaming_tick_tests)
+
+  # Qt5Core.dll next to the executable, for gtest_discover_tests to run it.
+  add_custom_command(TARGET qar_rviz_streaming_tick_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "$<TARGET_FILE:Qt5::Core>" "$<TARGET_FILE_DIR:qar_rviz_streaming_tick_tests>"
+    VERBATIM
+  )
+
+  gtest_discover_tests(qar_rviz_streaming_tick_tests
+    DISCOVERY_TIMEOUT 60
+    PROPERTIES RUN_SERIAL TRUE
+  )
+else()
+  message(STATUS "Qt5 Core not found; qar_rviz_streaming_tick_tests is skipped.")
 endif()
 
 # The version of the build (cmake/QarRvizVersion.cmake) against the file VERSION and package.xml:

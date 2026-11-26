@@ -9,7 +9,8 @@
 /// with a filter, and the choice of what to do with the one you picked.
 ///
 /// The listing covers the whole graph (`qar_ros_ui::GraphDiscovery` fills it)
-/// and the dialog carries the "expose as a QAR AR tool" decision. It is pure Qt
+/// and the dialog carries the choice between "Add" (display and AR tool) and "Add
+/// display only", and the default of "Allow publishing from AR". It is pure Qt
 /// Widgets — handed a listing and a DisplayClassCatalog, it hands back the
 /// operator's choice. It performs no ROS call, creates no RViz Display and
 /// generates no panel, so the ROS-facing work stays in QarStreamingPanel where
@@ -28,6 +29,7 @@ class QCheckBox;
 class QDialogButtonBox;
 class QLabel;
 class QLineEdit;
+class QPushButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -44,12 +46,16 @@ struct AddTopicSelection
   /// handles the type, in which case the topic can still be pinned or exposed.
   QString display_class;
 
-  /// Generate an AR panel for it and open it in the headset. Always true for a
-  /// service or an action — RViz has nothing else to do with those.
-  bool expose_as_ar_tool = false;
-  /// Topics only: the AR panel also offers a publish form. Off by default —
-  /// a `publish:/cmd_vel` control is a robot command, so the operator opts in.
+  /// Generate an AR panel for it and open it in the headset. True for "Add", false
+  /// for "Add display only" (topics only); always true for a service or an action.
+  bool expose_as_ar_tool = true;
+  /// Topics only: the AR panel also offers a publish form. The box starts in the
+  /// state `default_write_for` gives the type (a switch, a button or velocity
+  /// sliders can be used without a keyboard); a publication still needs a second
+  /// press in AR.
   bool allow_publish = false;
+  /// Topics only: the operator changed the box from the default of its type.
+  bool write_chosen = false;
 
   bool empty() const { return name.isEmpty(); }
 };
@@ -82,7 +88,8 @@ private Q_SLOTS:
   void onFilterChanged(const QString & text);
   void onSelectionChanged();
   void onItemActivated(QTreeWidgetItem * item, int column);
-  void onExposeToggled(bool checked);
+  /// "Add display only": the display and the watch-list pin, no AR tool.
+  void onAddDisplayOnly();
 
 private:
   void rebuildTree();
@@ -100,12 +107,17 @@ private:
 
   QLineEdit * filter_edit_ = nullptr;
   QTreeWidget * tree_ = nullptr;
-  QCheckBox * expose_check_ = nullptr;
   QCheckBox * publish_check_ = nullptr;
   QLabel * detail_label_ = nullptr;
   QDialogButtonBox * buttons_ = nullptr;
+  QPushButton * display_only_button_ = nullptr;
 
   AddTopicSelection selection_;
+  /// Set by "Add display only" just before the dialog closes.
+  bool display_only_ = false;
+  /// The entity the publish box was last set for: the box returns to its default when the
+  /// SELECTION changes, not when the same selection is rebuilt (filter, refresh).
+  QString box_key_;
   /// Entity to re-select after a rebuild, so filtering/refreshing keeps the place.
   QString pending_reselect_;
 };

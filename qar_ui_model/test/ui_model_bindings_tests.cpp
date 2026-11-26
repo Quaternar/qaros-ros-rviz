@@ -143,6 +143,36 @@ contains_word(const std::string & text, std::string_view word)
 
 }  // namespace
 
+TEST(UiModelBindings, TheCompactFlagRoundTripsAndOnlyToggleAndValueHonourIt)
+{
+  const Widget compact = widgets::toggle("t", "on", "T").with_compact();
+  const UiValue value = to_value(compact);
+  ASSERT_NE(value.find("compact"), nullptr);
+  EXPECT_TRUE(value.find("compact")->as_bool());
+  // Written only when set, so a model that never heard of it keeps its text.
+  EXPECT_EQ(to_value(widgets::toggle("t", "on", "T")).find("compact"), nullptr);
+
+  UiValue parsed;
+  JsonParseError parse_error;
+  ASSERT_TRUE(json_parse(json_write(value), parsed, parse_error)) << parse_error.to_string();
+  Widget back;
+  std::string error;
+  ASSERT_TRUE(from_value(parsed, back, error)) << error;
+  EXPECT_TRUE(back.compact);
+  ASSERT_TRUE(json_parse(
+      "{\"id\":\"t\",\"type\":\"toggle\",\"bind\":\"on\"}", parsed, parse_error));
+  ASSERT_TRUE(from_value(parsed, back, error)) << error;
+  EXPECT_FALSE(back.compact);
+
+  UiModel model;
+  model.root = widgets::panel("p", "P").add(compact)
+    .add(widgets::value("v", "a", "V").with_compact());
+  EXPECT_FALSE(has_problem(validate(model), ProblemSeverity::Warning, "t", "compact"));
+  EXPECT_FALSE(has_problem(validate(model), ProblemSeverity::Warning, "v", "compact"));
+  model.root.add(widgets::number("n", "b", "N").with_compact());
+  EXPECT_TRUE(has_problem(validate(model), ProblemSeverity::Warning, "n", "compact"));
+}
+
 TEST(UiModelBindings, CodecRoundTrip)
 {
   Widget toggle = widgets::toggle("t", "panels.s0.on", "Panel 1").with_action("cp.panel.toggle");
@@ -259,7 +289,7 @@ TEST(UiModelBindings, RendererUnchangedWithoutBindings)
 
   // The markup, the stylesheet and the JSON blocks of a model that does not use the fields, as
   // one fingerprint: a change here is a change to the DOM contract of every existing page.
-  EXPECT_EQ(fingerprint(html), 9720008613085469433ULL) << html.size();
+  EXPECT_EQ(fingerprint(html), 10357678453052081785ULL) << html.size();
 
   // Setting the fields to nothing changes nothing.
   UiModel emptied = model;

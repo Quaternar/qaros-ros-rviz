@@ -11,6 +11,7 @@
 #include <QString>
 #include <QTextBrowser>
 
+#include "qar_rviz_streaming/ar_copy_panels.hpp"
 #include "qar_rviz_streaming/rtti_guard.hpp"
 
 // Deliberately NOT visualization_manager.hpp, panel_factory.hpp or
@@ -110,7 +111,7 @@ find_frame(rviz_common::DisplayContext * context)
 ///
 /// G2-G4 are rtti_cast_from_opaque. On MSVC a pointer that is not an object at all makes
 /// the RTTI throw `std::__non_rtti_object` (a `std::exception`), which rtti_cast_from_opaque
-/// catches; create_hidden_displays_panel has the same net around the whole of this.
+/// catches; create_hidden_rviz_panel has the same net around the whole of this.
 PanelClassFactory *
 verified_panel_factory(rviz_common::VisualizationFrame & frame, HiddenRvizPanel & out)
 {
@@ -149,10 +150,10 @@ verified_panel_factory(rviz_common::VisualizationFrame & frame, HiddenRvizPanel 
 }  // namespace
 
 HiddenRvizPanel
-create_hidden_displays_panel(rviz_common::DisplayContext * context)
+create_hidden_rviz_panel(rviz_common::DisplayContext * context, const ArCopyPanelClass & cls)
 {
   HiddenRvizPanel out;
-  out.class_id = kDisplaysPanelClassId;
+  out.class_id = cls.class_id;
   try {
     if (context == nullptr) {
       out.error = "there is no RViz display context";
@@ -174,10 +175,9 @@ create_hidden_displays_panel(rviz_common::DisplayContext * context)
     }
 
     QString make_error;
-    rviz_common::Panel * made =
-      factory->make(QString::fromLatin1(kDisplaysPanelClassId), &make_error);
+    rviz_common::Panel * made = factory->make(QString::fromLatin1(cls.class_id), &make_error);
     if (made == nullptr) {
-      out.error = std::string("RViz's panel factory could not make '") + kDisplaysPanelClassId + "'";
+      out.error = std::string("RViz's panel factory could not make '") + cls.class_id + "'";
       if (!make_error.isEmpty()) {
         out.error += ": " + make_error.toStdString();
       }
@@ -190,37 +190,50 @@ create_hidden_displays_panel(rviz_common::DisplayContext * context)
     // it. A different class under this id would not have the property tree this code
     // then reaches into.
     out.class_name = panel->metaObject()->className();
-    if (out.class_name != kDisplaysPanelQtClassName) {
-      out.error = "the factory made a '" + out.class_name + "' for '" + kDisplaysPanelClassId +
-        "', not a '" + kDisplaysPanelQtClassName + "'; it was deleted unused";
+    if (out.class_name != cls.qt_class_name) {
+      out.error = "the factory made a '" + out.class_name + "' for '" + cls.class_id +
+        "', not a '" + cls.qt_class_name + "'; it was deleted unused";
       return out;
     }
 
-    // Binds the panel to the SAME display tree model the real Displays dock shows.
+    // Binds the panel to the SAME model the real dock of this class shows.
     panel->initialize(context);
 
-    // The one thing different about this copy: no item drag. A drag started by
-    // synthetic AR pointer input must never enter the operating system's
-    // drag-and-drop loop (QDrag::exec -> DoDragDrop on Windows). Not finding the tree
-    // is a failure rather than a shrug: without this the copy is not safe to hand to AR.
-    auto * tree = panel->findChild<rviz_common::properties::PropertyTreeWidget *>();
-    if (tree == nullptr) {
-      out.error = "the panel has no property tree to switch item dragging off on";
+    // The one thing different about this copy: no item drag, on every property tree of it. A
+    // drag started by synthetic AR pointer input must never enter the operating system's
+    // drag-and-drop loop (QDrag::exec -> DoDragDrop on Windows). Not finding a tree is a
+    // failure rather than a shrug: without this the copy is not safe to hand to AR, and for the
+    // Selection panel (named by its base class) it is also what says the object is the one
+    // that was asked for. A class without a property tree (the Help panel) has no drag to
+    // switch off; what says the object is the one that was asked for there is its exact class
+    // name and the text browser it must hold.
+    if (cls.has_property_tree) {
+      const auto trees = panel->findChildren<rviz_common::properties::PropertyTreeWidget *>();
+      if (trees.isEmpty()) {
+        out.error = "the panel has no property tree to switch item dragging off on";
+        return out;
+      }
+      for (rviz_common::properties::PropertyTreeWidget * tree : trees) {
+        tree->setDragEnabled(false);
+      }
+      out.item_drag_disabled = true;
+    } else if (panel->findChild<QTextBrowser *>() == nullptr) {
+      out.error = "the panel has no text browser to show its text in";
       return out;
     }
-    tree->setDragEnabled(false);
-    out.item_drag_disabled = true;
 
     // The tree gets the whole height of the copy: the help area under it (a text browser that
     // the tree's current item fills) is hidden. The copy is a window of its own, so the help
-    // area of the Displays dock on the desktop is another widget and stays as it is.
-    for (QTextBrowser * help : panel->findChildren<QTextBrowser *>()) {
-      help->hide();
-      out.help_area_hidden = true;
+    // area of the dock on the desktop is another widget and stays as it is.
+    if (cls.hide_help_area) {
+      for (QTextBrowser * help : panel->findChildren<QTextBrowser *>()) {
+        help->hide();
+        out.help_area_hidden = true;
+      }
     }
 
     // Only a label for debuggers and Qt's own messages: the window is never on screen.
-    panel->setWindowTitle(QStringLiteral("Displays (AR copy)"));
+    panel->setWindowTitle(QString::fromStdString(ar_copy_window_title(cls)));
 
     out.panel = std::move(panel);
   } catch (const std::exception & e) {
@@ -231,6 +244,27 @@ create_hidden_displays_panel(rviz_common::DisplayContext * context)
     out.error = "creating it threw an unknown exception";
   }
   return out;
+}
+
+HiddenRvizPanel
+create_hidden_displays_panel(rviz_common::DisplayContext * context)
+{
+  const ArCopyPanelClass * cls = ar_copy_panel_class(kDisplaysPanelClassId);
+  if (cls == nullptr) {
+    HiddenRvizPanel out;
+    out.class_id = kDisplaysPanelClassId;
+    out.error = "the Displays panel is not in the table of the classes that have an AR copy";
+    return out;
+  }
+  return create_hidden_rviz_panel(context, *cls);
+}
+
+void copy_panel_view_state(const rviz_common::Panel & from, rviz_common::Panel & to)
+{
+  // A Config is a handle on a shared node: the panel saves into it and the copy reads it back.
+  rviz_common::Config config;
+  from.save(config);
+  to.load(config);
 }
 
 }  // namespace qar_rviz_streaming

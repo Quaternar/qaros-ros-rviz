@@ -24,6 +24,7 @@
 #include <functional>
 #include <set>
 #include <string>
+#include <utility>
 
 #include <QHostAddress>
 #include <QObject>

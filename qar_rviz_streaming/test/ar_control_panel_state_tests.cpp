@@ -100,6 +100,12 @@ ControlPanelSnapshot live_snapshot()
 
 const char * const kNoSessionLine = "AR panels and tools are switched in a live QarOS session";
 
+/// The overflow line of the page for @p count entries without a slot.
+std::string more_line(int count)
+{
+  return "... and " + std::to_string(count) + " more: switch them on the desktop";
+}
+
 }  // namespace
 
 TEST(ArControlPanelState, FirstUpdatePublishesEverything)
@@ -108,8 +114,9 @@ TEST(ArControlPanelState, FirstUpdatePublishesEverything)
   EXPECT_TRUE(state.document().is_null()) << "no document before the first update";
 
   const std::vector<PatchEntry> first = state.update(ControlPanelSnapshot{});
-  // 3 status + 2 pick + 6 x 3 panel + 4 x 3 tool + 4 more paths.
-  EXPECT_EQ(first.size(), 39u);
+  // 3 status + 2 pick + 2 topic + 4 x 3 topic switch + 2 more topics + the Qt panel size + 16 x 3
+  // panel + 8 x 3 tool + 4 more.
+  EXPECT_EQ(first.size(), 98u);
   const std::vector<std::string> paths = paths_of(first);
   EXPECT_EQ(std::set<std::string>(paths.begin(), paths.end()).size(), paths.size())
     << "a path once";
@@ -148,6 +155,9 @@ TEST(ArControlPanelState, FirstUpdatePublishesEverything)
   EXPECT_EQ(*find_entry(first, "more.panels_show"), UiValue(true));
   EXPECT_EQ(*find_entry(first, "more.tools"), UiValue(""));
   EXPECT_EQ(*find_entry(first, "more.tools_show"), UiValue(false));
+  EXPECT_EQ(*find_entry(first, "more.topics"), UiValue(""));
+  EXPECT_EQ(*find_entry(first, "more.topics_show"), UiValue(false));
+  EXPECT_EQ(*find_entry(first, "settings.ar_copy_size"), UiValue("enlarged"));
 
   // That document is the one the page starts from, path by path; so is a document that the
   // patch builds from the initial one.
@@ -166,7 +176,7 @@ TEST(ArControlPanelState, FirstUpdatePublishesEverything)
   busy.panels = {panel("dock:Views", "Views", PanelArState::Streaming)};
   busy.tools = {tool("tool.a", "Speed")};
   ArControlPanelState other;
-  EXPECT_EQ(other.update(busy).size(), 39u);
+  EXPECT_EQ(other.update(busy).size(), 98u);
 }
 
 TEST(ArControlPanelState, ResyncReplacesTheWholeDocument)
@@ -334,11 +344,11 @@ TEST(ArControlPanelState, SlotsStayStableWhenEntriesComeAndGo)
   EXPECT_EQ(value_at(odd.document(), "more.panels_show"), UiValue(false));
 
   // Out-of-range slots read as free.
-  EXPECT_EQ(state.panel_key(6), "");
+  EXPECT_EQ(state.panel_key(ac::kPanelSlots), "");
   EXPECT_EQ(state.panel_key(1000), "");
-  EXPECT_EQ(state.tool_panel_id(4), "");
-  EXPECT_EQ(state.panel_title(6), "");
-  EXPECT_EQ(state.tool_title(4), "");
+  EXPECT_EQ(state.tool_panel_id(ac::kToolSlots), "");
+  EXPECT_EQ(state.panel_title(ac::kPanelSlots), "");
+  EXPECT_EQ(state.tool_title(ac::kToolSlots), "");
 }
 
 TEST(ArControlPanelState, FreedSlotStaysEmptyForOneUpdate)
@@ -394,26 +404,26 @@ TEST(ArControlPanelState, FreedSlotStaysEmptyForOneUpdate)
   }
   full.update(crowd);
   crowd.panels.erase(crowd.panels.begin() + 2);
-  crowd.panels.push_back(panel("p6", "Panel 6"));
+  crowd.panels.push_back(panel("pn", "Panel N"));
   full.update(crowd);
   EXPECT_EQ(full.panel_key(2), "");
   EXPECT_EQ(value_at(full.document(), "panels.s2.show"), UiValue(false));
-  EXPECT_EQ(value_at(full.document(), "more.panels"), UiValue("1 more on the desktop"));
+  EXPECT_EQ(value_at(full.document(), "more.panels"), UiValue(more_line(1)));
   EXPECT_EQ(value_at(full.document(), "more.panels_show"), UiValue(true));
   full.update(crowd);
-  EXPECT_EQ(full.panel_key(2), "p6");
+  EXPECT_EQ(full.panel_key(2), "pn");
   EXPECT_EQ(value_at(full.document(), "panels.s2.show"), UiValue(true));
-  EXPECT_EQ(value_at(full.document(), "panels.s2.title"), UiValue("Panel 6"));
+  EXPECT_EQ(value_at(full.document(), "panels.s2.title"), UiValue("Panel N"));
   EXPECT_EQ(value_at(full.document(), "more.panels_show"), UiValue(false));
 }
 
 TEST(ArControlPanelState, OverflowIsCounted)
 {
   ControlPanelSnapshot snapshot = live_snapshot();
-  for (int i = 0; i < 8; ++i) {
+  for (std::size_t i = 0; i < ac::kPanelSlots + 2; ++i) {
     snapshot.panels.push_back(panel("p" + std::to_string(i), "Panel " + std::to_string(i)));
   }
-  for (int i = 0; i < 6; ++i) {
+  for (std::size_t i = 0; i < ac::kToolSlots + 2; ++i) {
     snapshot.tools.push_back(tool("t" + std::to_string(i), "Tool " + std::to_string(i)));
   }
   ArControlPanelState state;
@@ -425,14 +435,14 @@ TEST(ArControlPanelState, OverflowIsCounted)
   for (std::size_t slot = 0; slot < ac::kToolSlots; ++slot) {
     EXPECT_EQ(state.tool_panel_id(slot), "t" + std::to_string(slot));
   }
-  EXPECT_EQ(value_at(state.document(), "more.panels"), UiValue("2 more on the desktop"));
+  EXPECT_EQ(value_at(state.document(), "more.panels"), UiValue(more_line(2)));
   EXPECT_EQ(value_at(state.document(), "more.panels_show"), UiValue(true));
-  EXPECT_EQ(value_at(state.document(), "more.tools"), UiValue("2 more on the desktop"));
+  EXPECT_EQ(value_at(state.document(), "more.tools"), UiValue(more_line(2)));
   EXPECT_EQ(value_at(state.document(), "more.tools_show"), UiValue(true));
 
   // Exactly as many as there are slots: no overflow.
-  snapshot.panels.resize(6);
-  snapshot.tools.resize(4);
+  snapshot.panels.resize(ac::kPanelSlots);
+  snapshot.tools.resize(ac::kToolSlots);
   const std::vector<PatchEntry> fits = state.update(snapshot);
   EXPECT_EQ(
     sorted(paths_of(fits)),
@@ -441,14 +451,14 @@ TEST(ArControlPanelState, OverflowIsCounted)
   EXPECT_EQ(value_at(state.document(), "more.panels"), UiValue(""));
 
   // One more than the slots: the count is 1.
-  snapshot.panels.push_back(panel("p6", "Panel 6"));
+  snapshot.panels.push_back(panel("pn", "Panel N"));
   state.update(snapshot);
-  EXPECT_EQ(value_at(state.document(), "more.panels"), UiValue("1 more on the desktop"));
+  EXPECT_EQ(value_at(state.document(), "more.panels"), UiValue(more_line(1)));
 
   // A listed panel that has a slot keeps it, even when it moves behind the others in the list;
   // and when a slot frees up, the first panel without a slot takes it in the next update.
   ControlPanelSnapshot crowded = live_snapshot();
-  for (int i = 0; i < 8; ++i) {
+  for (std::size_t i = 0; i < ac::kPanelSlots + 2; ++i) {
     crowded.panels.push_back(panel("q" + std::to_string(i), "Q" + std::to_string(i)));
   }
   ArControlPanelState second;
@@ -463,14 +473,68 @@ TEST(ArControlPanelState, OverflowIsCounted)
       [](const ControlPanelPanelEntry & e) {return e.key == "q1";}),
     crowded.panels.end());
   second.update(crowded);
-  // The slot of q1 stays empty in the update in which q1 left, so q7 and q6 are both still
+  // The slot of q1 stays empty in the update in which q1 left, so q17 and q16 are both still
   // without a slot.
   EXPECT_EQ(second.panel_key(1), "");
-  EXPECT_EQ(value_at(second.document(), "more.panels"), UiValue("2 more on the desktop"));
+  EXPECT_EQ(value_at(second.document(), "more.panels"), UiValue(more_line(2)));
   second.update(crowded);
-  // Reversed list: q7 is the first panel without a slot, so it takes the freed slot 1.
-  EXPECT_EQ(second.panel_key(1), "q7");
-  EXPECT_EQ(value_at(second.document(), "more.panels"), UiValue("1 more on the desktop"));
+  // Reversed list: q17 is the first panel without a slot, so it takes the freed slot 1.
+  EXPECT_EQ(second.panel_key(1), "q17");
+  EXPECT_EQ(value_at(second.document(), "more.panels"), UiValue(more_line(1)));
+}
+
+TEST(ArControlPanelState, SixteenPanelSlotsFillInOrder)
+{
+  EXPECT_EQ(ac::kPanelSlots, 16u);
+  ControlPanelSnapshot snapshot = live_snapshot();
+  for (std::size_t i = 0; i < 16; ++i) {
+    snapshot.panels.push_back(panel("p" + std::to_string(i), "Panel " + std::to_string(i)));
+  }
+  ArControlPanelState state;
+  state.update(snapshot);
+  for (std::size_t slot = 0; slot < 16; ++slot) {
+    EXPECT_EQ(state.panel_key(slot), "p" + std::to_string(slot)) << "slot " << slot;
+    EXPECT_EQ(
+      value_at(state.document(), ac::panel_path(slot, "title")),
+      UiValue("Panel " + std::to_string(slot)));
+    EXPECT_EQ(value_at(state.document(), ac::panel_path(slot, "show")), UiValue(true));
+  }
+  EXPECT_EQ(value_at(state.document(), "more.panels_show"), UiValue(false));
+  EXPECT_EQ(value_at(state.document(), "more.panels"), UiValue(""));
+}
+
+TEST(ArControlPanelState, TheSeventeenthPanelIsCountedInTheMoreLine)
+{
+  ControlPanelSnapshot snapshot = live_snapshot();
+  for (std::size_t i = 0; i < 17; ++i) {
+    snapshot.panels.push_back(panel("p" + std::to_string(i), "Panel " + std::to_string(i)));
+  }
+  ArControlPanelState state;
+  state.update(snapshot);
+  EXPECT_EQ(state.panel_key(15), "p15");
+  EXPECT_EQ(value_at(state.document(), "more.panels"), UiValue(more_line(1)));
+  EXPECT_EQ(value_at(state.document(), "more.panels_show"), UiValue(true));
+  // The text names the desktop as the place to switch the rest.
+  EXPECT_EQ(
+    value_at(state.document(), "more.panels"),
+    UiValue("... and 1 more: switch them on the desktop"));
+}
+
+TEST(ArControlPanelState, EightToolSlots)
+{
+  EXPECT_EQ(ac::kToolSlots, 8u);
+  ControlPanelSnapshot snapshot = live_snapshot();
+  for (std::size_t i = 0; i < 9; ++i) {
+    snapshot.tools.push_back(tool("t" + std::to_string(i), "Tool " + std::to_string(i)));
+  }
+  ArControlPanelState state;
+  state.update(snapshot);
+  for (std::size_t slot = 0; slot < 8; ++slot) {
+    EXPECT_EQ(state.tool_panel_id(slot), "t" + std::to_string(slot)) << "slot " << slot;
+    EXPECT_EQ(value_at(state.document(), ac::tool_path(slot, "show")), UiValue(true));
+  }
+  EXPECT_EQ(value_at(state.document(), "more.tools"), UiValue(more_line(1)));
+  EXPECT_EQ(value_at(state.document(), "more.tools_show"), UiValue(true));
 }
 
 TEST(ArControlPanelState, OnFollowsArState)
@@ -580,7 +644,7 @@ TEST(ArControlPanelState, NoLiveSessionListsNothing)
 
     ArControlPanelState state;
     const std::vector<PatchEntry> first = state.update(snapshot);
-    EXPECT_EQ(first.size(), 39u) << word;
+    EXPECT_EQ(first.size(), 98u) << word;
     EXPECT_EQ(value_at(state.document(), "status.connection"), UiValue(word));
     for (std::size_t slot = 0; slot < ac::kPanelSlots; ++slot) {
       EXPECT_EQ(value_at(state.document(), ac::panel_path(slot, "show")), UiValue(false)) << word;
@@ -862,6 +926,194 @@ TEST(ArControlPanelState, PickCaptionRules)
   EXPECT_EQ(*find_entry(patch, "pick.mode"), UiValue("point"));
 }
 
+/// A snapshot with Nav goal armed and the options of the mode.
+ControlPanelSnapshot topic_snapshot()
+{
+  ControlPanelSnapshot snapshot;
+  snapshot.connection = ConnectionState::Live;
+  snapshot.pick_mode = ArPickMode::NavGoal;
+  snapshot.pick_topic = "/goal_pose";
+  snapshot.pick_type = "PoseStamped";
+  snapshot.pick_topic_options = {"/goal_pose", "/nav/goal", "/other_goal"};
+  snapshot.pick_topic_index = 0;
+  return snapshot;
+}
+
+TEST(ArControlPanelState, TheTopicLineShowsWhileAModeIsArmed)
+{
+  ArControlPanelState state;
+  state.update(ControlPanelSnapshot{});
+  EXPECT_EQ(value_at(state.document(), "pick.topic_show"), UiValue(false));
+  EXPECT_EQ(value_at(state.document(), "pick.topic"), UiValue(""));
+
+  // Armed: the switches appear in one update, whatever the connection. The topic in force is
+  // the first switch here, so that switch names it and the line stays hidden.
+  for (const ConnectionState connection :
+    {ConnectionState::Offline, ConnectionState::Preview, ConnectionState::Live})
+  {
+    ArControlPanelState page;
+    ControlPanelSnapshot armed = topic_snapshot();
+    armed.connection = connection;
+    page.update(armed);
+    EXPECT_EQ(value_at(page.document(), "pick.topic_show"), UiValue(false));
+    EXPECT_EQ(value_at(page.document(), "pick.topic"), UiValue("/goal_pose (PoseStamped)"));
+    EXPECT_EQ(value_at(page.document(), "pick.topics.s0.show"), UiValue(true));
+    EXPECT_EQ(value_at(page.document(), "pick.topics.s1.title"), UiValue("/nav/goal"));
+    EXPECT_EQ(value_at(page.document(), "pick.topics.s2.title"), UiValue("/other_goal"));
+    // The slots beyond the options are hidden and hold no title.
+    EXPECT_EQ(value_at(page.document(), "pick.topics.s3.show"), UiValue(false));
+    EXPECT_TRUE(value_at(page.document(), "pick.topics.s3.title").is_null());
+  }
+
+  // Off again: the line is hidden and the switches too.
+  ControlPanelSnapshot snapshot = topic_snapshot();
+  state.update(snapshot);
+  snapshot.pick_mode = ArPickMode::Off;
+  const std::vector<PatchEntry> patch = state.update(snapshot);
+  EXPECT_EQ(find_entry(patch, "pick.topic_show"), nullptr) << "it was hidden and stays hidden";
+  EXPECT_EQ(*find_entry(patch, "pick.topics.s0.show"), UiValue(false));
+  EXPECT_EQ(*find_entry(patch, "pick.topic"), UiValue(""));
+
+  // A mode that only the desktop arms has its topic named too (its one switch is on).
+  ControlPanelSnapshot other = topic_snapshot();
+  other.pick_mode = ArPickMode::Off;
+  other.pick_mode_other = true;
+  other.pick_mode_other_name = "initial pose";
+  other.pick_topic = "/initialpose";
+  other.pick_type = "PoseWithCovarianceStamped";
+  other.pick_topic_options = {"/initialpose"};
+  ArControlPanelState desktop;
+  desktop.update(other);
+  EXPECT_EQ(
+    value_at(desktop.document(), "pick.topic"),
+    UiValue("/initialpose (PoseWithCovarianceStamped)"));
+
+  // An armed mode without a topic (the host has none to name) shows nothing.
+  ControlPanelSnapshot none = topic_snapshot();
+  none.pick_topic.clear();
+  none.pick_topic_options.clear();
+  ArControlPanelState empty;
+  empty.update(none);
+  EXPECT_EQ(value_at(empty.document(), "pick.topic_show"), UiValue(false));
+
+  // Only the paths of the topic block change when the topic does.
+  ControlPanelSnapshot moved = topic_snapshot();
+  state.update(moved);
+  moved.pick_topic = "/nav/goal";
+  moved.pick_topic_index = 1;
+  const std::vector<PatchEntry> change = state.update(moved);
+  EXPECT_EQ(
+    sorted(paths_of(change)),
+    (std::vector<std::string>{"pick.topic", "pick.topics.s0.on", "pick.topics.s1.on"}));
+  EXPECT_EQ(*find_entry(change, "pick.topic"), UiValue("/nav/goal (PoseStamped)"));
+}
+
+TEST(ArControlPanelState, TheTopicLineIsHiddenWhileASwitchNamesTheTopic)
+{
+  ArControlPanelState state;
+  ControlPanelSnapshot snapshot = topic_snapshot();
+  for (std::size_t index = 0; index < snapshot.pick_topic_options.size(); ++index) {
+    snapshot.pick_topic_index = index;
+    snapshot.pick_topic = snapshot.pick_topic_options[index];
+    state.update(snapshot);
+    EXPECT_EQ(value_at(state.document(), "pick.topic_show"), UiValue(false)) << index;
+    EXPECT_EQ(value_at(state.document(), ac::pick_topic_path(index, "on")), UiValue(true));
+  }
+
+  // The topic in force is not among the offered switches: the line names it, with its type.
+  snapshot.pick_topic_options = {"/a", "/b", "/c", "/d", "/e"};
+  snapshot.pick_topic = "/e";
+  snapshot.pick_topic_index = 4;
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "pick.topic_show"), UiValue(true));
+  EXPECT_EQ(value_at(state.document(), "pick.topic"), UiValue("/e (PoseStamped)"));
+
+  // A topic that no option stands for (a typed one): index past the options, line shown.
+  snapshot.pick_topic_options = {"/a", "/b"};
+  snapshot.pick_topic = "/typed";
+  snapshot.pick_topic_index = 2;
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "pick.topic_show"), UiValue(true));
+  EXPECT_EQ(value_at(state.document(), "pick.topic"), UiValue("/typed (PoseStamped)"));
+
+  // No options at all: the line is the only place that names the topic.
+  snapshot.pick_topic_options.clear();
+  snapshot.pick_topic_index = 0;
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "pick.topic_show"), UiValue(true));
+
+  // Switching from the line to a switch hides it in the same patch that turns the switch on.
+  snapshot.pick_topic_options = {"/a", "/b"};
+  snapshot.pick_topic = "/b";
+  snapshot.pick_topic_index = 1;
+  const std::vector<PatchEntry> patch = state.update(snapshot);
+  EXPECT_EQ(*find_entry(patch, "pick.topic_show"), UiValue(false));
+  EXPECT_EQ(*find_entry(patch, "pick.topics.s1.on"), UiValue(true));
+
+  // Not armed: nothing is shown.
+  snapshot.pick_mode = ArPickMode::Off;
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "pick.topic_show"), UiValue(false));
+}
+
+TEST(ArControlPanelState, TheTopicSwitchInForceReadsOn)
+{
+  ArControlPanelState state;
+  ControlPanelSnapshot snapshot = topic_snapshot();
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "pick.topics.s0.on"), UiValue(true));
+  EXPECT_EQ(value_at(state.document(), "pick.topics.s1.on"), UiValue(false));
+  EXPECT_EQ(value_at(state.document(), "pick.topics.s2.on"), UiValue(false));
+  EXPECT_EQ(value_at(state.document(), "pick.topics.s3.on"), UiValue(false));
+
+  snapshot.pick_topic_index = 2;
+  const std::vector<PatchEntry> patch = state.update(snapshot);
+  EXPECT_EQ(*find_entry(patch, "pick.topics.s0.on"), UiValue(false));
+  EXPECT_EQ(*find_entry(patch, "pick.topics.s2.on"), UiValue(true));
+  EXPECT_EQ(patch.size(), 2u);
+
+  // A topic in force that is not among the first four reads on in no switch; the line says it.
+  snapshot.pick_topic_options = {"/a", "/b", "/c", "/d", "/e"};
+  snapshot.pick_topic = "/e";
+  snapshot.pick_topic_index = 4;
+  state.update(snapshot);
+  for (std::size_t slot = 0; slot < ac::kPickTopicSlots; ++slot) {
+    EXPECT_EQ(value_at(state.document(), ac::pick_topic_path(slot, "on")), UiValue(false));
+    EXPECT_EQ(value_at(state.document(), ac::pick_topic_path(slot, "show")), UiValue(true));
+  }
+  EXPECT_EQ(value_at(state.document(), "pick.topic"), UiValue("/e (PoseStamped)"));
+  EXPECT_EQ(value_at(state.document(), "pick.topic_show"), UiValue(true));
+  // Long names are cut to 200 bytes.
+  snapshot.pick_topic_options = {"/" + std::string(300, 'a')};
+  snapshot.pick_topic_index = 0;
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "pick.topics.s0.title").as_string().size(), 200u);
+}
+
+TEST(ArControlPanelState, ADroppedPickIsInTheCaption)
+{
+  ControlPanelSnapshot snapshot = topic_snapshot();
+  snapshot.pick_topic_dropped = true;
+  EXPECT_EQ(caption_of(snapshot), "Topic changed: the waiting pick was dropped");
+  EXPECT_STREQ(ac::kCaptionTopicDropped, "Topic changed: the waiting pick was dropped");
+  // A pick that waits again comes first; the flag does not show while nothing is armed.
+  snapshot.pick_pending = true;
+  snapshot.pick_summary = "Nav goal @ x=1.00 y=2.00 z=0.00";
+  EXPECT_EQ(caption_of(snapshot), "Waiting: Nav goal @ x=1.00 y=2.00 z=0.00 - Confirm or Cancel");
+  snapshot.pick_pending = false;
+  snapshot.pick_mode = ArPickMode::Off;
+  EXPECT_EQ(caption_of(snapshot), "Choose Point or Nav goal, then aim in the scene");
+
+  ArControlPanelState state;
+  ControlPanelSnapshot armed = topic_snapshot();
+  state.update(armed);
+  armed.pick_topic_dropped = true;
+  const std::vector<PatchEntry> patch = state.update(armed);
+  ASSERT_EQ(patch.size(), 1u);
+  EXPECT_EQ(
+    *find_entry(patch, "pick.caption"), UiValue("Topic changed: the waiting pick was dropped"));
+}
+
 TEST(ArControlPanelState, AutoConfirmIsShown)
 {
   const std::string suffix = " - publishes on release (desktop setting)";
@@ -947,39 +1199,45 @@ TEST(ArControlPanelState, TheStandardDisplaysDockHasNoSwitch)
   EXPECT_STREQ(ac::kStandardDisplaysKey, "dock:Displays");
 
   // The desktop's list as RViz fills it: this panel, the docks (the standard Displays dock among
-  // them), two video panels and, last, the AR copy of the Displays panel. Eight entries, one of
-  // them the standard Displays dock: seven are listed, six take the slots and one is "more".
+  // them), two video panels and, last, the AR copy of the Displays panel. One more entry than
+  // the slots after the standard Displays dock is left out: the last one is counted as "more".
   ControlPanelSnapshot snapshot = live_snapshot();
   snapshot.panels = {
     panel("qar_streaming_panel", "This QAR panel", PanelArState::Streaming),
-    panel("dock:Displays", "Displays", PanelArState::Streaming),
-    panel("dock:Views", "Views"),
-    panel("dock:Tool Properties", "Tool Properties"),
-    panel("dock:Time", "Time"),
-    panel("video:/a", "Video: /a"),
-    panel("video:/b", "Video: /b"),
-    panel("hidden:Displays", "Displays (AR copy)", PanelArState::Streaming)};
+    panel("dock:Displays", "Displays", PanelArState::Streaming)};
+  std::vector<std::string> expected_keys = {"qar_streaming_panel"};
+  for (std::size_t i = 0; i + 3 < ac::kPanelSlots; ++i) {
+    const std::string name = "F" + std::to_string(i);
+    snapshot.panels.push_back(panel("dock:" + name, name));
+    expected_keys.push_back("dock:" + name);
+  }
+  snapshot.panels.push_back(panel("video:/a", "Video: /a"));
+  snapshot.panels.push_back(panel("video:/b", "Video: /b"));
+  snapshot.panels.push_back(
+    panel("hidden:Displays", "Displays (AR copy)", PanelArState::Streaming));
+  expected_keys.push_back("video:/a");
+  expected_keys.push_back("video:/b");
+  ASSERT_EQ(expected_keys.size(), ac::kPanelSlots);
   ArControlPanelState state;
   state.update(snapshot);
 
-  const std::vector<std::string> expected_keys = {
-    "qar_streaming_panel", "dock:Views", "dock:Tool Properties", "dock:Time", "video:/a",
-    "video:/b"};
   for (std::size_t slot = 0; slot < ac::kPanelSlots; ++slot) {
     EXPECT_EQ(state.panel_key(slot), expected_keys[slot]) << "slot " << slot;
     EXPECT_NE(state.panel_title(slot), "Displays") << "slot " << slot;
     EXPECT_NE(value_at(state.document(), ac::panel_path(slot, "title")), UiValue("Displays"))
       << "slot " << slot;
   }
-  EXPECT_EQ(value_at(state.document(), "panels.s1.title"), UiValue("Views"))
+  EXPECT_EQ(value_at(state.document(), "panels.s1.title"), UiValue("F0"))
     << "the next entry takes the place the Displays dock would have had";
-  EXPECT_EQ(value_at(state.document(), "more.panels"), UiValue("1 more on the desktop"))
+  EXPECT_EQ(
+    value_at(state.document(), "more.panels"),
+    UiValue(more_line(1)))
     << "the Displays dock is not counted";
   EXPECT_EQ(value_at(state.document(), "more.panels_show"), UiValue(true));
 
   // A slot that falls free goes to the next listed entry, the AR copy of the Displays panel,
   // never to the Displays dock.
-  snapshot.panels.erase(snapshot.panels.begin() + 2);  // dock:Views leaves
+  snapshot.panels.erase(snapshot.panels.begin() + 2);  // dock:F0 leaves
   state.update(snapshot);  // its slot stays empty for one update
   EXPECT_TRUE(state.panel_key(1).empty());
   state.update(snapshot);
@@ -988,7 +1246,6 @@ TEST(ArControlPanelState, TheStandardDisplaysDockHasNoSwitch)
   EXPECT_EQ(value_at(state.document(), "panels.s1.on"), UiValue(true));
   EXPECT_EQ(value_at(state.document(), "more.panels"), UiValue(""));
   EXPECT_EQ(value_at(state.document(), "more.panels_show"), UiValue(false));
-
   // The Displays dock alone: no slot is shown and nothing is counted.
   ControlPanelSnapshot only_displays = live_snapshot();
   only_displays.panels = {panel("dock:Displays", "Displays", PanelArState::Streaming)};
@@ -1000,4 +1257,123 @@ TEST(ArControlPanelState, TheStandardDisplaysDockHasNoSwitch)
       << "slot " << slot;
   }
   EXPECT_EQ(value_at(alone.document(), "more.panels_show"), UiValue(false));
+}
+
+TEST(ArControlPanelState, TheCopySizeChoiceReadsTheSettingInForce)
+{
+  ArControlPanelState state;
+  ControlPanelSnapshot snapshot = live_snapshot();
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), ac::kPathArCopySize), UiValue("enlarged"));
+  EXPECT_STREQ(ac::kPathArCopySize, "settings.ar_copy_size");
+
+  // The desktop (or the environment) changes the setting: the choice follows, nothing else moves.
+  snapshot.ar_copy_size = "native";
+  std::vector<PatchEntry> patch = state.update(snapshot);
+  ASSERT_EQ(patch.size(), 1u);
+  EXPECT_EQ(patch[0].path, "settings.ar_copy_size");
+  EXPECT_EQ(patch[0].value, UiValue("native"));
+  snapshot.ar_copy_size = "enlarged";
+  patch = state.update(snapshot);
+  ASSERT_EQ(patch.size(), 1u);
+  EXPECT_EQ(patch[0].value, UiValue("enlarged"));
+
+  // Any word but the two of the setting is read as the default, so the page never shows a value
+  // that none of its two buttons stands for.
+  snapshot.ar_copy_size = "huge";
+  patch = state.update(snapshot);
+  EXPECT_TRUE(patch.empty());
+  EXPECT_EQ(value_at(state.document(), ac::kPathArCopySize), UiValue("enlarged"));
+
+  // The choice is not a list: it does not depend on the connection.
+  ArControlPanelState offline;
+  ControlPanelSnapshot native;
+  native.ar_copy_size = "native";
+  offline.update(native);
+  EXPECT_EQ(value_at(offline.document(), ac::kPathArCopySize), UiValue("native"));
+}
+
+TEST(ArControlPanelState, TheCaptionNamesTheSizeOfTheCopy)
+{
+  using qar_rviz_streaming::panel_slot_title;
+  ControlPanelPanelEntry scaled = panel("dock:Views", "Views");
+  scaled.size_text = "2x";
+  EXPECT_EQ(panel_slot_title(scaled), "Views (2x)");
+  scaled.size_text = "1.25x";
+  EXPECT_EQ(panel_slot_title(scaled), "Views (1.25x)");
+  scaled.size_text = "native";
+  EXPECT_EQ(panel_slot_title(scaled), "Views (native)");
+
+  // The size comes first, then the state; a panel without a size keeps the old caption.
+  scaled.size_text = "2x";
+  scaled.state = PanelArState::Starting;
+  EXPECT_EQ(panel_slot_title(scaled), "Views (2x) (starting)");
+  scaled.size_text = "native";
+  scaled.state = PanelArState::ClosedInAr;
+  EXPECT_EQ(panel_slot_title(scaled), "Views (native) (closed in AR)");
+  ControlPanelPanelEntry video = panel("video:/cam", "Video: /cam", PanelArState::Starting);
+  EXPECT_EQ(panel_slot_title(video), "Video: /cam (starting)");
+  EXPECT_EQ(panel_slot_title(panel("video:/cam", "Video: /cam")), "Video: /cam");
+
+  // On the page: the caption carries the size, the answers keep the plain name.
+  ControlPanelSnapshot snapshot = live_snapshot();
+  snapshot.panels = {panel("dock:Views", "Views", PanelArState::Streaming), video};
+  snapshot.panels[0].size_text = "2x";
+  ArControlPanelState state;
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "panels.s0.title"), UiValue("Views (2x)"));
+  EXPECT_EQ(value_at(state.document(), "panels.s1.title"), UiValue("Video: /cam (starting)"));
+  EXPECT_EQ(state.panel_title(0), "Views");
+
+  // The factor changes: only that caption is published.
+  snapshot.panels[0].size_text = "native";
+  const std::vector<PatchEntry> patch = state.update(snapshot);
+  ASSERT_EQ(patch.size(), 1u);
+  EXPECT_EQ(patch[0].path, "panels.s0.title");
+  EXPECT_EQ(patch[0].value, UiValue("Views (native)"));
+}
+
+TEST(ArControlPanelState, TheMoreTopicsLineShowsOnlyWhileArmedWithMoreThanFourOptions)
+{
+  EXPECT_EQ(ac::kPickTopicSlots, 4u);
+  ArControlPanelState state;
+  ControlPanelSnapshot snapshot = topic_snapshot();
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "more.topics_show"), UiValue(false)) << "three options";
+  EXPECT_EQ(value_at(state.document(), "more.topics"), UiValue(""));
+
+  // Exactly four options fill the switches: nothing is left for the desktop.
+  snapshot.pick_topic_options = {"/a", "/b", "/c", "/d"};
+  snapshot.pick_topic = "/a";
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "more.topics_show"), UiValue(false));
+
+  // A fifth one appears: the line counts what no switch holds.
+  snapshot.pick_topic_options = {"/a", "/b", "/c", "/d", "/e"};
+  std::vector<PatchEntry> patch = state.update(snapshot);
+  EXPECT_EQ(
+    sorted(paths_of(patch)), (std::vector<std::string>{"more.topics", "more.topics_show"}));
+  EXPECT_EQ(value_at(state.document(), "more.topics_show"), UiValue(true));
+  EXPECT_EQ(value_at(state.document(), "more.topics"), UiValue("1"));
+  snapshot.pick_topic_options.resize(16, "/x");
+  state.update(snapshot);
+  EXPECT_EQ(value_at(state.document(), "more.topics"), UiValue("12"));
+  // The four switches stay what they were.
+  EXPECT_EQ(value_at(state.document(), "pick.topics.s3.title"), UiValue("/d"));
+
+  // Not armed: the line goes, whatever the host still holds.
+  snapshot.pick_mode = ArPickMode::Off;
+  patch = state.update(snapshot);
+  EXPECT_EQ(*find_entry(patch, "more.topics_show"), UiValue(false));
+  EXPECT_EQ(*find_entry(patch, "more.topics"), UiValue(""));
+
+  // A mode that only the desktop arms has the line too.
+  ControlPanelSnapshot other = topic_snapshot();
+  other.pick_mode = ArPickMode::Off;
+  other.pick_mode_other = true;
+  other.pick_topic_options = {"/a", "/b", "/c", "/d", "/e", "/f"};
+  ArControlPanelState desktop;
+  desktop.update(other);
+  EXPECT_EQ(value_at(desktop.document(), "more.topics"), UiValue("2"));
+  EXPECT_EQ(value_at(desktop.document(), "more.topics_show"), UiValue(true));
 }

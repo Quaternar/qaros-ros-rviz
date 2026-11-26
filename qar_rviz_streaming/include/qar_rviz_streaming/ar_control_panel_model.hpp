@@ -12,10 +12,13 @@
 /// pixels and a row asks for 260 pixels per child. From the top it holds
 ///
 ///  1. the pick block: the pick mode (Off / Point / Nav goal) with a caption that says what the
-///     operator can do now, then Confirm and Cancel;
+///     operator can do now, then Confirm and Cancel, then, while a mode is armed, the topic the
+///     pick is published to, up to four switches that choose another one and, when the mode has
+///     more topics than that, a line that says they are chosen on the desktop;
 ///  2. the state of the QarOS connection;
-///  3. six switches for the panels of the desktop that can be shown in AR;
-///  4. four switches for the AR tools: off hides the AR panel of a tool, on shows it again;
+///  3. sixteen switches for the panels of the desktop that can be shown in AR, and the choice
+///     "Qt panels" between the enlarged and the native size of their AR copies;
+///  4. eight switches for the AR tools: off hides the AR panel of a tool, on shows it again;
 ///  5. the number of peers and the last error.
 ///
 /// A page cannot grow or shrink at run time: its model is fixed when the page is served and only
@@ -39,8 +42,9 @@ namespace ar_control
 
 constexpr const char * kPanelId = "qar_control";   ///< root id == PanelSession::panel_id()
 constexpr const char * kPageTitle = "QAR control";
-constexpr std::size_t kPanelSlots = 6;
-constexpr std::size_t kToolSlots = 4;
+constexpr std::size_t kPanelSlots = 16;
+constexpr std::size_t kToolSlots = 8;
+constexpr std::size_t kPickTopicSlots = 4;  ///< the topic switches of the pick block
 
 // Action ids.
 constexpr const char * kActionPickMode = "cp.pick.mode";
@@ -48,20 +52,26 @@ constexpr const char * kActionPickConfirm = "cp.pick.confirm";
 constexpr const char * kActionPickCancel = "cp.pick.cancel";
 constexpr const char * kActionPanelToggle = "cp.panel.toggle";
 constexpr const char * kActionToolToggle = "cp.tool.toggle";
+constexpr const char * kActionPickTopic = "cp.pick.topic";
+constexpr const char * kActionArCopySize = "cp.ar_copy.size";
 
 // Widget ids.
 constexpr const char * kIdPickMode = "cp_pick_mode";
 constexpr const char * kIdPickConfirm = "cp_pick_confirm";
 constexpr const char * kIdPickCancel = "cp_pick_cancel";
+constexpr const char * kIdPickTopic = "cp_pick_topic";  ///< the line "Publishes to"
+constexpr const char * kIdMoreTopics = "cp_more_topics";  ///< the line "More topics on the desktop"
 constexpr const char * kIdConnection = "cp_conn";
 constexpr const char * kIdPanelsHeader = "cp_h_panels";
 constexpr const char * kIdMorePanels = "cp_more_panels";
 constexpr const char * kIdToolsHeader = "cp_h_tools";
 constexpr const char * kIdMoreTools = "cp_more_tools";
+constexpr const char * kIdArCopySize = "cp_ar_copy_size";  ///< the choice "Qt panels"
 constexpr const char * kIdPeers = "cp_peers";
 constexpr const char * kIdError = "cp_error";
 constexpr const char * kPanelIdPrefix = "cp_panel_";  ///< + slot: the switch of a panel
 constexpr const char * kToolIdPrefix = "cp_tool_";    ///< + slot: the switch of an AR tool
+constexpr const char * kPickTopicIdPrefix = "cp_pick_topic_";  ///< + slot: a topic switch
 
 // Paths into the data document.
 constexpr const char * kPathConnection = "status.connection";
@@ -69,6 +79,11 @@ constexpr const char * kPathPeers = "status.peers";
 constexpr const char * kPathError = "status.error";
 constexpr const char * kPathPickMode = "pick.mode";
 constexpr const char * kPathPickCaption = "pick.caption";
+constexpr const char * kPathPickTopic = "pick.topic";           ///< "<topic> (<type>)"
+constexpr const char * kPathPickTopicShow = "pick.topic_show";  ///< armed, and no switch is on
+constexpr const char * kPathMoreTopics = "more.topics";           ///< how many topics did not fit
+constexpr const char * kPathMoreTopicsShow = "more.topics_show";
+constexpr const char * kPathArCopySize = "settings.ar_copy_size";  ///< "enlarged" or "native"
 constexpr const char * kPathMorePanels = "more.panels";
 constexpr const char * kPathMorePanelsShow = "more.panels_show";
 constexpr const char * kPathMoreTools = "more.tools";
@@ -76,6 +91,9 @@ constexpr const char * kPathMoreToolsShow = "more.tools_show";
 
 /// The caption of the pick block while no mode is armed.
 constexpr const char * kCaptionPickOff = "Choose Point or Nav goal, then aim in the scene";
+
+/// The caption of the pick block after a change of the topic has dropped the waiting pick.
+constexpr const char * kCaptionTopicDropped = "Topic changed: the waiting pick was dropped";
 
 /// The line that stands in the place of the panel and tool switches while there is no live QarOS
 /// session (the connection is offline or a preview): the switches act on QarOS and have nothing
@@ -98,6 +116,12 @@ inline std::string panel_toggle_id(std::size_t slot)
 inline std::string tool_toggle_id(std::size_t slot)
 {
   return std::string(kToolIdPrefix) + std::to_string(slot);
+}
+
+/// "cp_pick_topic_<slot>"
+inline std::string pick_topic_toggle_id(std::size_t slot)
+{
+  return std::string(kPickTopicIdPrefix) + std::to_string(slot);
 }
 
 /// Reads the slot out of a widget id: @p prefix followed by the decimal number of a slot below
@@ -138,6 +162,12 @@ inline std::string panel_path(std::size_t slot, const char * field)
 inline std::string tool_path(std::size_t slot, const char * field)
 {
   return "tools.s" + std::to_string(slot) + "." + field;
+}
+
+/// "pick.topics.s<slot>.<field>"; the fields are show, title and on.
+inline std::string pick_topic_path(std::size_t slot, const char * field)
+{
+  return "pick.topics.s" + std::to_string(slot) + "." + field;
 }
 
 }  // namespace ar_control

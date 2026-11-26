@@ -11,6 +11,44 @@ written and how a version is released is in [AGENTS.md](AGENTS.md).
 
 ## [Unreleased]
 
+### Features
+
+- When QAROS stops answering, the strip of the panel says that the Hub is not reachable, that it is gone and that the plugin joins it again, with the buttons `"Join again"` and `"Stop rejoining"`; the panel releases a lost session, joins the Hub again by itself and makes its AR panels again ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The strip and the log note when a 3D stream is in trouble: the receiver reconnects, the runtime asks for no 3D frame, the 3D stream is set up again, the frame calls are paused, or the receiver left ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- A stall watchdog names the step of the Qt thread in a `[qar-stall]` line after 3 seconds without a tick of the panel, with an optional stack dump (`QAR_STALL_DUMP`), and the heartbeat gives the clock time of the longest gap ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- An exit guard ends RViz 5 seconds after the application was asked to quit when it has not ended (`QAR_EXIT_GUARD`), and the teardown of the plugin is bounded ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- A gate skips the frames of RViz while the GPU makes no progress (`QAR_GPU_GATE`) ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The variable `QAR_PANEL_REJOIN_AFTER_HUB_S` sets the time after which the panel gives a session up when no 3D stream comes back after the Hub answers again ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The strip has sentences for a denied approval and for an approval that nobody answered ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- Qt panels have enlarged AR copies: the RViz panels Displays, Views, Tool Properties, Selection and Help, and this panel, are streamed as a second instance that draws its controls at twice the size while its text is a quarter larger and its size in metres follows an overall factor of 1.5, and a dock that has no copy of its own is enlarged as a whole at twice the size; all stay sharp in AR. The settings `"AR Copy Size"`, `"AR Copy Scale"` and `"AR Copy Overall Scale"`, the variables `QAR_PANEL_AR_COPY_SIZE`, `QAR_PANEL_AR_COPY_SCALE`, `QAR_PANEL_AR_COPY_OVERALL_SCALE`, `QAR_PANEL_AR_COPY_TEXT_SCALE`, `QAR_PANEL_AR_COPY_FONT_HINTING` and `QAR_PANEL_SELF_AR_COPY`, the launcher parameter `-ArCopyScale`, a choice for the whole panel on the tab `Settings` and on the AR control panel, a choice for one panel in the list of AR panels, and a height limit of 1.8 m control them, and the Help panel has an AR copy ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- AR tools need no box to tick: `"Add"` always generates the tool, `"Add display only"` creates the display alone, the publish form starts for a `Bool`, a `Twist` and a `TwistStamped` topic and every other topic type starts read-only with its reason, and the buttons `"Allow publishing"` and `"Make read-only"` change a tool later ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The AR control panel has a switch for each dock of RViz that is open, up to 16 panels and 8 tools, and it follows the docks within about half a second ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- A pick has a topic that you choose with the row `Topic` of the tab `Picking`, four topic switches on the AR control panel that carry the topic inside the switch, the setting `"Pick Topics"` and the variable `QAR_PANEL_PICK_TOPICS`; the line `"Publishes to"` appears when no switch names the topic in force, and the line `"More topics on the desktop:"` points to the others ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The tab `"AR panels"` lists the AR panels with the columns `Panel`, `Kind`, `"Seen by"`, `"In AR"` and `Size`, the actions `"Stream to AR"`, `"Hide in AR"`, `"Show in AR"` and `"Stop streaming"`, a pager and the rows of the AR control panel and of the AR tools, and the tab `Diagnostics` has the group `"AR panel counters"` ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The record `"AR State"` in the configuration of the panel holds the AR panels that are on, their size choices, the AR tools with their publish flag and their hidden state, and the watched topics: `File > Save Config` saves them and a load restores them ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+
+### Enhancements
+
+- Dialogs in AR have the size of the copy that opened them, and the whole-panel scale for the other dialogs ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The web panels are hidden before the senders are destroyed when RViz exits, the 3D sender is released when the Hub process ends and made again when the new Hub runs, the selection box and other screen-space objects of RViz are left out of the 3D picture, and a line names the panels that lose their stream at the end of a session ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The variable `QAR_AR_CONTROL_REASSERT` makes the plugin place the AR control panel again and hide and show it again when it suspects that the Visualizer restarted ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The default of `QAR_PANEL_RESIZE` in the plugin is `new-panel`: a size change of a streamed window makes a second QarOS panel, the old one is hidden and kept, and no panel is closed ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The QarOS frame calls of the 3D senders and of the panel senders run on a worker thread of each sender, so that RViz does not wait for QAROS when it stops answering (`QAR_FRAME_CALLS=gui` keeps them on the GUI thread) ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The AR control panel stays shown while the 3D sender of a target is made again ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The Connection tab shows eight target rows, and the minimum height of the panel is capped by the height of the screen and of the window ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The readout of the AR panels has no heading and ten lines ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- A panel that is shown again by the resize ring takes AR input again, and a visible page panel that gets another page is hidden first ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- An enlarged copy whose window grows past the height limit of 1.8 m gets a lower factor ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The settings version is 5 (the Hub mode, the size, the scale and the overall scale of the AR copies and the topics of the picks); a configuration of version 4 loads as it is ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The readout of the AR panels is a group of the tab `Diagnostics` ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- The row of an AR tool in the list of AR panels shows `"closed in AR"` when QAROS reports the panel of the tool closed, and the plugin writes a line when that changes ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+
+### Bug fixes
+
+- The render tick runs every 50 ms while nothing is streamed (the idle tier), where a timer without an interval spun the event loop of RViz; the streaming tier keeps the configured period, 0.1 ms by default, and the tick field of the heartbeat gains `tier=idle` or `tier=stream` ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- Two compile errors of the Linux builds are fixed in the source: `ActionBridgeImpl` is declared at namespace scope, and a generic subscription is made with the callback type that the installed rclcpp takes (Humble and Jazzy); built and tested on Windows only and not verified on Linux, and the Linux job of the release workflow stays off ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+- A counter in the reason text of a skipped frame that contains `603` does not make the note `the receiver is reconnecting` (only the status field `code=603`, the token `state=reconnecting` and the word of the runtime do), and the heartbeat prints `fps=0.0` for a stream that submitted no frame since the previous heartbeat ([#11](https://github.com/Quaternar/qaros-ros-rviz/pull/11)).
+
 ## [0.3.0] - 2026-11-14
 
 ### Features

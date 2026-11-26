@@ -444,6 +444,31 @@ TEST(ArPanelGeneratorTest, AnEmptyMessageProducesNoPanel)
   EXPECT_FALSE(result.ok);
 }
 
+// std_msgs/msg/Empty as the ROS 2 introspection reports it: the one placeholder member that
+// rosidl adds to a message without fields. The generic form lays that member out as an input,
+// so the writable page is NOT a lone Publish button; this is why Empty is not writable by
+// default (ar_tool_writability.hpp).
+TEST(ArPanelGeneratorTest, EmptyMessageKeepsItsPlaceholderInputBesidePublish)
+{
+  PanelGenerationRequest request;
+  request.entity = RosEntityRef{RosEntityKind::Topic, "/trigger_empty", "std_msgs/msg/Empty"};
+  request.message = MessageDescriptionBuilder("std_msgs/msg/Empty")
+    .field(FieldDescription::primitive("structure_needs_at_least_one_member", FieldKind::UInt8))
+    .build();
+  request.writable = true;
+  const PanelGenerationResult result = PanelTemplateRegistry().generate(request);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  const Widget * publish = find_by_action(result.model.root, kPublish);
+  ASSERT_NE(publish, nullptr);
+  EXPECT_EQ(publish->type, WidgetType::Button);
+  EXPECT_TRUE(publish->confirm);
+  const Widget * placeholder = find_by_action(result.model.root, kSetField);
+  ASSERT_NE(placeholder, nullptr);
+  EXPECT_EQ(placeholder->type, WidgetType::NumberInput);
+  EXPECT_TRUE(placeholder->editable);
+}
+
 // --- The semantic-template seam ---------------------------------------------
 
 namespace

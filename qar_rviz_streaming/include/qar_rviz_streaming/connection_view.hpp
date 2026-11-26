@@ -8,10 +8,12 @@
 /// @brief What the Connection tab and the status strip say about the QAROS session, as pure
 /// functions of a few facts. Standard library only: no Qt, no RViz, no QAROS call.
 ///
-/// The panel collects the facts (the state of the session owner, the settings in force, the
-/// targets) into a @ref ConnectionInput and gives the @ref ConnectionView it gets back to the
-/// widgets. Every text that the person at the keyboard reads for the join is made here, so a test
-/// can check all of them without a window.
+/// The plugin always joins the QAROS Hub of this PC.
+///
+/// The panel collects the facts (the state of the session owner, the targets) into a
+/// @ref ConnectionInput and gives the @ref ConnectionView it gets back to the widgets. Every
+/// text that the person at the keyboard reads for the join is made here, so a test can check all
+/// of them without a window.
 
 #include <cstddef>
 #include <string>
@@ -25,10 +27,11 @@ enum class ConnectionPhase
 {
   Preview,             ///< No QAROS in this run (QAR_PANEL_LIVE_STREAM is not set).
   Idle,                ///< Not connected.
-  Loading,             ///< Loading the runtime, choosing the mode.
-  WaitingForApproval,  ///< Waiting for Allow in the Hub of this PC.
+  Loading,             ///< Loading the runtime.
+  WaitingForApproval,  ///< Waiting for Allow in the Hub.
   Running,             ///< Joined.
   Reconnecting,        ///< Joined, but the Hub does not answer.
+  Lost,                ///< The session was given up; it is released and joined again by itself.
   Stopping,            ///< Releasing the session.
   Failed               ///< Stopped by an error.
 };
@@ -52,6 +55,21 @@ struct ConnectionInput
   bool attaching = false;
   /// The name of this program as the Hub shows it ("rviz2.exe").
   std::string program_name = "rviz2.exe";
+  /// Reconnecting: seconds the Hub has been silent; -1 when unknown.
+  int hub_silent_s = -1;
+  /// The owner joins the Hub again by itself (Lost, or an attempt that it started).
+  bool auto_rejoin = false;
+  /// The number this text gives to the automatic attempt: the one that runs, or the next one
+  /// while the owner waits.
+  int rejoin_attempt = 0;
+  /// Seconds to the next automatic attempt; -1 while one runs.
+  int rejoin_in_s = -1;
+  /// The Hub showed its approval prompt for the automatic attempt.
+  bool rejoin_prompt_open = false;
+  /// Lost, before the consumer handed the session back to the owner.
+  bool releasing = false;
+  /// Running: what is wrong with a stream (connection_health.hpp); empty when nothing is.
+  std::string degraded_text;
 };
 
 /// @brief What the widgets show.
@@ -62,8 +80,10 @@ struct ConnectionView
   /// The text of the Identity label.
   std::string identity_text;
 
-  /// Cancel ends the join in progress.
   bool cancel_enabled = false;
+  /// The text and the tool tip of the cancel button; the tool tip is empty for the default.
+  std::string cancel_text = "Cancel";
+  std::string cancel_tooltip;
 
   /// "Invite a device" can be pressed.
   bool invite_enabled = false;
@@ -75,13 +95,6 @@ ConnectionView make_connection_view(const ConnectionInput & input);
 
 /// @brief "m:ss" for a count of seconds (negative reads as 0).
 std::string format_countdown(int seconds);
-
-/// The tool tip of the Identity line: how the approval of this program is revoked, and how the
-/// Hub of another PC is reached.
-constexpr const char * kIdentityToolTip =
-  "This PC approved this program in the QAROS Hub. Revoke the approval in the Visualizer "
-  "(Source Applications, Approved apps). To reach the Hub of another PC, make the Hub of this PC "
-  "a member of it.";
 
 /// The tool tip of the Invite button while streaming is paused.
 constexpr const char * kInvitePausedToolTip =

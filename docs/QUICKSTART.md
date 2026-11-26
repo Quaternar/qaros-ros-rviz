@@ -35,6 +35,9 @@ git clone --recurse-submodules https://github.com/Quaternar/qaros-ros-rviz "$env
 ```text
 Cloning into 'C:\qar\src\qar_rviz_plugin'...
 done.
+Submodule 'external/qaros' (https://github.com/Quaternar/qaros.git) registered for path 'external/qaros'
+Cloning into 'C:/qar/src/qar_rviz_plugin/external/qaros'...
+Submodule path 'external/qaros': checked out '0f2cb2eb8dc89a2d52deb7148ce3ff52e595bd8e'
 ```
 
 ```powershell
@@ -201,11 +204,14 @@ INFO    : Time elapsed: 15.21180160 second
 6. Clone the upstream repository `qar_ogre_adapter`, go to the folder of its clone, build it and install it into `QAR_PREFIX` ([Upstream repositories](INSTALL.md#upstream-repositories)).
 
 ```powershell
-git clone https://github.com/Quaternar/qaros-ogre "$env:QAR_ROOT\src\qar_ogre_adapter"
+git clone --recurse-submodules https://github.com/Quaternar/qaros-ogre "$env:QAR_ROOT\src\qar_ogre_adapter"
 ```
 ```text
 Cloning into 'C:\qar\src\qar_ogre_adapter'...
 done.
+Submodule 'external/qaros' (https://github.com/Quaternar/qaros.git) registered for path 'external/qaros'
+Cloning into 'C:/qar/src/qar_ogre_adapter/external/qaros'...
+Submodule path 'external/qaros': checked out '0f2cb2eb8dc89a2d52deb7148ce3ff52e595bd8e'
 ```
 
 ```powershell
@@ -226,12 +232,13 @@ Preset CMake variables:
 -- The CXX compiler identification is MSVC 19.29.30151.0
 ...
 -- ROS 2 distribution: C:/qar/deps/ros2_humble/ros2-windows
+-- qaros headers: C:/qar/src/qar_ogre_adapter/external/qaros
 -- Found rviz_ogre_vendor: 11.2.25 (C:/qar/deps/ros2_humble/ros2-windows/share/rviz_ogre_vendor/cmake)
 ...
 -- qar_qar_adapter: QarOS SDK backend, DYNAMIC loading of C:\Program Files\Quaternar\QAROS/bin/qar-streaming-c.dll (no import lib linked)
 ...
--- Configuring done (12.8s)
--- Generating done (0.3s)
+-- Configuring done (14.8s)
+-- Generating done (0.8s)
 -- Build files have been written to: C:/qar/src/qar_ogre_adapter/build/vs2019-x64
 ```
 
@@ -246,15 +253,15 @@ cmake --build --preset vs2019-x64
   qar_ogre_streaming.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\RelWithDebInfo\qar_ogre_streaming.lib
 ...
   qar_qar_adapter_render.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\RelWithDebInfo\qar_qar_adapter_render.lib
-...
   qar_ogre_standalone_streaming_sample.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\ogre_standalone_streaming_sample\RelWithDebInfo\qar_ogre_standalone_streaming_sample.exe
 ...
   qar_ogre_live_stream_example.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\examples\qaros_live_stream\RelWithDebInfo\qar_ogre_live_stream_example.exe
 ...
   qar_ogre_adapter_doc_snippets.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\docs\snippets\RelWithDebInfo\qar_ogre_adapter_doc_snippets.exe
 ...
-  qar_qar_adapter_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\test\RelWithDebInfo\qar_qar_adapter_tests.exe
   qar_ogre_streaming_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_ogre_streaming\test\RelWithDebInfo\qar_ogre_streaming_tests.exe
+...
+  qar_qar_adapter_tests.vcxproj -> C:\qar\src\qar_ogre_adapter\build\vs2019-x64\qar_qar_adapter\test\RelWithDebInfo\qar_qar_adapter_tests.exe
 ```
 
 ```powershell
@@ -266,8 +273,12 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/lib/qar_qar_adapter_capi.lib
 ...
 -- Installing: C:\qar\install/include/qar_qar_adapter/target_rule.hpp
+...
 -- Installing: C:\qar\install/include/qar_streaming.h
--- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE.qar_streaming_header
+...
+-- Installing: C:\qar\install/include/qar_streaming_cpp/Runtime.hpp
+...
+-- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE.qaros
 -- Installing: C:\qar\install/share/qar_ogre_adapter/LICENSE
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterTargets.cmake
 -- Installing: C:\qar\install/share/qar_ogre_adapter/cmake/qar_ogre_adapterTargets-relwithdebinfo.cmake
@@ -278,11 +289,14 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 7. Do the same for `qar_qt_streaming`, which needs only Qt and the headers of the QarOS C++ SDK and does not depend on `qar_ogre_adapter`.
 
 ```powershell
-git clone https://github.com/Quaternar/qaros-qt "$env:QAR_ROOT\src\qar_qt_streaming"
+git clone --recurse-submodules https://github.com/Quaternar/qaros-qt "$env:QAR_ROOT\src\qar_qt_streaming"
 ```
 ```text
 Cloning into 'C:\qar\src\qar_qt_streaming'...
 done.
+Submodule 'external/qaros' (https://github.com/Quaternar/qaros.git) registered for path 'external/qaros'
+Cloning into 'C:/qar/src/qar_qt_streaming/external/qaros'...
+Submodule path 'external/qaros': checked out '0f2cb2eb8dc89a2d52deb7148ce3ff52e595bd8e'
 ```
 
 ```powershell
@@ -297,12 +311,11 @@ Preset CMake variables:
 
   QAR_BUILD_TESTS="ON"
   QAR_QT_ROOT="C:\qar\deps\Qt\5.15.2\msvc2019_64"
-  QAR_SDK_ROOT="C:\Program Files\Quaternar\QAROS"
 ...
 -- Qt 5.15.2: C:/qar/deps/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5
--- QarOS SDK headers: third_party/
+-- QarOS SDK headers: QarOS repository C:/qar/src/qar_qt_streaming/external/qaros
 ...
--- Configuring done (12.5s)
+-- Configuring done (10.5s)
 -- Generating done (0.3s)
 -- Build files have been written to: C:/qar/src/qar_qt_streaming/build/vs2019-x64
 ```
@@ -315,8 +328,8 @@ cmake --build --preset vs2019-x64
 ...
   qar_qt_streaming_qaros.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\RelWithDebInfo\qar_qt_streaming_qaros.lib
 ...
-  qar_qt_streaming_seam_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\test\RelWithDebInfo\qar_qt_streaming_seam_tests.exe
   qar_qt_streaming_qaros_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\qaros\test\RelWithDebInfo\qar_qt_streaming_qaros_tests.exe
+  qar_qt_streaming_seam_tests.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\seam\test\RelWithDebInfo\qar_qt_streaming_seam_tests.exe
 ...
   qar_qt_streaming.vcxproj -> C:\qar\src\qar_qt_streaming\build\vs2019-x64\qar_qt_streaming\RelWithDebInfo\qar_qt_streaming.lib
 ...
@@ -334,7 +347,7 @@ cmake --install build\vs2019-x64 --config RelWithDebInfo --prefix $env:QAR_PREFI
 -- Installing: C:\qar\install/lib/qar_qt_streaming_seam.lib
 -- Installing: C:\qar\install/lib/qar_qt_streaming.lib
 -- Installing: C:\qar\install/lib/qar_qt_streaming_qaros.lib
--- Installing: C:\qar\install/include
+-- Up-to-date: C:\qar\install/include
 -- Installing: C:\qar\install/include/qar_qt_streaming
 -- Installing: C:\qar\install/include/qar_qt_streaming/seam
 ...
@@ -387,15 +400,19 @@ Overlay (dot-source it): C:\qar\install\local_setup.ps1
 .\scripts\run_live_rviz_stream_real.ps1
 ```
 ```text
+
+...
 === RViz -> QAROS Hub live stream ===
   scene            : C:\qar\install\share\qar_rviz_streaming\config\test_scenes\scene3_grid_marker.rviz
   QAROS install    : C:\Program Files\Quaternar\QAROS (from registry)
   QAROS_RUNTIME_DIR        = (not set: the plugin uses the installed QAROS)
   QAR_PANEL_LIVE_STREAM    = 1
+  QAR_PANEL_AUTO_CONNECT   = 1
   FASTRTPS_DEFAULT_PROFILES_FILE = C:\qar\src\qar_rviz_plugin\scripts\fastdds_large_data.xml (set by this launcher)
   QAR_SCENE_LIGHT          = both (headlight: suppressed while streaming)
   QAR_PANEL_HUB_MODE       = (not set: the Hub of this PC)
   QAR_PANEL_INVITE_PEERS   = (none - pass -InvitePeers to invite devices)
+  QAR_PANEL_AR_COPY_SCALE  = (not set: the saved value or 2.00 - pass -ArCopyScale 1.0..3.0 to change it)
   QAR_PANEL_FIXED_POSES    = ground (launcher default)
   QAR_PANEL_VOLUME_Y       = -1.6 (launcher default)
   test markers: off (start them with -TestMarkers or from the Diagnostics tab)
@@ -416,22 +433,24 @@ Overlay (dot-source it): C:\qar\install\local_setup.ps1
   QAR_ADAPTER_FRAME_TRACE  = (unset)
   --- QAROS on this PC (read only) ---
   installed QAROS          : 0.9.0-dev.3008+65dc9aeb release (C API v0, scope machine) at C:\Program Files\Quaternar\QAROS
-  qaros-hub-service        : running (pid 39416, since 11:52:57)
-  qar-runtime-launcher     : running (pid 38012, since 11:52:57)
-  qar-streaming-viz        : running (pid 46064, since 11:52:59)
+  qaros-hub-service        : not running
+  qar-runtime-launcher     : not running
+  qar-streaming-viz        : not running
   Hub endpoint file        : host 127.0.0.1, onboarding port 19121, router port 19120
                              C:\Users\<user>\AppData\Local\Quaternar\Qaros\hub-endpoint.json (the trust key in it is never shown)
+                             no Hub service runs, so these values can be left over from an earlier start
   Hub                      : the Hub of this PC, as a local app (the Hub of another PC is reached through this one as its member)
   --- what you will have to do ---
   Press Connect in the Connection tab of the 'Qar Streaming' panel. The first time, QAROS asks in its own window whether rviz2 may join: click Allow.
+  No Hub service runs now: the plugin will start QAROS when you press Connect.
   Open a Visualizer window from QAROS (Start menu), or put on a headset: the panel streams to every target that joins.
 ...
-  GPU memory (nvidia-smi)  : NVIDIA GeForce RTX 4080 Laptop GPU: 602 MiB used of 12282 MiB, 7 % busy
-  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261027_183938.checks.txt (written with -Confirm)
+  GPU memory (nvidia-smi)  : NVIDIA GeForce RTX 4080 Laptop GPU: 0 MiB used of 12282 MiB, 0 % busy
+  start checks record      : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184424.checks.txt (written with -Confirm)
   QAR log dir              : C:\Users\<user>\AppData\Local\Temp\quaternar (no *.log over 256 MB)
-  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261027_183938.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
-  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261027_183938.launcher_<name>
-  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261027_183938.<report> (no .dmp files)
+  QAR library log copy     : C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs\rviz_live_20261119_184424.qar_streaming.log (copy of C:\Users\<user>\AppData\Local\Temp\quaternar\qar_streaming.log made when rviz2 exits; with -Confirm the launcher waits for rviz2)
+  QAROS launcher logs copy : when rviz2 exits, the *.log files of the newest session folder of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qar-launcher-default (newest session folder now: ed498b73-38fe-4155-b845-ac5abb6b10ac) written during the run are copied to C:\Users\<user>\AppData\Local\Temp\qar_rviz_logs: rviz_live_20261119_184424.launcher_<name>
+  QAROS crash reports copy : *.crash.txt of C:\Users\<user>\AppData\Local\Temp\quaternar\logs\qaros-hub-service\crashes, C:\Users\<user>\AppData\Local\Temp\quaternar and C:\Users\<user>\AppData\Local\Temp\quaternar\crashes written during the run, as rviz_live_20261119_184424.<report> (no .dmp files)
   VC++ runtime (rviz2 dir) : 14.50.35719.0 (ok, needs 14.40 or newer)
   tinyxml.dll (rviz2 dir)  : present
 
@@ -439,13 +458,13 @@ DRY RUN (no -Confirm): environment resolved above; NOT launching any GUI (log ro
 To actually run the interactive session, re-invoke with -Confirm (opens windows).
 ```
 
-10. Start RViz2 with the live panel ([Launch RViz with the plugin](GETTING_STARTED.md#launch-rviz-with-the-plugin)). The panel connects only when you press `"Connect to QarOS"`, which is the next step.
+10. Start RViz2 with the live panel ([Launch RViz with the plugin](GETTING_STARTED.md#launch-rviz-with-the-plugin)). The panel makes no connection while it loads; the launcher sets `QAR_PANEL_AUTO_CONNECT` to 1 unless your shell has a value, so the panel presses `"Connect to QarOS"` once by itself about half a second later, and without the variable you press the button in the next step.
 
 ```powershell
 .\scripts\run_live_rviz_stream_real.ps1 -Confirm
 ```
 
-11. Join the QAROS Hub. Start QAROS from the Start menu and open a Visualizer window from it; click `Add receiver` in the Visualizer if it has none. In RViz open the tab `Connection` of the panel `"Qar Streaming"` and press `"Connect to QarOS"`. The first time, QAROS asks in a window of its own whether `rviz2` may join: click Allow. The scene of RViz then appears in the Visualizer ([Connect to QarOS](GETTING_STARTED.md#connect-to-qaros), [See the scene in the Visualizer](GETTING_STARTED.md#see-the-scene-in-the-visualizer)). The plugin joins only the Hub of this PC; to reach the Hub of another PC, make the Hub of this PC a member of it ([Connection panel](https://docs.quaternar.com/docs/next/user-guide/connection-panel/)).
+11. Join the QAROS Hub. Start QAROS from the Start menu and open a Visualizer window from it; click `Add receiver` in the Visualizer if it has none. In RViz open the tab `Connection` of the panel `"Qar Streaming"` and, unless the panel connected by itself, press `"Connect to QarOS"`. The first time, QAROS asks in a window of its own whether `rviz2` may join: click Allow. The scene of RViz then appears in the Visualizer ([Connect to QarOS](GETTING_STARTED.md#connect-to-qaros), [See the scene in the Visualizer](GETTING_STARTED.md#see-the-scene-in-the-visualizer)).
 
 [Getting started](GETTING_STARTED.md) goes on from here: it streams a panel and clicks it in AR, exposes a ROS 2 topic as an AR tool, shows a video, picks a point and explains how to stop and clean up. [Try the examples](#try-the-examples) runs a synthetic point cloud, a video and two recorded bags in the session that you have open by then.
 
@@ -514,7 +533,7 @@ python scripts\publish_video_file.py "$env:QAR_ROOT\demo\qar_test_clip.mp4" --ro
 [INFO] [<time>] [qar_video_file_publisher]: Reached end of video, stopping (loop=false). Ctrl+C to exit.
 ```
 
-Two ways show the video in AR. In the panel press `"Add from ROS graph..."`, select `/qar_test_video/image_raw`, tick `"Expose as a QAR AR tool"` and press `Add`; no RViz display is created, and the panel of the tool has the button `"Open video in AR"`, which opens a second panel, titled with the topic, that shows the video at up to 30 frames per second. Or add an Image display for the topic in the Displays panel of RViz, press `Refresh` on the tab `"AR panels"`, choose the dock of that display in the drop-down and press `"Stream panel to AR"`; the plugin then paints the video into the AR panel directly, at up to 30 frames per second. `"Stop streaming"` closes a video panel. [Video in AR](GETTING_STARTED.md#video-in-ar) has both ways in full.
+Two ways show the video in AR. In the panel press `"Add from ROS graph..."`, select `/qar_test_video/image_raw`, and press `Add`; no RViz display is created, and the panel of the tool has the button `"Open video in AR"`, which opens a second panel, titled with the topic, that shows the video at up to 30 frames per second. Or add an Image display for the topic in the Displays panel of RViz, press `Refresh` on the tab `"AR panels"`, select the row of the dock of that display in the list and press `"Stream to AR"`; the plugin then paints the video into the AR panel directly, at up to 30 frames per second. `"Hide in AR"` hides a video panel, and `"Stop streaming"` closes it while hiding is off. [Video in AR](GETTING_STARTED.md#video-in-ar) has both ways in full.
 
 ### A recorded bag of synthetic data
 

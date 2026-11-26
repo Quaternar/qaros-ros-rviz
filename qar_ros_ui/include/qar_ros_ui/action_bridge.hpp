@@ -64,6 +64,9 @@ enum class GoalEventKind
 const char * to_string(GoalEventKind kind);
 
 class ActionGoalHandle;
+/// The state behind an ActionBridge, defined in action_bridge.cpp. It is declared here, at
+/// namespace scope, because a friend declaration alone does not make the name visible to lookup.
+struct ActionBridgeImpl;
 
 struct GoalEvent
 {

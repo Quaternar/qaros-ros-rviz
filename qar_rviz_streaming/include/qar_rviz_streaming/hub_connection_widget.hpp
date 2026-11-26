@@ -5,15 +5,12 @@
 #define QAR_RVIZ_STREAMING__HUB_CONNECTION_WIDGET_HPP_
 
 /// @file hub_connection_widget.hpp
-/// @brief The "QAROS Hub" group of the Connection tab: the Cancel button of a join in progress,
-/// the identity and state lines and the list of targets. Qt Widgets only: no RViz, no ROS, no
-/// QAROS.
-///
-/// The plugin joins the Hub of this PC as a local app. The Hub of another PC is reached by making
-/// the Hub of this PC a member of it; the plugin has no pairing of its own.
+/// @brief The "QAROS Hub" group of the Connection tab: the identity and state lines, the Cancel
+/// button and the list of targets. The plugin joins the QAROS Hub of this PC, so the group has no
+/// choice of Hub. Qt Widgets only: no RViz, no ROS, no QAROS.
 ///
 /// The widget holds no session logic. The host gives it a @ref ConnectionView (connection_view.hpp)
-/// and the rows of the target list, and hears about what the person does through signals. Every
+/// and the rows of the target list, and hears about what the person does through a signal. Every
 /// label that changes at run time is width neutral (it never asks its layout for more room).
 
 #include <string>
@@ -51,13 +48,17 @@ class HubConnectionWidget : public QGroupBox
 public:
   explicit HubConnectionWidget(QWidget * parent = nullptr);
 
-  /// @brief Shows @p view: the state and identity lines and the state of the Cancel button.
+  /// @brief Shows @p view: the state and identity lines and the Cancel button.
   void apply(const ConnectionView & view);
 
   /// @brief Replaces the rows of the target list.
   void set_targets(const std::vector<HubTargetRow> & rows);
 
-  // The controls, for tests.
+  /// @brief Gives the target list the height of its rows again, measured under the style the
+  /// widget uses now. The host calls it after it changed the style of the widget's tree.
+  void remeasure_rows();
+
+  // The controls, for the host's tool tips and for tests.
   QPushButton * cancel_button() const { return cancel_button_; }
   QLabel * identity_label() const { return identity_label_; }
   QLabel * state_label() const { return state_label_; }
